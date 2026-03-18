@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" href="{{ base_style_path }}">
+    <style>
+        /* [BLINDAJE CROMÁTICO] Forzamos colores en motores de renderizado PDF */
+        * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        body {
+            font-family: 'Helvetica', Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            color: #1E293B;
+            background-color: #FFFFFF;
+        }
+
+        /* Inyección de estilos dinámicos desde el Core */
+            {
+                {
+                extra_styles|safe
+            }
+        }
+
+        /* CARCASA UNIVERSAL: Referencia a variables dinámicas del Core */
+        .header-core {
+            border-bottom: 2pt solid {
+                    {
+                    accent_color
+                }
+            }
+
+            !important;
+            /* Acento de Marca */
+            padding-bottom: 12px;
+            margin-bottom: 20px;
+        }
+
+        .brand-title {
+            color: {
+                    {
+                    primary_color
+                }
+            }
+
+            !important;
+            /* Color Principal (Azul/Rosa) */
+            font-size: 22pt !important;
+            font-weight: 900 !important;
+            margin: 0;
+            letter-spacing: -1pt;
+            line-height: 0.9;
+            text-transform: uppercase;
+        }
+
+        .brand-subtitle {
+            color: {
+                    {
+                    secondary_color
+                }
+            }
+
+            !important;
+            font-size: 8.5pt !important;
+            font-weight: bold !important;
+            margin: 0;
+            text-transform: uppercase;
+            letter-spacing: 1.5pt;
+        }
+
+        .report-label {
+            color: {
+                    {
+                    primary_color
+                }
+            }
+
+            !important;
+            font-size: 14pt !important;
+            font-weight: 800;
+            line-height: 1.1;
+            text-transform: uppercase;
+        }
+
+        .footer-core {
+            margin-top: 30px;
+            border-top: 1pt solid #E2E8F0 !important;
+            padding-top: 10px;
+            font-size: 7.5pt;
+        }
+
+        /* Ajuste de tablas estructurales */
+        .header-table,
+        .footer-table {
+            width: 100%;
+            border-collapse: collapse;
+            border: none !important;
+        }
+
+        .header-table td,
+        .footer-table td {
+            border: none !important;
+            padding: 0;
+        }
+
+        .footer-tagline {
+            color: {
+                    {
+                    primary_color
+                }
+            }
+
+            ;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header-core">
+        <table class="header-table">
+            <tr>
+                <td style="width: 60%; vertical-align: middle;">
+                    <div class="brand-title">{{ company_name }}</div>
+                    <div class="brand-subtitle">{{ system_name }} • {{ tagline }}</div>
+                </td>
+                <td style="text-align: right; width: 40%; vertical-align: middle;">
+                    <div class="report-label">{{ report_title }}</div>
+                    <div
+                        style="color: #64748B; font-size: 7pt; text-transform: uppercase; font-weight: bold; letter-spacing: 0.5pt;">
+                        Generado por {{ system_name }} v{{ version }}
+                    </div>
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="content">
+        {{ module_content|safe }}
+    </div>
+
+    <div class="footer-core">
+        <table class="footer-table">
+            <tr>
+                <td style="text-align: left; width: 40%;">
+                    <span class="footer-tagline">{{ company_name }}</span> | {{ security_tag }}
+                </td>
+                <td style="text-align: center; width: 20%; color: #94A3B8; font-style: italic;">
+                    {{ timestamp }}
+                </td>
+                <td style="text-align: right; width: 40%; color: {{ accent_color }}; font-weight: 800; font-size: 8pt;">
+                    {{ footer_text }}
+                </td>
+            </tr>
+        </table>
+    </div>
+</body>
+
+</html>

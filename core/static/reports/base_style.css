@@ -1,0 +1,152 @@
+/* SISTEMA: NEXUS CORE - BUSINESS INTELLIGENCE
+ARCHIVO: core/static/reports/base_style.css
+VERSION: 63.0.0 (LIQUID IDENTITY ENGINE)
+UBICACIÓN: core/static/reports/base_style.css
+DESCRIPCIÓN: Maquillaje universal parametrizado.
+             El diseño se adapta al cliente mediante variables CSS inyectadas.
+*/
+
+:root {
+
+    /* Las variables se alimentan dinámicamente desde el layout HTML */
+    --primary-color: {
+            {
+            primary_color
+        }
+    }
+
+    ;
+
+    --secondary-color: {
+            {
+            secondary_color
+        }
+    }
+
+    ;
+
+    --accent-color: {
+            {
+            accent_color
+        }
+    }
+
+    ;
+
+    --critical-color: {
+            {
+            critical_color
+        }
+    }
+
+    ;
+    --bg-light: #F8FAFC;
+    --text-main: #1E293B;
+    --white: #FFFFFF;
+}
+
+@page {
+    size: A4 landscape;
+    margin: 0;
+    /* Controlamos el margen desde el body para el marco */
+}
+
+body {
+    font-family: 'Helvetica', Arial, sans-serif;
+    color: var(--text-main);
+    font-size: 8pt;
+    margin: 0;
+    padding: 20px;
+    /* EL MARCO DINÁMICO: Ahora obedece al color primario de la marca activa */
+    border: 4pt solid var(--primary-color);
+    min-height: 94vh;
+    box-sizing: border-box;
+}
+
+/* Cabecera Estructural */
+.header-core {
+    width: 100%;
+    /* Línea divisoria de acento (Rosa o Dorado según settings) */
+    border-bottom: 2pt solid var(--accent-color);
+    margin-bottom: 18px;
+    padding-bottom: 12px;
+    background-color: var(--white);
+}
+
+.brand-title {
+    color: var(--primary-color);
+    font-size: 20pt;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: -0.5pt;
+}
+
+.brand-subtitle {
+    color: var(--secondary-color);
+    font-size: 8pt;
+    font-weight: bold;
+    letter-spacing: 1pt;
+    text-transform: uppercase;
+}
+
+/* Tablas de Datos (Piano Geometry PDF Edition) */
+.content-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+}
+
+.content-table th {
+    background-color: var(--primary-color);
+    color: var(--white);
+    padding: 10px 5px;
+    text-align: center;
+    text-transform: uppercase;
+    font-size: 7pt;
+    border: 0.5pt solid var(--white);
+}
+
+/* Cebra y Filas */
+.content-table tr:nth-child(even) {
+    background-color: var(--bg-light);
+}
+
+/* Pie de Página: Anclado al marco inferior */
+.footer-core {
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
+    right: 20px;
+    font-size: 7pt;
+    /* Línea superior del pie en el color de acento */
+    border-top: 1pt solid var(--accent-color);
+    color: var(--primary-color);
+    text-align: center;
+    padding-top: 8px;
+    background-color: var(--white);
+    font-weight: bold;
+}
+
+/* SEMÁFOROS DE RENDIMIENTO v63 */
+.val-positive {
+    color: var(--primary-color);
+    /* El éxito es el color de la marca */
+    font-weight: bold;
+}
+
+.val-critical {
+    color: var(--critical-color);
+    /* Rojo o Rosa Intenso para alertas */
+    font-weight: bold;
+}
+
+/* Estilos para Piano Geometry en PDF */
+.row-level-0 {
+    background-color: var(--secondary-color) !important;
+    font-weight: bold;
+}
+
+.row-level-1 {
+    background-color: var(--bg-light) !important;
+    border-top: 1pt solid var(--primary-color);
+}

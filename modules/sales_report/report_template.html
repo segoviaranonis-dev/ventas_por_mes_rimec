@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <style>
+        /* [BLINDAJE CROMÁTICO] */
+        * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        :root {
+            --primary-color: {
+                    {
+                    primary_color
+                }
+            }
+
+            ;
+
+            --secondary-color: {
+                    {
+                    secondary_color
+                }
+            }
+
+            ;
+
+            --accent-color: {
+                    {
+                    accent_color
+                }
+            }
+
+            ;
+
+            --critical-color: {
+                    {
+                    critical_color
+                }
+            }
+
+            ;
+            --text-main: #1E293B;
+            --bg-light: #F8FAFC;
+        }
+
+        body {
+            font-family: 'Helvetica', Arial, sans-serif;
+            margin: 0;
+            padding: 15px;
+            color: var(--text-main);
+            /* Borde elegante de 1.5pt (Regla 6 del plan) */
+            border: 1.5pt solid var(--primary-color);
+            min-height: 96vh;
+            box-sizing: border-box;
+        }
+
+        /* [LEY DE INTEGRIDAD NUMÉRICA - Regla 4] */
+        .text-right,
+        .money,
+        .val-positive,
+        .val-critical {
+            white-space: nowrap !important;
+            text-align: right !important;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* [DENSIDAD DINÁMICA - Regla 6] */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: auto !important;
+            /* Permite que el nombre del cliente respire */
+            margin-top: 10px;
+        }
+
+        th {
+            background-color: var(--secondary-color);
+            color: white;
+            font-size: 7.5pt;
+            text-transform: uppercase;
+            padding: 8px 4px;
+            border: 0.5pt solid #475569;
+        }
+
+        td {
+            padding: 4px;
+            border-bottom: 0.5pt solid #E2E8F0;
+            font-size: 7pt;
+        }
+
+        /* Estructura de Cabecera */
+        .header-core {
+            border-bottom: 2pt solid var(--accent-color);
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+        }
+
+        .brand-title {
+            color: var(--primary-color);
+            font-size: 22pt;
+            font-weight: 900;
+            margin: 0;
+            line-height: 1;
+        }
+
+        .brand-subtitle {
+            color: var(--secondary-color);
+            font-size: 8pt;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1pt;
+        }
+
+        /* Pie de página */
+        .footer-core {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            right: 20px;
+            border-top: 1pt solid var(--accent-color);
+            padding-top: 5px;
+            font-size: 7pt;
+            display: flex;
+            justify-content: space-between;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header-core">
+        <table style="border:none;">
+            <tr style="border:none;">
+                <td style="border:none; width: 60%;">
+                    <div class="brand-title">{{ company_name }}</div>
+                    <div class="brand-subtitle">{{ system_name }} • {{ tagline }}</div>
+                </td>
+                <td style="border:none; width: 40%; text-align: right; vertical-align: middle;">
+                    <div style="font-size: 14pt; font-weight: 800; color: var(--primary-color);">{{ report_title }}
+                    </div>
+                    <div style="font-size: 7pt; color: #64748B;">v{{ version }} | {{ timestamp }}</div>
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="content">
+        {{ module_content|safe }}
+    </div>
+
+    <div class="footer-core">
+        <div>{{ company_name }} | {{ security_tag }}</div>
+        <div style="font-weight: bold; color: var(--primary-color);">PÁGINA [[page_number]]</div>
+    </div>
+</body>
+
+</html>
