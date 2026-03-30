@@ -1,11 +1,12 @@
 """
 SISTEMA: CHUNACHUNA IMPORT Business Intelligence - NEXUS CORE
 UBICACIÓN: core/styles.py
-VERSION: 70.4.2 (OBSIDIAN ELITE - FINAL SYNC)
+VERSION: 70.4.5 (OBSIDIAN ELITE - STRICT PIANO READY)
 AUTOR: Héctor & Gemini AI
 DESCRIPCIÓN: El Ejecutor Visual de Elite.
              Sincronización total de la Armadura Obsidian.
-             REPARACIÓN: Reintegración de card_metric para evitar colapso de importación.
+             MODIFICACIÓN V70.4.5: REQ-01 - Verificación de variables de color.
+             Preparación de CSS para el renderizado jerárquico Strict Piano.
 """
 
 import streamlit as st
@@ -49,8 +50,46 @@ class StatusFactory:
             </div>
         """, unsafe_allow_html=True)
 
+class GlowDynamics:
+    """
+    MOTOR DE RESPLANDOR CONDICIONAL (Fase IV: JsCode Glow):
+    Inyecta lógica JavaScript para que AgGrid renderice colores con opacidad
+    dinámica del 15% basada en el signo del dato.
+    """
+    @staticmethod
+    def get_variation_js():
+        """Retorna el JsCode para el resplandor de celdas de variación."""
+        from st_aggrid import JsCode
+        return JsCode("""
+        function(params) {
+            if (params.value == null || params.value === '---') return {};
+            var val = parseFloat(params.value);
+
+            // LÓGICA DE INGENIERÍA: Resplandor Verde (Éxito)
+            if (val >= 0) {
+                return {
+                    'color': '#10B981',
+                    'backgroundColor': 'rgba(16, 185, 129, 0.15)',
+                    'fontWeight': 'bold',
+                    'borderLeft': '4px solid #10B981',
+                    'boxShadow': 'inset 0 0 10px rgba(16, 185, 129, 0.1)'
+                };
+            }
+            // LÓGICA DE INGENIERÍA: Resplandor Rojo (Riesgo)
+            else {
+                return {
+                    'color': '#EF4444',
+                    'backgroundColor': 'rgba(239, 68, 68, 0.15)',
+                    'fontWeight': 'bold',
+                    'borderLeft': '4px solid #EF4444',
+                    'boxShadow': 'inset 0 0 10px rgba(239, 68, 68, 0.1)'
+                };
+            }
+        };
+        """)
+
 def apply_ui_theme():
-    """Inyección de CSS: El blindaje Obsidian v70.4.2."""
+    """Inyección de CSS: El blindaje Obsidian v70.4.5."""
     print(f"🎨 [STYLES] Sincronizando Armadura Obsidian v{settings.VERSION}")
 
     st.markdown(f"""
@@ -113,6 +152,26 @@ def apply_ui_theme():
             transform: translateY(-3px);
             box-shadow: 0 6px 20px {COLOR_GOLD}22;
         }}
+
+        /* 6. ESTILO PARA AG-GRID (Integración Obsidian & Piano) */
+        .ag-theme-balham {{
+            --ag-background-color: {COLOR_DEEP} !important;
+            --ag-header-background-color: {COLOR_SOFT} !important;
+            --ag-header-foreground-color: {COLOR_GOLD} !important;
+            --ag-foreground-color: {COLOR_TEXT} !important;
+            --ag-border-color: #334155 !important;
+            --ag-row-hover-color: {COLOR_GOLD}11 !important;
+            --ag-selected-row-background-color: {COLOR_GOLD}22 !important;
+            --ag-odd-row-background-color: {COLOR_DEEP} !important;
+            --ag-font-family: 'Inter', sans-serif !important;
+            --ag-font-size: 13px;
+        }}
+
+        /* Ajustes para Scrollbars en Obsidian Mode */
+        ::-webkit-scrollbar {{ width: 8px; height: 8px; }}
+        ::-webkit-scrollbar-track {{ background: {COLOR_DEEP}; }}
+        ::-webkit-scrollbar-thumb {{ background: #334155; border-radius: 10px; }}
+        ::-webkit-scrollbar-thumb:hover {{ background: {COLOR_GOLD}88; }}
         </style>
     """, unsafe_allow_html=True)
 
@@ -134,7 +193,10 @@ def card_style(titulo, valor):
         </div>
     """, unsafe_allow_html=True)
 
-# 🚨 COMPATIBILIDAD CRUCIAL: Alias para evitar el ImportError en main.py / home.py
 def card_metric(titulo, valor, delta=None):
     """Alias de card_style para compatibilidad con el árbol de llamadas actual."""
     return card_style(titulo, valor)
+
+# -----------------------------------------------------------------------------
+# [EXECUTION-CONFIRMED] Se han aplicado los cambios de la TABLA DE EJECUCIÓN QUIRÚRGICA sobre el script core/styles.py
+# -----------------------------------------------------------------------------

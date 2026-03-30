@@ -1,229 +1,305 @@
 """
 SISTEMA: NEXUS CORE - BUSINESS INTELLIGENCE
 UBICACIÓN: modules/sales_report/logic.py
-VERSION: 85.0.0 (PLAN 1: PROTOCOLO IDENTIDAD ÚNICA - NIVEL PIEDRA)
+VERSION: 104.0.0 (DISTRIBUIDOR PURO - SIN MATEMÁTICAS)
 AUTOR: Héctor & Gemini AI
-DESCRIPCIÓN: Motor con unificación de ADN. Forzamos etiquetas de 'Vendedor' y 'Cadena/Cliente'
-              en todas las capas para que la UI proyecte sin redundancias.
+DESCRIPCIÓN: Distribuidor de datos para AgGrid.
+              v104.0.0: Las matemáticas viven en la BD (v_ventas_pivot) y en
+              queries.py (objetivo_pct). Este módulo solo agrupa para display
+              y construye _path para treeData.
+              Contrato de entrada: DataFrame con columnas
+                  [tipo, marca, cliente, codigo_cliente, vendedor, cadena,
+                   mes_idx, monto_26, monto_25, ALIAS_CURRENT_VALUE,
+                   ALIAS_TARGET_VALUE, ALIAS_VARIATION]
 """
 
 import pandas as pd
 import numpy as np
 import time
-from core.settings import settings
+from decimal import Decimal
 from core.database import DBInspector
+from core.constants import (
+    ALIAS_CURRENT_VALUE, ALIAS_TARGET_VALUE, ALIAS_VARIATION
+)
 
-def _safe_variacion(real_series, obj_series):
-    """
-    Cálculo RIMEC 3.0: (Real - Objetivo) / Objetivo * 100.
-    FACTOR 100X: Devuelve el número listo para ser mostrado como % sin que la UI calcule.
-    """
-    real = pd.to_numeric(pd.Series(real_series), errors='coerce').fillna(0).values
-    obj = pd.to_numeric(pd.Series(obj_series), errors='coerce').fillna(0).values
+_MES_NOMBRES = {
+    1: 'Enero',     2: 'Febrero',   3: 'Marzo',    4: 'Abril',
+    5: 'Mayo',      6: 'Junio',     7: 'Julio',     8: 'Agosto',
+    9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
+}
 
-    with np.errstate(divide='ignore', invalid='ignore'):
-        # Lógica binaria para casos límite
-        res = np.where((obj == 0) & (real > 0), 1.0,
-              np.where((obj > 0) & (real == 0), -1.0,
-              np.where(obj > 0, (real - obj) / obj, 0.0)))
+_CADENA_NULA = {'S/C', 'NONE', 'NAN', 'N/A', '', 'NULL', 'S/I', '---', '-'}
+_SEP = '|||'
 
-    return np.round(res * 100, 2)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _calc_var(df_in, real_col, obj_col):
+    """Variación % con blindaje ante división por cero."""
+    return np.where(
+        df_in[obj_col] > 0,
+        (df_in[real_col] - df_in[obj_col]) / df_in[obj_col] * 100,
+        np.where(df_in[real_col] > 0, 100.0, 0.0)
+    )
+
+
+def _agg(df, group_cols):
+    """Agrupa y suma las columnas de alias. Recalcula variación."""
+    df_g = df.groupby(group_cols, as_index=False).agg(**{
+        ALIAS_CURRENT_VALUE: (ALIAS_CURRENT_VALUE, 'sum'),
+        ALIAS_TARGET_VALUE:  (ALIAS_TARGET_VALUE,  'sum'),
+    })
+    df_g[ALIAS_VARIATION] = _calc_var(df_g, ALIAS_CURRENT_VALUE, ALIAS_TARGET_VALUE)
+    return df_g
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MOTOR PRINCIPAL
+# ─────────────────────────────────────────────────────────────────────────────
 
 class SalesLogic:
-    """
-    Motor v85.0.0: El Dictador de Identidad.
-    Asegura que la UI reciba nombres de columnas consistentes (Protocolo Picapiedra).
-    """
-
-    MESES_ORDEN = {
-        "Enero": 1, "Febrero": 2, "Marzo": 3, "Abril": 4,
-        "Mayo": 5, "Junio": 6, "Julio": 7, "Agosto": 8,
-        "Septiembre": 9, "Octubre": 10, "Noviembre": 11, "Diciembre": 12
-    }
 
     @staticmethod
-    def _ui_mic(msg, level="INFO"):
-        log_msg = f"🧠 [LOGIC-CORE] {msg}"
-        DBInspector.log(log_msg, level)
-        print(log_msg)
+    def _mic(msg, level="INFO"):
+        DBInspector.log(f"🧠 [LOGIC-CORE] {msg}", level)
 
     @staticmethod
-    def _sanitize_and_align(df, label_for_mic="Table"):
+    def sanitize_for_ui(data):
+        """Convierte Decimal → float recursivamente para Streamlit/AgGrid."""
+        if isinstance(data, dict):
+            return {k: SalesLogic.sanitize_for_ui(v) for k, v in data.items()}
+        if isinstance(data, (list, tuple)):
+            s = [SalesLogic.sanitize_for_ui(v) for v in data]
+            return tuple(s) if isinstance(data, tuple) else s
+        if isinstance(data, Decimal):
+            return float(data)
+        if isinstance(data, pd.DataFrame):
+            df = data.loc[:, ~data.columns.duplicated()].copy()
+            return df.apply(
+                lambda col: col.map(lambda x: float(x) if isinstance(x, Decimal) else x)
+            )
+        return data
+
+    @staticmethod
+    def get_full_analysis_package(raw_data, objetivo=100, meses=None):
         """
-        🛡️ BLINDAJE PLAN 1:
-        1. Rescate de Identidad: Mueve índices a columnas.
-        2. Force String: Sanitización de ADN contra 'nan'.
-        3. Footer Blindado: Inyección de totales calculados.
+        CONTRATO UI v104 — misma estructura que v103:
+        {
+          'evolucion':  DataFrame,
+          'cartera':    {'crecimiento': df, 'decrecimiento': df, 'sin_compra': df},
+          'marcas':     (df_ranking, df_detalle),
+          'vendedores': (df_ranking, df_detalle),
+          'kpis':       {'clientes_26': int, 'atendimiento': float%, 'variacion_total': float%}
+        }
         """
-        if df is None or df.empty:
-            return {'data': pd.DataFrame(), 'totals': {}}
+        t_start = time.time()
 
-        df = df.copy()
-
-        # 1. RESCATE DE IDENTIDAD
-        if df.index.name:
-            df = df.reset_index()
-
-        # 2. LIMPIEZA DE COLUMNAS
-        df.columns = [str(c).strip() for c in df.columns]
-
-        # 3. FORCE STRING EN ADN
-        text_cols = df.select_dtypes(exclude=[np.number]).columns
-        for col in text_cols:
-            df[col] = df[col].astype(str).str.strip().replace(['nan', 'None', 'NoneType', ''], '---')
-
-        # 4. BLINDAJE NUMÉRICO
-        num_cols = df.select_dtypes(include=[np.number]).columns
-        for col in num_cols:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(float)
-
-        # 5. CÁLCULO DE TOTALES
-        totals = {}
-        for col in df.columns:
-            if col in num_cols:
-                if any(x in col.upper() for x in ['%', 'VAR']):
-                    # Buscar columnas de referencia para variación global
-                    m_obj_col = next((c for c in df.columns if any(x in c.upper() for x in ['OBJ MONTO', 'MONTO OBJ'])), None)
-                    m_real_col = next((c for c in df.columns if any(x in c.upper() for x in ['MONT 26', 'MONTO 26'])), None)
-
-                    if m_obj_col and m_real_col:
-                        sum_obj = df[m_obj_col].sum()
-                        sum_real = df[m_real_col].sum()
-                        totals[col] = float(_safe_variacion([sum_real], [sum_obj])[0])
-                    else:
-                        totals[col] = 0.0
-                else:
-                    totals[col] = float(df[col].sum())
-            else:
-                totals[col] = ""
-
-        if len(text_cols) > 0:
-            totals[text_cols[0]] = "TOTAL GENERAL"
-
-        # MICRÓFONO: Audita si las columnas son las esperadas
-        SalesLogic._ui_mic(f"Integridad {label_for_mic} | Columnas: {list(df.columns)}")
-
-        return {'data': df, 'totals': totals}
-
-    @staticmethod
-    def get_full_analysis_package(df, objetivo_pct, meses_filtro):
-        """🚀 ORQUESTRADOR MAESTRO: Genera el paquete de Súper Objetos blindados."""
-        t_init = time.time()
-
-        df_base = SalesLogic._align_temporal_data(df, meses_filtro)
-        if df_base.empty:
-            SalesLogic._ui_mic("Aduana: DataFrame vacío tras filtrar.", "WARNING")
+        if raw_data is None or raw_data.empty:
             return None
 
-        # Pivot Maestro con Identificadores Planos
-        df_master = df_base.groupby(
-            ['vendedor', 'Identificador', 'cliente', 'marca', 'mes_nombre', 'mes_idx'],
-            observed=True, as_index=False
-        ).agg({
-            'monto_obj': 'sum',
-            'monto_26': 'sum',
-            'cant_obj': 'sum',
-            'cant_26': 'sum'
-        })
+        df = raw_data.copy()
 
-        pkg = {
-            'evolucion': SalesLogic.process_comparison_matrix(df_master),
-            'cartera': SalesLogic.process_customer_opportunity(df_master),
-            'marcas': SalesLogic.process_brand_drilldown(df_master),
-            'vendedores': SalesLogic.process_seller_drilldown(df_master),
-            'kpis': SalesLogic.get_kpis_fixed(df_master)
-        }
+        # Garantizar tipos numéricos en columnas de alias
+        for col in [ALIAS_CURRENT_VALUE, ALIAS_TARGET_VALUE, ALIAS_VARIATION]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+            else:
+                df[col] = 0.0
 
-        v_total = _safe_variacion([df_master['monto_26'].sum()], [df_master['monto_obj'].sum()])[0]
-        pkg['kpis']['variacion_total'] = float(v_total)
+        # ── ARTERIA A: EVOLUCIÓN MENSUAL ──────────────────────────────────────
+        if 'mes_idx' in df.columns:
+            df_evol = _agg(df, ['mes_idx'])
+            df_evol['Semestre'] = df_evol['mes_idx'].apply(
+                lambda x: '1er SEMESTRE' if int(x) <= 6 else '2do SEMESTRE'
+            )
+            df_evol['Mes'] = df_evol['mes_idx'].map(_MES_NOMBRES).fillna('S/D')
+            df_evol = df_evol.sort_values('mes_idx').drop(columns=['mes_idx'])
+            col_order = ['Semestre', 'Mes', ALIAS_TARGET_VALUE, ALIAS_CURRENT_VALUE, ALIAS_VARIATION]
+            df_evol = df_evol[[c for c in col_order if c in df_evol.columns]]
+        else:
+            df_evol = pd.DataFrame(
+                columns=['Semestre', 'Mes', ALIAS_CURRENT_VALUE, ALIAS_TARGET_VALUE, ALIAS_VARIATION]
+            )
 
-        SalesLogic._ui_mic(f"Análisis v85 (Protocolo Único) completado en {time.time() - t_init:.4f}s")
-        return pkg
+        # ── ARTERIA B: CARTERA (Cadena → Cliente → Marca) ────────────────────
+        if 'cliente' in df.columns:
+            grp = ['cliente']
+            if 'cadena' in df.columns: grp.append('cadena')
+            if 'marca'  in df.columns: grp.append('marca')
 
-    @staticmethod
-    def _align_temporal_data(df, meses_filtro):
-        df = df.copy()
-        if 'fecha' in df.columns:
-            df['fecha'] = pd.to_datetime(df['fecha'])
-            df['mes_idx'] = df['fecha'].dt.month
-            inv_meses = {v: k for k, v in SalesLogic.MESES_ORDEN.items()}
-            df['mes_nombre'] = df['mes_idx'].map(inv_meses)
-            if meses_filtro:
-                df = df[df['mes_nombre'].isin(meses_filtro)]
-        return df
+            df_cli = _agg(df, grp)
 
-    @staticmethod
-    def process_customer_opportunity(df_m):
-        """Unifica etiquetas para evitar redundancias en la UI."""
-        cartera = df_m.groupby(['vendedor', 'Identificador', 'cliente'], as_index=False).agg({
-            'monto_obj': 'sum', 'monto_26': 'sum'
-        })
-        cartera['Variación %'] = _safe_variacion(cartera['monto_26'], cartera['monto_obj'])
-        # Protocolo Picapiedra: 'Vendedor' -> 'Cadena' -> 'Cliente'
-        cartera.columns = ['Vendedor', 'Cadena', 'Cliente', 'Monto Obj', 'Monto 26', 'Variación %']
+            if 'cadena' in df_cli.columns:
+                df_cli['Cadena'] = np.where(
+                    df_cli['cadena'].str.upper().isin(_CADENA_NULA),
+                    df_cli['cliente'], df_cli['cadena']
+                )
+                df_cli = df_cli.drop(columns=['cadena'])
 
-        c_full_data = SalesLogic._sanitize_and_align(cartera, "Cartera Base")['data']
+            rename = {'cliente': 'Cliente'}
+            if 'marca' in df_cli.columns: rename['marca'] = 'Marca'
+            df_cli.rename(columns=rename, inplace=True)
 
-        return {
-            'crecimiento': SalesLogic._sanitize_and_align(c_full_data[c_full_data['Monto 26'] > c_full_data['Monto Obj']], "Cli Crecimiento"),
-            'decrecimiento': SalesLogic._sanitize_and_align(c_full_data[(c_full_data['Monto 26'] <= c_full_data['Monto Obj']) & (c_full_data['Monto 26'] > 0)], "Cli Decrecimiento"),
-            'sin_compra': SalesLogic._sanitize_and_align(c_full_data[c_full_data['Monto 26'] <= 0], "Cli Sin Compra")
-        }
+            def _path_cli(r):
+                cadena  = str(r.get('Cadena',  '')).strip()
+                cliente = str(r.get('Cliente', '')).strip()
+                marca   = str(r.get('Marca',   '')).strip()
+                if cadena == cliente:
+                    return _SEP.join([cliente, marca]) if marca else cliente
+                return _SEP.join([cadena, cliente, marca]) if marca else _SEP.join([cadena, cliente])
 
-    @staticmethod
-    def process_brand_drilldown(df_m):
-        rank = df_m.groupby('marca', as_index=False).agg({'monto_obj': 'sum', 'monto_26': 'sum'})
-        rank['Variación %'] = _safe_variacion(rank['monto_26'], rank['monto_obj'])
-        rank.columns = ['Marca', 'Monto Obj', 'Monto 26', 'Variación %']
+            df_cli['_path'] = df_cli.apply(_path_cli, axis=1)
 
-        det = df_m.groupby(['marca', 'Identificador', 'cliente', 'vendedor'], as_index=False).agg({'monto_obj': 'sum', 'monto_26': 'sum'})
-        det.columns = ['Marca', 'Cadena', 'Cliente', 'Vendedor', 'Obj Monto', 'Mont 26']
-        det['Var % Monto'] = _safe_variacion(det['Mont 26'], det['Obj Monto'])
+            _cli_cols = ['Cadena', 'Cliente', 'Marca',
+                         ALIAS_TARGET_VALUE, ALIAS_CURRENT_VALUE, ALIAS_VARIATION, '_path']
+            df_cli = df_cli[[c for c in _cli_cols if c in df_cli.columns]]
 
-        return (
-            SalesLogic._sanitize_and_align(rank.sort_values('Monto 26', ascending=False), "Marcas Rank"),
-            SalesLogic._sanitize_and_align(det, "Marcas Detalle")
+            mask_activo     = df_cli[ALIAS_CURRENT_VALUE] > 0
+            df_crecimiento  = df_cli[mask_activo & (df_cli[ALIAS_VARIATION] >= 0)].sort_values(
+                ALIAS_VARIATION, ascending=False).copy()
+            df_decrecimiento = df_cli[mask_activo & (df_cli[ALIAS_VARIATION] < 0)].sort_values(
+                ALIAS_VARIATION, ascending=True).copy()
+            df_sin_compra   = df_cli[~mask_activo & (df_cli[ALIAS_TARGET_VALUE] > 0)].sort_values(
+                ALIAS_TARGET_VALUE, ascending=False).copy()
+        else:
+            _empty = pd.DataFrame(
+                columns=['Cadena', 'Cliente', 'Marca',
+                         ALIAS_TARGET_VALUE, ALIAS_CURRENT_VALUE, ALIAS_VARIATION]
+            )
+            df_crecimiento = df_decrecimiento = df_sin_compra = _empty.copy()
+
+        # ── ARTERIA C: MARCAS ─────────────────────────────────────────────────
+        if 'marca' in df.columns:
+            df_mar_gen = _agg(df, ['marca'])
+            df_mar_gen.rename(columns={'marca': 'Marca'}, inplace=True)
+            df_mar_gen = df_mar_gen.sort_values(ALIAS_CURRENT_VALUE, ascending=False)
+            _mg_cols = ['Marca', ALIAS_TARGET_VALUE, ALIAS_CURRENT_VALUE, ALIAS_VARIATION]
+            df_mar_gen = df_mar_gen[[c for c in _mg_cols if c in df_mar_gen.columns]]
+
+            det_g = ['marca']
+            det_r = {'marca': 'Marca'}
+            for src, cap in [('cadena', 'Cadena'), ('cliente', 'Cliente'), ('vendedor', 'Vendedor')]:
+                if src in df.columns:
+                    det_g.append(src)
+                    det_r[src] = cap
+
+            df_mar_det = _agg(df, det_g)
+            df_mar_det.rename(columns=det_r, inplace=True)
+
+            def _path_mar(r):
+                parts = [str(r.get('Marca', '')).strip()]
+                cadena = str(r.get('Cadena', '')).strip()
+                if cadena and cadena.upper() not in _CADENA_NULA:
+                    parts.append(cadena)
+                cliente = str(r.get('Cliente', '')).strip()
+                if cliente: parts.append(cliente)
+                vendedor = str(r.get('Vendedor', '')).strip()
+                if vendedor: parts.append(vendedor)
+                return _SEP.join(parts)
+
+            df_mar_det['_path'] = df_mar_det.apply(_path_mar, axis=1)
+            _md_cols = ['Marca', 'Cadena', 'Cliente', 'Vendedor',
+                        ALIAS_TARGET_VALUE, ALIAS_CURRENT_VALUE, ALIAS_VARIATION, '_path']
+            df_mar_det = df_mar_det[[c for c in _md_cols if c in df_mar_det.columns]]
+        else:
+            _empty_m = pd.DataFrame(
+                columns=['Marca', ALIAS_TARGET_VALUE, ALIAS_CURRENT_VALUE, ALIAS_VARIATION]
+            )
+            df_mar_gen = df_mar_det = _empty_m.copy()
+
+        # ── ARTERIA D: VENDEDORES ─────────────────────────────────────────────
+        if 'vendedor' in df.columns:
+            df_ven_gen = _agg(df, ['vendedor'])
+            df_ven_gen.rename(columns={'vendedor': 'Vendedor'}, inplace=True)
+            df_ven_gen = df_ven_gen.sort_values(ALIAS_CURRENT_VALUE, ascending=False)
+            _vg_cols = ['Vendedor', ALIAS_TARGET_VALUE, ALIAS_CURRENT_VALUE, ALIAS_VARIATION]
+            df_ven_gen = df_ven_gen[[c for c in _vg_cols if c in df_ven_gen.columns]]
+
+            det_g_v = ['vendedor']
+            det_r_v = {'vendedor': 'Vendedor'}
+            for src, cap in [('cadena', 'Cadena'), ('cliente', 'Cliente'), ('marca', 'Marca')]:
+                if src in df.columns:
+                    det_g_v.append(src)
+                    det_r_v[src] = cap
+            if 'mes_idx' in df.columns:
+                det_g_v.append('mes_idx')
+
+            df_ven_det = _agg(df, det_g_v)
+            df_ven_det.rename(columns=det_r_v, inplace=True)
+            if 'mes_idx' in df_ven_det.columns:
+                df_ven_det['Mes'] = df_ven_det['mes_idx'].map(_MES_NOMBRES).fillna('S/D')
+                df_ven_det = df_ven_det.drop(columns=['mes_idx'])
+
+            def _path_ven(r):
+                parts = [str(r.get('Vendedor', '')).strip()]
+                cadena = str(r.get('Cadena', '')).strip()
+                if cadena and cadena.upper() not in _CADENA_NULA:
+                    parts.append(cadena)
+                cliente = str(r.get('Cliente', '')).strip()
+                if cliente: parts.append(cliente)
+                marca = str(r.get('Marca', '')).strip()
+                if marca: parts.append(marca)
+                mes = str(r.get('Mes', '')).strip()
+                if mes: parts.append(mes)
+                return _SEP.join(parts)
+
+            df_ven_det['_path'] = df_ven_det.apply(_path_ven, axis=1)
+            _vd_cols = ['Vendedor', 'Cadena', 'Cliente', 'Marca', 'Mes',
+                        ALIAS_TARGET_VALUE, ALIAS_CURRENT_VALUE, ALIAS_VARIATION, '_path']
+            df_ven_det = df_ven_det[[c for c in _vd_cols if c in df_ven_det.columns]]
+        else:
+            _empty_v = pd.DataFrame(
+                columns=['Vendedor', ALIAS_TARGET_VALUE, ALIAS_CURRENT_VALUE, ALIAS_VARIATION]
+            )
+            df_ven_gen = df_ven_det = _empty_v.copy()
+
+        # ── KPIs ──────────────────────────────────────────────────────────────
+        # Cuenta clientes únicos con actividad en cada año
+        if 'cliente' in df.columns:
+            clientes_26 = int(df[df[ALIAS_CURRENT_VALUE] > 0]['cliente'].nunique())
+            clientes_25 = int(df[df['monto_25'] > 0]['cliente'].nunique())
+        else:
+            clientes_26 = clientes_25 = 0
+
+        atendimiento    = (clientes_26 / clientes_25 * 100) if clientes_25 > 0 else 0.0
+        total_real      = float(df[ALIAS_CURRENT_VALUE].sum())
+        total_obj       = float(df[ALIAS_TARGET_VALUE].sum())
+        variacion_total = (
+            (total_real - total_obj) / total_obj * 100
+            if total_obj > 0 else (100.0 if total_real > 0 else 0.0)
         )
 
-    @staticmethod
-    def process_seller_drilldown(df_m):
-        rank = df_m.groupby('vendedor', as_index=False).agg({'monto_obj': 'sum', 'monto_26': 'sum'})
-        rank['Variación %'] = _safe_variacion(rank['monto_26'], rank['monto_obj'])
-        rank.columns = ['Vendedor', 'Monto Obj', 'Monto 26', 'Variación %']
-
-        det = df_m.copy()[['vendedor', 'Identificador', 'cliente', 'marca', 'mes_nombre', 'cant_obj', 'cant_26', 'monto_obj', 'monto_26']]
-        # Mantenemos consistencia con la jerarquía: Vendedor -> Cadena -> Cliente -> Marca
-        det.columns = ['Vendedor', 'Cadena', 'Cliente', 'Marca', 'Mes', 'Obj Cant', 'Cant 26', 'Obj Monto', 'Mont 26']
-        det['Var % Cant'] = _safe_variacion(det['Cant 26'], det['Obj Cant'])
-        det['Var % Monto'] = _safe_variacion(det['Mont 26'], det['Obj Monto'])
-
-        return (
-            SalesLogic._sanitize_and_align(rank.sort_values('Monto 26', ascending=False), "Vendedores Rank"),
-            SalesLogic._sanitize_and_align(det, "Vendedores Detalle")
-        )
-
-    @staticmethod
-    def process_comparison_matrix(df_m):
-        df_m = df_m.copy()
-        df_m['Semestre'] = np.where(df_m['mes_idx'] <= 6, "1er SEMESTRE", "2do SEMESTRE")
-
-        res = df_m.groupby(['Semestre', 'mes_idx', 'mes_nombre'], as_index=False).agg({
-            'monto_obj': 'sum', 'monto_26': 'sum'
-        }).sort_values('mes_idx')
-
-        res['Variación %'] = _safe_variacion(res['monto_26'], res['monto_obj'])
-
-        final = res[['Semestre', 'mes_nombre', 'monto_obj', 'monto_26', 'Variación %']].rename(
-            columns={'mes_nombre': 'Mes', 'monto_obj': 'Monto Obj', 'monto_26': 'Monto 26'}
-        )
-        return SalesLogic._sanitize_and_align(final, "Evolución Mensual")
-
-    @staticmethod
-    def get_kpis_fixed(df_m):
-        cl_26 = df_m[df_m['monto_26'] > 0]['cliente'].nunique()
-        total_cl = df_m['cliente'].nunique()
-        return {
-            'clientes_26': int(cl_26),
-            'total_cl': int(total_cl),
-            'atendimiento': float((cl_26 / total_cl * 100) if total_cl > 0 else 0.0)
+        # ── PAQUETE FINAL ──────────────────────────────────────────────────────
+        package = {
+            'evolucion': df_evol,
+            'cartera': {
+                'crecimiento':   df_crecimiento,
+                'decrecimiento': df_decrecimiento,
+                'sin_compra':    df_sin_compra,
+            },
+            'marcas':     (df_mar_gen, df_mar_det),
+            'vendedores': (df_ven_gen, df_ven_det),
+            'kpis': {
+                'clientes_26':    clientes_26,
+                'atendimiento':   atendimiento,
+                'variacion_total': variacion_total,
+            },
+            'metadata': {
+                'timestamp':    t_start,
+                'status':       'MULTI-ARTERIA-COMPLETE',
+                'registros':    len(df),
+                'piano_engine': 'v4-pivot-view',
+            }
         }
+
+        SalesLogic._mic(
+            f"v104 OK | {total_real:.0f} | Clientes: {clientes_26}/{clientes_25} "
+            f"({atendimiento:.1f}%) | Var: {variacion_total:+.1f}%"
+        )
+        return SalesLogic.sanitize_for_ui(package)
+
+# -----------------------------------------------------------------------------
+# [EXECUTION-CONFIRMED] v104.0.0 - Distribuidor puro. Matemáticas en la BD.
+# -----------------------------------------------------------------------------

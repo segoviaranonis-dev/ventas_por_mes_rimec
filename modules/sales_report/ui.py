@@ -71,12 +71,12 @@ def export_batch_zip(pkg_item, group_col, filename_prefix, group_cols_pdf, repor
     return zip_buffer, len(items)
 
 @st.dialog("Análisis Profundo Nexus", width="large")
-def show_expanded_table(pkg_data, group_cols, title, key_suffix):
+def show_expanded_table(pkg_data, group_cols, title, key_suffix, tree_path_col=None):
     st.subheader(f"🔍 {title}")
-    render_fragmented_grid(pkg_data, height=700, key_suffix=f"{key_suffix}_max", group_cols=group_cols)
+    render_fragmented_grid(pkg_data, height=700, key_suffix=f"{key_suffix}_max", group_cols=group_cols, tree_path_col=tree_path_col)
     if st.button("Cerrar Vista", use_container_width=True): st.rerun()
 
-def render_table_header(title, pkg_data, group_cols, key_suffix):
+def render_table_header(title, pkg_data, group_cols, key_suffix, show_total=True):
     col_t, col_e, col_p = st.columns([0.6, 0.2, 0.2])
     col_t.markdown(f"### {title}")
     df_to_export = pkg_data['data'] if isinstance(pkg_data, dict) else pkg_data
@@ -93,7 +93,8 @@ def render_table_header(title, pkg_data, group_cols, key_suffix):
             title,
             df_to_export,
             group_cols=group_cols,
-            meta_info=metadata_nexus
+            meta_info=metadata_nexus,
+            show_total=show_total
         )
         st.download_button("💾 BAJAR", pdf.getvalue(), f"{title}.pdf", "application/pdf", key=f"dl_{key_suffix}")
 
@@ -101,7 +102,7 @@ def render_table_header(title, pkg_data, group_cols, key_suffix):
 # RENDERIZADOR MAESTRO (PROTOCOLO NODO FINAL ABSOLUTO)
 # ─────────────────────────────────────────────────────────────────────────────
 @st.fragment
-def render_fragmented_grid(pkg_data, height=500, key_suffix="", group_cols=[]):
+def render_fragmented_grid(pkg_data, height=500, key_suffix="", group_cols=[], tree_path_col=None):
     t_grid = time.time()
 
     if isinstance(pkg_data, dict):
@@ -131,8 +132,15 @@ def render_fragmented_grid(pkg_data, height=500, key_suffix="", group_cols=[]):
     gb = GridOptionsBuilder.from_dataframe(df)
     gb.configure_default_column(resizable=True, filterable=True, sortable=True)
 
-    # 2. ESTRUCTURA DE JERARQUÍA (ROOT CAUSE FIX)
-    if display_groups:
+    # 2. ESTRUCTURA DE JERARQUÍA
+    _use_tree = tree_path_col and tree_path_col in df.columns
+    if _use_tree:
+        gb.configure_column(tree_path_col, hide=True)
+        # Las columnas de texto ya están representadas en la jerarquía del árbol
+        for col in df.select_dtypes(include=['object']).columns:
+            if col != tree_path_col:
+                gb.configure_column(col, hide=True)
+    elif display_groups:
         for col in display_groups:
             if col in df.columns:
                 gb.configure_column(col, rowGroup=True, hide=True)
@@ -191,6 +199,24 @@ def render_fragmented_grid(pkg_data, height=500, key_suffix="", group_cols=[]):
     grid_options = gb.build()
 
     # 4. CONFIGURACIÓN DE TABLA INTERACTIVA
+    auto_group_def = {
+        'headerName': 'ESTRUCTURA DE ANÁLISIS',
+        'minWidth': 300,
+        'pinned': 'left',
+        'cellRendererParams': {
+            'footerValueGetter': 'params.isFullWidth ? "TOTAL" : params.value'
+        }
+    }
+
+    tree_cfg = {}
+    if _use_tree:
+        tree_cfg = {
+            'treeData': True,
+            'getDataPath': JsCode(
+                f"function(data) {{ return data['{tree_path_col}'].split('|||'); }}"
+            ),
+        }
+
     grid_options.update({
         'localeText': SPANISH_LOCALE,
         'getRowStyle': SalesGridStyles.get_piano_geometry(),
@@ -199,14 +225,8 @@ def render_fragmented_grid(pkg_data, height=500, key_suffix="", group_cols=[]):
         'groupIncludeTotalFooter': True,
         'animateRows': False,
         'suppressAggFuncInHeader': True,
-        'autoGroupColumnDef': {
-            'headerName': 'ESTRUCTURA DE ANÁLISIS',
-            'minWidth': 300,
-            'pinned': 'left',
-            'cellRendererParams': {
-                'footerValueGetter': 'params.isFullWidth ? "TOTAL" : params.value'
-            }
-        }
+        'autoGroupColumnDef': auto_group_def,
+        **tree_cfg,
     })
 
     if totals:
@@ -224,6 +244,45 @@ def render_fragmented_grid(pkg_data, height=500, key_suffix="", group_cols=[]):
     )
 
     return res
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CARTERA UNIFICADA
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_unified_cartera(pkg_cartera):
+    """Concatena las 3 tablas de cartera con una columna de Estado.
+    Prepende el Estado al _path de cada fila para que treeData lo incluya
+    como nivel raíz de la jerarquía (Estado → Cadena/Cliente → Marca).
+    """
+    frames = []
+    for key, label in [
+        ('crecimiento',   '✅ Crecimiento'),
+        ('decrecimiento', '⚠️ Riesgo'),
+        ('sin_compra',    '📉 Sin Compra'),
+    ]:
+        src = pkg_cartera.get(key)
+        df_part = src['data'].copy() if isinstance(src, dict) else src.copy()
+        if not df_part.empty:
+            df_part.insert(0, 'Estado', label)
+            if '_path' in df_part.columns:
+                df_part['_path'] = label + '|||' + df_part['_path']
+            frames.append(df_part)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+@st.dialog("Cartera Completa — Vista Gerencial", width="large")
+def show_unified_cartera(pkg_cartera):
+    df_unified = _build_unified_cartera(pkg_cartera)
+    if df_unified.empty:
+        st.info("Sin datos de cartera.")
+    else:
+        render_fragmented_grid(
+            df_unified,
+            height=700,
+            key_suffix="cartera_unif_max",
+            tree_path_col='_path'
+        )
+    if st.button("Cerrar Vista", use_container_width=True):
+        st.rerun()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ORQUESTADOR FINAL (RE-NAME SYNC)
@@ -262,20 +321,38 @@ def render_sales_interface():
         with m2: card_metric("Atendimiento", f"{k['atendimiento']:.1f}%")
         with m3: card_metric("Variación Global", f"{pkg['kpis']['variacion_total']:+.1f}%")
         st.divider()
-        render_table_header("Evolución Mensual", pkg['evolucion'], ['Semestre'], "evol")
+        render_table_header("Evolución Mensual", pkg['evolucion'], ['Semestre'], "evol", show_total=False)
         render_fragmented_grid(pkg['evolucion'], height=350, key_suffix="evol", group_cols=['Semestre'])
 
     with tabs[1]:
+        # ── VISTA UNIFICADA (cabecera + botones) ──────────────────────────────
+        col_t, col_a, col_p = st.columns([0.6, 0.2, 0.2])
+        col_t.markdown("### 📋 Cartera Completa")
+        if col_a.button("🔍 AMPLIAR", key="btn_exp_cartera_unif", use_container_width=True):
+            show_unified_cartera(pkg['cartera'])
+        if col_p.button("📄 PDF", key="btn_pdf_cartera_unif", use_container_width=True):
+            FilterManager.commit_filters()
+            pdf = ExportManager.generate_general_report(
+                "Cartera Completa",
+                _build_unified_cartera(pkg['cartera']),
+                group_cols=['Estado', 'Cadena', 'Cliente', 'Marca'],
+                meta_info=FilterManager.get_report_metadata()
+            )
+            st.download_button("💾 BAJAR", pdf.getvalue(), "cartera_completa.pdf",
+                               "application/pdf", key="dl_cartera_unif")
+
+        # ── TABLAS INDIVIDUALES ───────────────────────────────────────────────
         for key, label in [('crecimiento', '✅ Clientes en Crecimiento'),
                           ('decrecimiento', '⚠️ Clientes en Riesgo'),
                           ('sin_compra', '📉 Sin Compra Reciente')]:
             st.divider()
-            render_table_header(label, pkg['cartera'][key], ['Cadena', 'Cliente'], f"cli_{key}")
-            render_fragmented_grid(pkg['cartera'][key], height=400, key_suffix=f"cli_{key}", group_cols=['Cadena', 'Cliente'])
+            render_table_header(label, pkg['cartera'][key], ['Cadena', 'Cliente', 'Marca'], f"cli_{key}")
+            render_fragmented_grid(pkg['cartera'][key], height=400, key_suffix=f"cli_{key}",
+                                   tree_path_col='_path')
 
     with tabs[2]:
         pkg_mar_gen, pkg_mar_det = pkg['marcas']
-        render_table_header("Ranking de Marcas", pkg_mar_gen, [], "mar_gen")
+        render_table_header("Ranking de Marcas", pkg_mar_gen, [], "mar_gen", show_total=False)
         render_fragmented_grid(pkg_mar_gen, height=300, key_suffix="mar_gen")
         st.divider()
 
@@ -283,16 +360,16 @@ def render_sales_interface():
         col1.markdown("### Matriz Detallada Marcas")
         if col2.button("📦 BATCH PDF", key="btn_batch_mar", use_container_width=True):
             with st.spinner("Generando PDFs por Marca..."):
-                z_buf, ct = export_batch_zip(pkg_mar_det, 'Marca', "Marcas", ['Marca', 'Cadena', 'Cliente'], "Matriz de Marca")
+                z_buf, ct = export_batch_zip(pkg_mar_det, 'Marca', "Marcas", ['Marca', 'Cadena', 'Cliente', 'Vendedor'], "Matriz de Marca")
                 st.download_button(f"⬇️ DESCARGAR ZIP ({ct})", z_buf.getvalue(), "batch_marcas.zip", "application/zip", key="dl_batch_mar")
         if col3.button("🔍 AMPLIAR", key="btn_exp_mar_det", use_container_width=True):
-            show_expanded_table(pkg_mar_det, ['Marca', 'Cadena', 'Cliente'], "Matriz Detallada Marcas", "mar_det")
+            show_expanded_table(pkg_mar_det, [], "Matriz Detallada Marcas", "mar_det", tree_path_col='_path')
 
-        render_fragmented_grid(pkg_mar_det, height=500, key_suffix="mar_det", group_cols=['Marca', 'Cadena', 'Cliente'])
+        render_fragmented_grid(pkg_mar_det, height=500, key_suffix="mar_det", tree_path_col='_path')
 
     with tabs[3]:
         pkg_ven_gen, pkg_ven_det = pkg['vendedores']
-        render_table_header("Ranking de Vendedores", pkg_ven_gen, [], "ven_gen")
+        render_table_header("Ranking de Vendedores", pkg_ven_gen, [], "ven_gen", show_total=False)
         render_fragmented_grid(pkg_ven_gen, height=300, key_suffix="ven_gen")
         st.divider()
 
@@ -300,11 +377,11 @@ def render_sales_interface():
         col1.markdown("### Gestión Detallada")
         if col2.button("📦 BATCH PDF", key="btn_batch_ven", use_container_width=True):
             with st.spinner("Generando PDFs por Vendedor..."):
-                z_buf, ct = export_batch_zip(pkg_ven_det, 'Vendedor', "Vendedores", ['Vendedor', 'Cadena', 'Cliente', 'Marca'], "Gestión Detallada")
+                z_buf, ct = export_batch_zip(pkg_ven_det, 'Vendedor', "Vendedores", ['Vendedor', 'Cadena', 'Cliente', 'Marca', 'Mes'], "Gestión Detallada")
                 st.download_button(f"⬇️ DESCARGAR ZIP ({ct})", z_buf.getvalue(), "batch_vendedores.zip", "application/zip", key="dl_batch_ven")
         if col3.button("🔍 AMPLIAR", key="btn_exp_ven_det", use_container_width=True):
-            show_expanded_table(pkg_ven_det, ['Vendedor', 'Cadena', 'Cliente', 'Marca'], "Gestión Detallada Vendedores", "ven_det")
+            show_expanded_table(pkg_ven_det, [], "Gestión Detallada Vendedores", "ven_det", tree_path_col='_path')
 
-        render_fragmented_grid(pkg_ven_det, height=600, key_suffix="ven_det", group_cols=['Vendedor', 'Cadena', 'Cliente', 'Marca'])
+        render_fragmented_grid(pkg_ven_det, height=600, key_suffix="ven_det", tree_path_col='_path')
 
     _ui_mic("🎯 DESPLIEGUE EXITOSO: Sector de Ventas Sincronizado.", t_start=t_total)

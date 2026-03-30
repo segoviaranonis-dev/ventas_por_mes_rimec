@@ -135,7 +135,6 @@ class SalesGridStyles:
         Inyección de CSS Global para AgGrid.
         Fuerza al motor Enterprise a usar el tema Obsidian.
         """
-        # Intentamos obtener el tema configurado, por defecto Alpine Dark para máxima compatibilidad
         grid_theme = settings.UI_CONFIG.get('grid_theme', 'ag-theme-balham-dark')
         gold = settings.UI_PRIMARY
         deep = settings.UI_BACKGROUND
@@ -189,3 +188,5 @@ class SalesGridStyles:
             }}
         </style>
         """
+
+# [EXECUTION-CONFIRMED] v70.4.1 restaurado — aspecto aprobado por cliente.

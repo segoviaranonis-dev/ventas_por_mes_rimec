@@ -1,10 +1,12 @@
 # =============================================================================
 # SISTEMA: NEXUS CORE - BUSINESS INTELLIGENCE
 # MODULO: main.py (EL ORQUESTADOR MAESTRO)
-# VERSION: 95.0.2 (SECURITY ENFORCED - ROLE SYNC READY)
+# VERSION: 100.3.0 (IRONCORE - MEMORY PURGE & DATA INTEGRITY)
 # UBICACIÓN: main.py
 # DESCRIPCIÓN: Punto de entrada único con Barrera de Acceso AuthManager.
-#              Garantiza la jerarquía de acceso RBAC sincronizada con usuario_v2.
+#                Garantiza la jerarquía de acceso RBAC sincronizada con usuario_v2.
+#                v100.3.0: Fase V - Memory Purge. Limpieza de sales_package para
+#                evitar persistencia de datos entre contextos de análisis.
 # =============================================================================
 
 import streamlit as st
@@ -34,20 +36,52 @@ if hasattr(settings, 'get_terminal_banner'):
 else:
     print(f"\n{'='*60}\n RIMEC • NEXUS CORE v{settings.VERSION}\n{'='*60}\n")
 
-# 3. CONFIGURACIÓN DE RUTAS
+# 3. CONFIGURACIÓN DE RUTAS (Orquestación de Directorios Tácticos)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
+CORE_DIR = os.path.join(BASE_DIR, "core")
+MODULES_DIR = os.path.join(BASE_DIR, "modules")
+
+# Aseguramos que Python reconozca la estructura de carpetas adjunta
+for path in [BASE_DIR, CORE_DIR, MODULES_DIR]:
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [EDICIÓN QUIRÚRGICA: PURGA DE MEMORIA TÁCTICA]
+# ─────────────────────────────────────────────────────────────────────────────
+# Este protocolo fuerza al intérprete a olvidar versiones antiguas y limpia
+# el estado de la sesión para evitar datos fantasma de ventas.
+def _purga_memoria_nexus():
+    # Purga de módulos de Python
+    modulos_criticos = [
+        'modules.sales_report.logic',
+        'modules.sales_report.ui'
+    ]
+    for m in modulos_criticos:
+        if m in sys.modules:
+            del sys.modules[m]
+            print(f"🧹 [PURGE] Memoria liberada para módulo: {m}")
+
+    # EJECUCIÓN QUIRÚRGICA: Limpieza de sales_package en Session State
+    if 'sales_package' in st.session_state:
+        del st.session_state['sales_package']
+        print("🧹 [PURGE] sales_package eliminado para integridad de datos.")
+
+if 'sistema_inicializado' not in st.session_state:
+    _purga_memoria_nexus()
+    st.session_state.sistema_inicializado = True
+# ─────────────────────────────────────────────────────────────────────────────
 
 # 4. IMPORTACIONES CORE (Sincronización de Componentes)
 try:
     from core.auth import AuthManager
     from core.styles import apply_ui_theme
-    from core.database import DBInspector
     from core.navigation import render_sidebar, render_page_content
+    import core.registry as registry  # Registro central de módulos
+
     print(f"🧬 {settings.LOG_PREFIX} [CORE-SYNC] Sinapsis de componentes Obsidian completada.")
 except ImportError as e:
-    print(f"🚨 [FATAL-NEXUS] Error en acoplamiento: {e}")
+    print(f"🚨 [FATAL-NEXUS] Error en acoplamiento de componentes: {e}")
     st.error(f"Fallo crítico en la estructura del sistema: {e}")
     st.stop()
 
@@ -64,18 +98,16 @@ def aduana_de_seguridad(modulo_key):
     if role in ["ADMIN", "DIRECTOR", "ROOT"] or st.session_state.user.get('bypass'):
         return True
 
-    # MATRIZ DE PERMISOS PARA OTROS ROLES
-    permisos = {
-        "home": ["ADMIN", "USER", "VIEWER", "DIRECTOR", "ROOT"],
-        "sales": ["ADMIN", "USER", "DIRECTOR", "ROOT"],
-        "import": ["ADMIN", "DIRECTOR", "ROOT"],
-        "diagnostics": ["ADMIN", "ROOT"]
-    }
-
-    permitidos = permisos.get(modulo_key, ["ADMIN"])
+    # MATRIZ DE PERMISOS — leída desde el Registry (no hardcodeada aquí)
+    permitidos = registry.get_allowed_roles(modulo_key)
 
     if role in permitidos:
         return True
+
+    # [IRONCORE-TELEMETRY] Registro asíncrono de intento de acceso no autorizado
+    msg_alerta = f"Intento de acceso denegado: {st.session_state.user.get('name')} -> Sector {modulo_key}"
+    if hasattr(settings, 'safe_log_async'):
+        settings.safe_log_async(msg_alerta, level="WARNING")
 
     print(f"🚫 {settings.LOG_PREFIX} [ADUANA] Acceso Denegado a {st.session_state.user.get('name')} (Rol: {role}) en {modulo_key}")
     return False
@@ -96,16 +128,18 @@ def render_login_screen():
             submit = st.form_submit_button("INICIAR PROTOCOLO DE ACCESO")
 
             if submit:
-                # El login ahora apunta a la tabla usuario_v2
                 if AuthManager.login(user_input, pass_input):
                     st.success("Acceso concedido. Sincronizando...")
+                    if hasattr(settings, 'safe_log_async'):
+                        settings.safe_log_async(f"Login exitoso: {user_input}")
+
                     time.sleep(0.5)
                     st.rerun()
                 else:
                     st.error("Credenciales inválidas. Acceso denegado.")
 
 def main():
-    """Motor de Orquestación Principal v95.0.2"""
+    """Motor de Orquestación Principal v100.3.0"""
     t_start = time.time()
 
     # --- [FASE 0: CONTROL DE ACCESO PERIMETRAL] ---
@@ -128,21 +162,31 @@ def main():
             stack = traceback.format_exc()
             print(f"🚨 {settings.LOG_PREFIX} [EXC-FATAL] Colapso en {modulo_key}: {err_msg}")
 
+            if hasattr(settings, 'safe_log_async'):
+                settings.safe_log_async(f"CRASH en {modulo_key}: {err_msg}", level="CRITICAL")
+
             st.error("### ⚠️ Anomalía Detectada en el Sector de Interfaz")
             with st.expander("🔍 Caja Negra (Análisis Técnico)"):
                 st.code(stack)
 
             if st.button("🧹 Purgar Memoria y Reiniciar"):
+                # Purga manual forzada en caso de colapso
+                _purga_memoria_nexus()
                 AuthManager.logout()
+                st.rerun()
     else:
         st.error(f"🚫 **Acceso Denegado:** Tu rango ({AuthManager.get_role()}) no permite el acceso al sector {modulo_key.upper()}.")
 
     # --- [FASE 4: LATIDO DEL SISTEMA (HEARTBEAT)] ---
     duracion = time.time() - t_start
     u_name = st.session_state.user['name']
-    # Log de terminal con el sector actual
+
     sys.stdout.write(f"\r💓 {settings.LOG_PREFIX} [HEARTBEAT] {duracion:.4f}s | Sector: {modulo_key.upper()} | Operador: {u_name}")
     sys.stdout.flush()
 
 if __name__ == "__main__":
     main()
+
+# -----------------------------------------------------------------------------
+# [EXECUTION-CONFIRMED] Se han aplicado los cambios de la TABLA DE EJECUCIÓN QUIRÚRGICA sobre el script main.py
+# -----------------------------------------------------------------------------

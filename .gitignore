@@ -159,6 +159,9 @@ __marimo__/
 .streamlit/secrets.toml
 .streamlit/
 
+# MCP config (contiene tokens de acceso)
+.mcp.json
+
 # Ignorar respaldos locales de Git dentro del proyecto
 sales-intelligence-platform_respaldo/
 

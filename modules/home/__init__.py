@@ -1,16 +1,19 @@
 # =============================================================================
-# SISTEMA: NEXUS CORE - BUSINESS INTELLIGENCE
+# MÓDULO: Hub Central (Home)
 # UBICACIÓN: modules/home/__init__.py
-# VERSIÓN: 94.5.1 (BRIDGE SYNC READY)
-# AUTOR: Héctor & Gemini AI
-# DESCRIPCIÓN: Puente de exportación para el Hub Central.
-#              Sincronizado con render_home (UI) y Navigator v94.4.0.
+# DESCRIPCIÓN: Declaración del módulo para el Registry NEXUS.
 # =============================================================================
-
-"""
-Módulo Home - Pantalla de Bienvenida Ciudad RIMEC
-"""
 
 from .ui import render_home
 
-__all__ = ['render_home']
+MODULE_INFO = {
+    "key":          "home",
+    "label":        "Hub Central",
+    "icon":         "🏠",
+    "allowed_roles": ["ADMIN", "USER", "VIEWER", "DIRECTOR", "ROOT"],
+    "render_fn":    "modules.home.ui.render_home",
+    "needs_engine": False,
+    "order":        1,
+}
+
+__all__ = ["render_home", "MODULE_INFO"]
