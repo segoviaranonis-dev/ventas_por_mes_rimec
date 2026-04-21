@@ -158,15 +158,79 @@ def _mapear_columnas(cols: list) -> dict:
 # OPERACIONES EN precio_evento
 # ─────────────────────────────────────────────────────────────────────────────
 
+def get_proveedores() -> pd.DataFrame:
+    df = get_dataframe("SELECT id, codigo, nombre FROM proveedor_importacion ORDER BY nombre")
+    return df if df is not None else pd.DataFrame()
+
+
+def get_or_create_linea(proveedor_id: int, codigo_proveedor: int) -> int | None:
+    try:
+        with engine.begin() as conn:
+            row = conn.execute(
+                text("SELECT id FROM linea WHERE proveedor_id = :pid AND codigo_proveedor = :cod LIMIT 1"),
+                {"pid": proveedor_id, "cod": codigo_proveedor}
+            ).fetchone()
+            if row:
+                return int(row[0])
+            row = conn.execute(
+                text("INSERT INTO linea (proveedor_id, codigo_proveedor) VALUES (:pid, :cod) RETURNING id"),
+                {"pid": proveedor_id, "cod": codigo_proveedor}
+            ).fetchone()
+            return int(row[0]) if row else None
+    except Exception as e:
+        DBInspector.log(f"[ENGINE] get_or_create_linea({codigo_proveedor}): {e}", "ERROR")
+        return None
+
+
+def get_or_create_referencia(proveedor_id: int, linea_id: int, codigo_proveedor: int) -> int | None:
+    try:
+        with engine.begin() as conn:
+            row = conn.execute(
+                text("""SELECT id FROM referencia
+                        WHERE proveedor_id = :pid AND linea_id = :lid AND codigo_proveedor = :cod LIMIT 1"""),
+                {"pid": proveedor_id, "lid": linea_id, "cod": codigo_proveedor}
+            ).fetchone()
+            if row:
+                return int(row[0])
+            row = conn.execute(
+                text("""INSERT INTO referencia (proveedor_id, linea_id, codigo_proveedor)
+                        VALUES (:pid, :lid, :cod) RETURNING id"""),
+                {"pid": proveedor_id, "lid": linea_id, "cod": codigo_proveedor}
+            ).fetchone()
+            return int(row[0]) if row else None
+    except Exception as e:
+        DBInspector.log(f"[ENGINE] get_or_create_referencia({codigo_proveedor}): {e}", "ERROR")
+        return None
+
+
+def get_or_create_material(proveedor_id: int, codigo_proveedor: int) -> int | None:
+    try:
+        with engine.begin() as conn:
+            row = conn.execute(
+                text("SELECT id FROM material WHERE proveedor_id = :pid AND codigo_proveedor = :cod LIMIT 1"),
+                {"pid": proveedor_id, "cod": codigo_proveedor}
+            ).fetchone()
+            if row:
+                return int(row[0])
+            row = conn.execute(
+                text("INSERT INTO material (proveedor_id, codigo_proveedor) VALUES (:pid, :cod) RETURNING id"),
+                {"pid": proveedor_id, "cod": codigo_proveedor}
+            ).fetchone()
+            return int(row[0]) if row else None
+    except Exception as e:
+        DBInspector.log(f"[ENGINE] get_or_create_material({codigo_proveedor}): {e}", "ERROR")
+        return None
+
+
 def crear_evento(nombre_evento: str, nombre_archivo: str,
-                 fecha_desde: str, usuario_id=None) -> int | None:
+                 fecha_desde: str, proveedor_id: int, usuario_id=None) -> int | None:
     return _insert_returning(
         """INSERT INTO precio_evento
-           (nombre_evento, nombre_archivo, fecha_vigencia_desde, usuario_id)
-           VALUES (:ne, :nf, :fd, :uid)
+           (nombre_evento, nombre_archivo, fecha_vigencia_desde, proveedor_id, usuario_id)
+           VALUES (:ne, :nf, :fd, :pid, :uid)
            RETURNING id""",
         {"ne": nombre_evento, "nf": nombre_archivo,
-         "fd": fecha_desde, "uid": usuario_id}
+         "fd": fecha_desde, "pid": proveedor_id, "uid": usuario_id}
     )
 
 
@@ -194,13 +258,18 @@ def crear_caso(evento_id: int, caso: dict) -> int | None:
     )
 
 
-def guardar_lineas_excepcion(caso_id: int, linea_codigos: list):
-    """Guarda excepciones por código de línea (sin depender de FKs)."""
+def guardar_lineas_excepcion(caso_id: int, linea_codigos: list, proveedor_id: int):
+    """Guarda excepciones por código de línea del proveedor."""
     for cod in linea_codigos:
+        try:
+            cod_int = int(cod)
+        except (ValueError, TypeError):
+            continue
         commit_query(
             """INSERT INTO precio_evento_linea_excepcion (caso_id, linea_id)
-               SELECT :cid, id FROM linea WHERE codigo = :cod LIMIT 1""",
-            {"cid": caso_id, "cod": cod},
+               SELECT :cid, id FROM linea
+               WHERE proveedor_id = :pid AND codigo_proveedor = :cod LIMIT 1""",
+            {"cid": caso_id, "pid": proveedor_id, "cod": cod_int},
             show_error=False
         )
 
@@ -208,7 +277,8 @@ def guardar_lineas_excepcion(caso_id: int, linea_codigos: list):
 def guardar_precio_lista(filas: list[dict]):
     """
     Inserta todas las filas en precio_lista en UNA sola transacción (bulk).
-    Cada fila: eid, cid, marca, lc, rc, md, fob, foba, lpn, lpc03, lpc04
+    Cada fila: eid, cid, marca, lc, rc, md, fob, foba, lpn, lpc03, lpc04,
+               dolar_ap, factor_ap, indice_ap, d1..d4_ap, nombre_caso_ap
     """
     if not filas:
         return
@@ -218,10 +288,17 @@ def guardar_precio_lista(filas: list[dict]):
                 text("""INSERT INTO precio_lista
                         (evento_id, caso_id, marca,
                          linea_codigo, referencia_codigo, material_descripcion,
-                         fob_fabrica, fob_ajustado, lpn, lpc03, lpc04, vigente)
+                         fob_fabrica, fob_ajustado, lpn, lpc03, lpc04, vigente,
+                         dolar_aplicado, factor_aplicado, indice_aplicado,
+                         descuento_1_aplicado, descuento_2_aplicado,
+                         descuento_3_aplicado, descuento_4_aplicado,
+                         nombre_caso_aplicado)
                         VALUES (:eid, :cid, :marca,
                                 :lc, :rc, :md,
-                                :fob, :foba, :lpn, :lpc03, :lpc04, false)"""),
+                                :fob, :foba, :lpn, :lpc03, :lpc04, false,
+                                :dolar_ap, :factor_ap, :indice_ap,
+                                :d1_ap, :d2_ap, :d3_ap, :d4_ap,
+                                :nombre_caso_ap)"""),
                 filas,
             )
             DBInspector.log(f"[ENGINE] Bulk INSERT: {len(filas)} filas en 1 transacción", "SUCCESS")
@@ -380,16 +457,17 @@ def get_precio_lista_completa(evento_id: int) -> pd.DataFrame:
     return get_dataframe(
         """SELECT pec.nombre_caso,
                   pl.marca,
-                  pl.linea_codigo                                    AS linea,
-                  pl.referencia_codigo                               AS referencia,
-                  pl.material_descripcion                            AS cab_codigo,
-                  COALESCE(m.descripcion, pl.material_descripcion)   AS material,
+                  COALESCE(l.codigo_proveedor::text, pl.linea_codigo)       AS linea,
+                  COALESCE(r.codigo_proveedor::text, pl.referencia_codigo)  AS referencia,
+                  COALESCE(m.descripcion, pl.material_descripcion)          AS material,
                   pl.lpn, pl.lpc03, pl.lpc04,
                   pe.fecha_vigencia_desde AS fecha
            FROM precio_lista pl
            JOIN precio_evento_caso pec ON pec.id = pl.caso_id
            JOIN precio_evento      pe  ON pe.id  = pl.evento_id
-           LEFT JOIN material m ON m.codigo = pl.material_descripcion
+           LEFT JOIN linea     l ON l.id  = pl.linea_codigo::bigint
+           LEFT JOIN referencia r ON r.id = pl.referencia_codigo::bigint
+           LEFT JOIN material   m ON m.id = pl.material_descripcion::bigint
            WHERE pl.evento_id = :eid
            ORDER BY pec.nombre_caso, pl.marca, pl.linea_codigo, pl.referencia_codigo""",
         {"eid": evento_id},

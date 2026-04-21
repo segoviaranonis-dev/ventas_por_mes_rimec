@@ -12,6 +12,10 @@ from modules.rimec_engine.logic import (
     leer_excel_proveedor,
     calcular_precios_caso,
     get_preview_skus,
+    get_proveedores,
+    get_or_create_linea,
+    get_or_create_referencia,
+    get_or_create_material,
     crear_evento,
     crear_caso,
     guardar_lineas_excepcion,
@@ -57,7 +61,8 @@ def _seccion(titulo: str, subtitulo: str = ""):
 
 def _reset_flujo():
     for k in ["re_evento_id", "re_skus", "re_maestros", "re_marcas",
-              "re_casos", "re_paso", "re_archivo_nombre", "re_nombre_evento", "re_skus_por_caso"]:
+              "re_casos", "re_paso", "re_archivo_nombre", "re_nombre_evento",
+              "re_skus_por_caso", "re_proveedor_id"]:
         if k in st.session_state:
             del st.session_state[k]
 
@@ -119,6 +124,15 @@ def _render_flujo():
 def _paso_0_carga():
     _seccion("Paso 0 — Carga del archivo")
 
+    df_prov = get_proveedores()
+    if df_prov.empty:
+        st.error("No hay proveedores registrados en la base de datos.")
+        return
+
+    opciones = {f"{row['nombre']} ({row['codigo']})": int(row["id"]) for _, row in df_prov.iterrows()}
+    proveedor_label = st.selectbox("Proveedor", list(opciones.keys()))
+    proveedor_id = opciones[proveedor_label]
+
     archivo = st.file_uploader("Archivo del proveedor (.xls / .xlsx)", type=["xls", "xlsx"])
     nombre_sugerido = archivo.name.replace(".xls", "").replace(".xlsx", "") if archivo else ""
     nombre_evento = st.text_input("Nombre del evento", value=nombre_sugerido,
@@ -138,12 +152,13 @@ def _paso_0_carga():
 
         st.success(f"✅ {len(skus)} SKUs detectados en {len(marcas)} marcas: **{', '.join(marcas)}**")
 
-        evento_id = crear_evento(nombre_evento, archivo.name, str(fecha_desde))
+        evento_id = crear_evento(nombre_evento, archivo.name, str(fecha_desde), proveedor_id)
         if not evento_id:
             st.error("Error al crear el evento en la base de datos.")
             return
 
         st.session_state["re_evento_id"]      = evento_id
+        st.session_state["re_proveedor_id"]   = proveedor_id
         st.session_state["re_skus"]           = skus
         st.session_state["re_marcas"]         = marcas
         st.session_state["re_archivo_nombre"] = archivo.name
@@ -415,6 +430,8 @@ def _paso_3_preview():
 
         if col_a.button(f"✅ Confirmar y calcular todo — {caso['nombre_caso']}", key=f"confirmar_{i}"):
             with st.spinner(f"Calculando {len(skus_caso)} SKUs..."):
+                proveedor_id = st.session_state.get("re_proveedor_id")
+
                 # Crear caso en BD
                 caso_id = crear_caso(evento_id, caso)
                 if not caso_id:
@@ -423,25 +440,51 @@ def _paso_3_preview():
 
                 # Guardar líneas excepción si aplica
                 if caso.get("lineas"):
-                    guardar_lineas_excepcion(caso_id, caso["lineas"])
+                    guardar_lineas_excepcion(caso_id, caso["lineas"], proveedor_id)
+
+                # Trazabilidad del caso (constantes para todas las filas)
+                dolar_ap  = float(caso["dolar_politica"])
+                factor_ap = float(caso["factor_conversion"])
+                indice_ap = (dolar_ap * factor_ap) / 100
 
                 # Calcular y guardar todos los SKUs
                 filas = []
                 for _, row in skus_caso.iterrows():
                     fob  = float(row["fob_fabrica"])
                     calc = calcular_precios_caso(fob, caso)
+
+                    # Lookup/creación de maestros — IDs internos
+                    try:
+                        cod_linea = int(float(str(row.get("linea", 0)).strip() or 0))
+                        cod_ref   = int(float(str(row["referencia"]).strip()))
+                        cod_mat   = int(float(str(row.get("material", 0)).strip() or 0))
+                    except (ValueError, TypeError):
+                        cod_linea = cod_ref = cod_mat = 0
+
+                    linea_id = get_or_create_linea(proveedor_id, cod_linea) if cod_linea else None
+                    ref_id   = get_or_create_referencia(proveedor_id, linea_id, cod_ref) if (linea_id and cod_ref) else None
+                    mat_id   = get_or_create_material(proveedor_id, cod_mat) if cod_mat else None
+
                     filas.append({
                         "eid":   evento_id,
                         "cid":   caso_id,
                         "marca": str(row["marca"]),
-                        "lc":    str(row.get("linea", "—")),
-                        "rc":    str(row["referencia"]),
-                        "md":    str(row.get("material", "STANDARD")),
+                        "lc":    str(linea_id) if linea_id else str(cod_linea),
+                        "rc":    str(ref_id)   if ref_id   else str(cod_ref),
+                        "md":    str(mat_id)   if mat_id   else str(cod_mat),
                         "fob":   fob,
                         "foba":  calc["fob_ajustado"],
                         "lpn":   calc["lpn"],
                         "lpc03": calc["lpc03"],
                         "lpc04": calc["lpc04"],
+                        "dolar_ap":      dolar_ap,
+                        "factor_ap":     factor_ap,
+                        "indice_ap":     round(indice_ap, 6),
+                        "d1_ap":         caso.get("descuento_1"),
+                        "d2_ap":         caso.get("descuento_2"),
+                        "d3_ap":         caso.get("descuento_3"),
+                        "d4_ap":         caso.get("descuento_4"),
+                        "nombre_caso_ap": caso["nombre_caso"],
                     })
 
                 guardar_precio_lista(filas)
@@ -516,9 +559,9 @@ def _paso_4_validacion():
     df_resultado = get_dataframe(
         """SELECT pec.nombre_caso AS "Caso",
                   pl.marca        AS "Marca",
-                  pl.linea_codigo      AS "Línea",
-                  pl.referencia_codigo AS "Referencia",
-                  COALESCE(m.descripcion, pl.material_descripcion) AS "Material",
+                  COALESCE(l.codigo_proveedor::text, pl.linea_codigo)      AS "Línea",
+                  COALESCE(r.codigo_proveedor::text, pl.referencia_codigo) AS "Referencia",
+                  COALESCE(m.descripcion, pl.material_descripcion)         AS "Material",
                   pl.fob_fabrica  AS "FOB",
                   pl.fob_ajustado AS "FOB Ajustado",
                   pl.lpn          AS "LPN",
@@ -526,7 +569,9 @@ def _paso_4_validacion():
                   pl.lpc04        AS "LPC04"
            FROM precio_lista pl
            JOIN precio_evento_caso pec ON pec.id = pl.caso_id
-           LEFT JOIN material m ON m.codigo = pl.material_descripcion
+           LEFT JOIN linea     l ON l.id  = pl.linea_codigo::bigint
+           LEFT JOIN referencia r ON r.id = pl.referencia_codigo::bigint
+           LEFT JOIN material   m ON m.id = pl.material_descripcion::bigint
            WHERE pl.evento_id = :eid
            ORDER BY pec.nombre_caso, pl.marca, pl.linea_codigo, pl.referencia_codigo""",
         {"eid": evento_id},
@@ -689,9 +734,9 @@ def _render_historial():
                 df_det = get_dataframe(
                     """SELECT pec.nombre_caso AS "Caso",
                               pl.marca        AS "Marca",
-                              pl.linea_codigo      AS "Línea",
-                              pl.referencia_codigo AS "Referencia",
-                              COALESCE(m.descripcion, pl.material_descripcion) AS "Material",
+                              COALESCE(l.codigo_proveedor::text, pl.linea_codigo)      AS "Línea",
+                              COALESCE(r.codigo_proveedor::text, pl.referencia_codigo) AS "Referencia",
+                              COALESCE(m.descripcion, pl.material_descripcion)         AS "Material",
                               pl.fob_fabrica AS "FOB",
                               pl.lpn  AS "LPN",
                               pl.lpc03 AS "LPC03",
@@ -699,7 +744,9 @@ def _render_historial():
                               pl.vigente AS "Vigente"
                        FROM precio_lista pl
                        JOIN precio_evento_caso pec ON pec.id = pl.caso_id
-                       LEFT JOIN material m ON m.codigo = pl.material_descripcion
+                       LEFT JOIN linea     l ON l.id  = pl.linea_codigo::bigint
+                       LEFT JOIN referencia r ON r.id = pl.referencia_codigo::bigint
+                       LEFT JOIN material   m ON m.id = pl.material_descripcion::bigint
                        WHERE pl.evento_id = :eid
                        ORDER BY pec.nombre_caso, pl.marca, pl.linea_codigo, pl.referencia_codigo""",
                     {"eid": eid},
