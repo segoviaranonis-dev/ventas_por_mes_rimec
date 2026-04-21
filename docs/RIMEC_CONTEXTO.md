@@ -15,6 +15,10 @@ intención de compra → pedido proveedor → proforma → facturación en trán
 ## Estado actual (21/04/2026)
 
 - Migración `002_create_rimec_engine.sql` ✅ ejecutada
+- Migración `003_provider_id_normalization.sql` ✅ ejecutada
+  - `proveedor_importacion.id` 1 → **654** (ID nativo del sistema PHP — Strangler Fig)
+  - Todas las FKs actualizadas: linea(121), material(28.881), compra_legal, intencion_compra, pedido_proveedor, ric
+  - `color.proveedor_id` agregado — 118 registros asignados a proveedor 654
 - Módulo `modules/rimec_engine/` ✅ construido y operativo
 - Tabla `material` ✅ poblada con 28.881 registros desde `material.xlsx`
 - Flujo Paso 0→5 funcionando: carga Excel → casos → preview → validación → cierre → historial
@@ -22,7 +26,7 @@ intención de compra → pedido proveedor → proforma → facturación en trán
 
 ## Próximo paso
 
-Validar PDFs generados con el nuevo layout (portrait, auto-fit). Ajustes finos pendientes según feedback del Director.
+Continuar con Etapa 2 del Rimec-Engine según feedback del Director.
 
 ---
 
