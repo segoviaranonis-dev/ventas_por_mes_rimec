@@ -12,6 +12,7 @@ DESCRIPCIÓN: Motor PDF estilo ejecutivo minimalista.
 """
 
 import numpy as np
+import pandas as pd
 from io import BytesIO
 from datetime import datetime
 from reportlab.lib import colors
@@ -48,7 +49,9 @@ class ReportEngine:
             if isinstance(val, (np.integer, np.floating)):
                 val = val.item()
             if isinstance(val, float) and np.isnan(val):
-                return ''
+                # Sin base de comparación: infinito matemático
+                is_pct_col = any(x in str(col_name).upper() for x in ['%', 'VARIACION', 'VAR'])
+                return '∞' if is_pct_col else ''
         except Exception:
             return ''
 
@@ -61,7 +64,7 @@ class ReportEngine:
             val_show = val_norm * 100
             txt = f"{val_show:,.2f}%".replace(',', 'X').replace('.', ',').replace('X', '.')
             if colorize:
-                col = _P['SUCCESS'] if val_norm >= obj_puro else _P['CRITICAL']
+                col = _P['SUCCESS'] if val_norm > 0 else _P['CRITICAL']
                 return f"<b><font color='{col}'>{txt}</font></b>"
             return txt
 
@@ -71,15 +74,20 @@ class ReportEngine:
 
     @staticmethod
     def _sub_var(grp, _col, df_cols):
-        """Calcula variación % para subtotales."""
+        """Calcula variación % para subtotales. Devuelve nan cuando base=0 y real>0 → ∞."""
         c_r = next((c for c in df_cols if '26' in str(c).upper() and 'CANT' not in str(c).upper()), None)
         c_o = next((c for c in df_cols if 'OBJ' in str(c).upper() and 'CANT' not in str(c).upper()), None)
-        if c_r and c_o and grp[c_o].sum() > 0:
-            return (grp[c_r].sum() - grp[c_o].sum()) / grp[c_o].sum()
+        if c_r and c_o:
+            obj_sum  = grp[c_o].sum()
+            real_sum = grp[c_r].sum()
+            if obj_sum > 0:
+                return (real_sum - obj_sum) / obj_sum
+            if real_sum > 0:
+                return float('nan')  # → _fmt lo convierte a ∞
         return 0.0
 
     @staticmethod
-    def generate_pdf(title, df_input, group_cols=None, meta_info=None, show_total=True):
+    def generate_pdf(title, df_input, group_cols=None, meta_info=None, show_total=True, mode="gerencial"):
 
         df = df_input.copy()
         info = meta_info or {}
@@ -98,11 +106,14 @@ class ReportEngine:
 
         # ── Documento ─────────────────────────────────────────────────────────
         buffer = BytesIO()
+        _page   = A4 if mode == "listado" else landscape(A4)
+        _margin = 0.4 * inch
         doc = SimpleDocTemplate(
-            buffer, pagesize=landscape(A4),
-            leftMargin=0.4 * inch, rightMargin=0.4 * inch,
-            topMargin=0.4 * inch, bottomMargin=0.35 * inch
+            buffer, pagesize=_page,
+            leftMargin=_margin, rightMargin=_margin,
+            topMargin=_margin, bottomMargin=0.35 * inch
         )
+        _usable_w = _page[0] - 2 * _margin
         elements = []
 
         # ── CABECERA EJECUTIVA ────────────────────────────────────────────────
@@ -115,12 +126,17 @@ class ReportEngine:
         st_date  = ParagraphStyle('DA', fontSize=6, textColor=_c(_P['MUTED']),
                                   alignment=2, fontName='Helvetica')
 
-        meta_line = (
-            f"<b>Objetivo:</b> {info.get('porcentaje', 'N/A')}  ·  "
-            f"<b>Departamento:</b> {info.get('depto', 'TODOS')}  ·  "
-            f"<b>Categoría:</b> {info.get('cat', 'TODAS')}  ·  "
-            f"<b>Período:</b> {info.get('periodo', 'N/A')}"
-        )
+        if mode == "listado":
+            # Listado informativo: subtítulo contextual, sin campos de sales report
+            meta_line = info.get("subtitulo", "")
+        else:
+            # Reporte gerencial: metadatos de análisis comercial
+            meta_line = (
+                f"<b>Objetivo:</b> {info.get('porcentaje', 'N/A')}  ·  "
+                f"<b>Departamento:</b> {info.get('depto', 'TODOS')}  ·  "
+                f"<b>Categoría:</b> {info.get('cat', 'TODAS')}  ·  "
+                f"<b>Período:</b> {info.get('periodo', 'N/A')}"
+            )
 
         head_tbl = Table([[
             Paragraph(
@@ -142,8 +158,8 @@ class ReportEngine:
         )
 
         # ── ESTILOS DE TABLA ──────────────────────────────────────────────────
-        fs   = 5.8
-        ld   = fs + 2.0
+        fs   = 8.0 if mode == "listado" else 5.8
+        ld   = fs + 2.2
         bf   = {'fontSize': fs, 'leading': ld}
 
         st_h   = ParagraphStyle('TH', fontSize=fs, leading=ld, textColor=colors.white,
@@ -217,15 +233,30 @@ class ReportEngine:
                             v = ReportEngine._sub_var(grp, col, df.columns)
                         else:
                             v = grp[col].sum()
+                        # En fondos oscuros (L0, L1) no colorizar: texto blanco ya es legible.
+                        # En fondos claros (L2+) colorizar normalmente.
+                        colorize_sub = is_pct and level >= 2
                         sub.append(Paragraph(
-                            ReportEngine._fmt(v, col, obj_puro, colorize=True), st_snm
+                            ReportEngine._fmt(v, col, obj_puro, colorize=colorize_sub), st_snm
                         ))
                     else:
                         sub.append(Paragraph('', st_txt))
 
                 data_rows.append(sub + [f'SUB_{level}', {'level': level, 'start_col': sc}])
 
-        if group_cols:
+        if mode == "listado":
+            # MODO LISTADO: cada fila muestra TODOS los valores — sin ocultar repetidos,
+            # sin subtotales. Pensado para listas de precios, catálogos, nóminas.
+            for _, row in df.iterrows():
+                f_row = [
+                    Paragraph(
+                        ReportEngine._fmt(row[c], c, obj_puro),
+                        st_num if c in num_cols else st_txt
+                    )
+                    for c in df.columns
+                ]
+                data_rows.append(f_row + ['DATA', {'level': 0}])
+        elif group_cols:
             process_data(df, group_cols)
         else:
             for _, row in df.iterrows():
@@ -238,8 +269,8 @@ class ReportEngine:
                 ]
                 data_rows.append(f_row + ['DATA', {'level': 0}])
 
-        # ── FILA TOTAL GENERAL ────────────────────────────────────────────────
-        if show_total:
+        # ── FILA TOTAL GENERAL (solo en modo gerencial) ───────────────────────
+        if show_total and mode != "listado":
             st_tot_lbl = ParagraphStyle(
                 'TOT_LBL', **bf,
                 fontName='Helvetica-Bold', textColor=colors.white
@@ -268,22 +299,45 @@ class ReportEngine:
                     tot_row.append(Paragraph('', st_tot_lbl))
             data_rows.append(tot_row + ['TOTAL', {}])
 
-        # ── ANCHOS DE COLUMNA (Proporción inteligente) ────────────────────────
-        usable_w = 10.9 * inch
-        weights = []
-        for c in df.columns:
-            cu = str(c).upper()
-            if any(x in cu for x in ['CLIENTE']):
-                weights.append(3.2)
-            elif any(x in cu for x in ['CADENA', 'VENDEDOR']):
-                weights.append(2.5)
-            elif any(x in cu for x in ['MARCA']):
-                weights.append(1.8)
-            elif 'MES' in cu:
-                weights.append(1.1)
-            else:
-                weights.append(1.0)
-        col_widths = [(w / sum(weights)) * usable_w for w in weights]
+        # ── ANCHOS DE COLUMNA ─────────────────────────────────────────────────
+        if mode == "listado":
+            # Auto-fit: proporcional al contenido, con techo de 22 chars
+            # para que la descripción no engulla todo el ancho disponible.
+            char_w = []
+            for c in df.columns:
+                header_len = len(str(c))
+                data_max = df[c].apply(
+                    lambda v: len(ReportEngine._fmt(v, c, obj_puro))
+                    if pd.notna(v) and str(v) not in ('', 'nan') else 0
+                ).max()
+                raw = max(header_len, int(data_max), 3)
+                char_w.append(min(raw, 22))  # techo: textos largos harán wrap
+            col_widths = [(w / sum(char_w)) * _usable_w for w in char_w]
+        else:
+            weights = []
+            for c in df.columns:
+                cu = str(c).upper()
+                if any(x in cu for x in ['CLIENTE']):
+                    weights.append(3.2)
+                elif any(x in cu for x in ['CADENA', 'VENDEDOR']):
+                    weights.append(2.5)
+                elif any(x in cu for x in ['MARCA']):
+                    weights.append(1.8)
+                elif any(x in cu for x in ['DESC']):
+                    weights.append(3.0)
+                elif 'MES' in cu:
+                    weights.append(1.1)
+                elif any(x in cu for x in ['LPN', 'LPC0', 'LPC ']):
+                    weights.append(0.9)
+                elif any(x in cu for x in ['LÍNEA', 'LINEA']):
+                    weights.append(0.65)
+                elif cu in ('REF.', 'REF'):
+                    weights.append(0.35)
+                elif 'REF' in cu:
+                    weights.append(0.8)
+                else:
+                    weights.append(1.0)
+            col_widths = [(w / sum(weights)) * _usable_w for w in weights]
 
         t = Table(
             [r[:-2] for r in data_rows],
@@ -304,6 +358,12 @@ class ReportEngine:
             # Líneas horizontales suaves para todas las filas
             ('LINEBELOW', (0, 0), (-1, -1), 0.25, _c(_P['BORDER_LT'])),
         ]
+
+        if mode == "listado":
+            style += [
+                ('INNERGRID', (0, 0), (-1, -1), 0.3, _c('#BFBFBF')),  # gris Excel thin
+                ('BOX',       (0, 0), (-1, -1), 0.5, _c('#ADADAD')),  # gris Excel borde ext.
+            ]
 
         sub_bgs = {
             0: _P['BG_L0'],

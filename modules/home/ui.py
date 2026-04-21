@@ -1,106 +1,220 @@
 # =============================================================================
-# SISTEMA: NEXUS CORE - BUSINESS INTELLIGENCE
-# UBICACIÓN: C:\Users\hecto\Documents\Prg_locales\ventas_por_mes_rimec-main\modules\home\ui.py
-# VERSION: 94.5.2 (TOTAL SYNC - DOCUMENTATION UPDATED)
-# AUTOR: Héctor & Gemini AI
-# DESCRIPCIÓN: Pantalla de inicio de alta fidelidad.
-#              Sincronizado con el Navigator v94.4.0 (Function naming fix).
+# SISTEMA: RIMEC Business Intelligence — NEXUS CORE
+# MÓDULO:  modules/home/ui.py
+# VERSION: 2.0.0 (NEXUS LAUNCHER — Modular Command Center)
+# DESCRIPCIÓN: Pantalla de inicio tipo launcher: cards por sector de negocio.
+#              Navega a cualquier módulo sin pasar por el sidebar.
 # =============================================================================
 
 import streamlit as st
-import time
 from core.database import get_engine, DBInspector
 from core.settings import settings
-# Se integra card_metric para blindar los KPIs
-from core.styles import header_section, StatusFactory, card_metric
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _nav(key: str):
+    """Navega al módulo indicado. El radio del sidebar usa index desde piso_actual."""
+    st.session_state.piso_actual = key
+    st.rerun()
+
+
+def _section(icon: str, title: str, subtitle: str):
+    """Renderiza el encabezado de una sección del launcher."""
+    st.markdown(f"""
+        <div class="nx-section-label" style="margin-top:28px;">
+            {icon}&nbsp;&nbsp;{title}
+            <span style="font-weight:400; text-transform:none; letter-spacing:0;
+                         color:#475569; font-size:0.67rem; margin-left:8px;">
+                — {subtitle}
+            </span>
+        </div>
+    """, unsafe_allow_html=True)
+    st.markdown("<div style='margin-bottom:10px;'></div>", unsafe_allow_html=True)
+
+
+def _card_html(icon: str, title: str, desc: str) -> str:
+    """Genera HTML de una card visual del launcher."""
+    return f"""
+        <div class="nx-card">
+            <span class="nx-card-icon">{icon}</span>
+            <div class="nx-card-title">{title}</div>
+            <div class="nx-card-desc">{desc}</div>
+        </div>
+    """
+
+
+def _card(col, icon: str, title: str, desc: str, btn_key: str, module_key: str):
+    """Renderiza una card completa con su botón de navegación en la columna dada."""
+    with col:
+        st.markdown(_card_html(icon, title, desc), unsafe_allow_html=True)
+        if st.button("Abrir →", key=btn_key, use_container_width=True):
+            _nav(module_key)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RENDER PRINCIPAL
+# ─────────────────────────────────────────────────────────────────────────────
 
 def render_home():
-    """
-    Renderiza la recepción del sistema.
-    IMPORTANTE: Se renombra de 'render_home_interface' a 'render_home'
-    para cumplir con la llamada del orquestador core/navigation.py
-    """
+    """Command Center — Launcher modular NEXUS v2.0."""
 
-    # 🎙️ MICROFONÍA: Registro de entrada al Command Center
-    start_time = time.time()
-    DBInspector.log(f"🛰️ {settings.LOG_PREFIX} Accediendo al Command Center", "UI-ORCHESTRATOR")
+    # ── DB STATUS ─────────────────────────────────────────────────────────────
+    engine = get_engine()
+    db_ok  = engine is not None
 
-    # --- 1. EXTRACCIÓN DE IDENTIDAD (ADN CENTRAL) ---
-    sys_name = getattr(settings, 'SYSTEM_NAME', 'NEXUS CORE')
-    tagline = getattr(settings, 'TAGLINE', 'Business Intelligence System')
-    edition = getattr(settings, 'EDITION', 'Standard')
-    version = getattr(settings, 'VERSION', '94.5.1')
+    status_class = "nx-status-badge" if db_ok else "nx-status-badge offline"
+    status_dot   = "●" if db_ok else "●"
+    status_txt   = "Base de datos conectada" if db_ok else "Sin conexión a la base de datos"
 
-    # --- 2. CABECERA DINÁMICA (Visual Saneado) ---
-    header_section(
-        sys_name,
-        f"{tagline} | v{version}"
+    # ── HERO ──────────────────────────────────────────────────────────────────
+    st.markdown(f"""
+        <div class="nx-hero">
+            <div class="nx-hero-brand">{settings.COMPANY_NAME} &nbsp;·&nbsp; {settings.SYSTEM_NAME}</div>
+            <div class="nx-hero-title">Command Center</div>
+            <div class="nx-hero-sub" style="margin-bottom:14px;">
+                Sistema de Gestión Integral · v{settings.VERSION}
+            </div>
+            <span class="{status_class}">{status_dot}&nbsp;{status_txt}</span>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECCIÓN 1 — ANÁLISIS COMERCIAL
+    # ══════════════════════════════════════════════════════════════════════════
+    _section("📊", "ANÁLISIS COMERCIAL", "Reportes e inteligencia de ventas")
+
+    col_sr, col_empty = st.columns([1, 2])
+    _card(
+        col_sr,
+        icon  = "📊",
+        title = "Sales Report",
+        desc  = "Análisis de ventas por período, vendedor, marca y cadena. Exportación PDF ejecutiva.",
+        btn_key     = "nav_sales",
+        module_key  = "sales",
     )
 
-    # --- 3. ORQUESTACIÓN DE ESTADO Y ENLACE ---
-    try:
-        engine = get_engine()
-        latency = (time.time() - start_time) * 1000
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECCIÓN 2 — CICLO DE IMPORTACIÓN
+    # ══════════════════════════════════════════════════════════════════════════
+    _section("🚢", "CICLO DE IMPORTACIÓN", "Motor de precios · Flujo completo desde intención hasta depósito")
 
-        if engine:
-            # 🎙️ MICROFONÍA: Salud del Cerebro
-            DBInspector.log(f"🧠 Cerebro Central vinculado en {latency:.2f}ms", "SUCCESS")
-            StatusFactory.alert("success", f"Enlace con {settings.COMPANY_NAME} activo (Latencia: {latency:.1f}ms).")
+    c0, c1, c2, c3, c4, c5 = st.columns(6)
 
-            with st.container():
-                # --- GUÍA DE OPERACIONES (Texto Blindado por styles.py) ---
-                st.markdown(f"""
-                ### 🏗️ Estado de la Operación: {edition}
-                Hemos consolidado la infraestructura **Titanium-Shield**. Actualmente el sistema opera con **Cifrado de Capa 7** y la dualidad visual **Purity & Flow**.
+    _card(
+        c0,
+        icon  = "⚙️",
+        title = "Motor de Precios",
+        desc  = "Importar FOB del proveedor, configurar casos y generar listas LPN / LPC03 / LPC04.",
+        btn_key    = "nav_engine",
+        module_key = "rimec_engine",
+    )
+    _card(
+        c1,
+        icon  = "📋",
+        title = "Intención de Compra",
+        desc  = "Cabecera financiera. Cuotas por marca y límite de crédito.",
+        btn_key     = "nav_ic",
+        module_key  = "intencion_compra",
+    )
+    _card(
+        c2,
+        icon  = "📦",
+        title = "Pedido Proveedor",
+        desc  = "SKUs F9, gradaciones, proformas y ventas en tránsito.",
+        btn_key     = "nav_pp",
+        module_key  = "pedido_proveedor",
+    )
+    _card(
+        c3,
+        icon  = "🏛️",
+        title = "Compra Legal",
+        desc  = "Consolidación de PPs. Generación de compras legales y traspasos.",
+        btn_key     = "nav_cl",
+        module_key  = "compra_legal",
+    )
+    _card(
+        c4,
+        icon  = "🧾",
+        title = "Facturación",
+        desc  = "FAC-INT en tránsito. Distribución a sucursales y cliente 5000.",
+        btn_key     = "nav_fac",
+        module_key  = "facturacion",
+    )
+    _card(
+        c5,
+        icon  = "🏭",
+        title = "Depósito RIMEC",
+        desc  = "Saldo físico en depósito. Compra inicial menos venta en tránsito.",
+        btn_key     = "nav_dep",
+        module_key  = "deposito",
+    )
 
-                **Protocolo de Navegación Nexus:**
-                1. **Panel Lateral:** Utilice el elevador para navegar por las divisiones tácticas.
-                2. **📥 Data Ingestion:** Procese los archivos antes del cierre de ciclo.
-                3. **📊 Sales Intelligence:** Motor de análisis con exportación PDF de alta fidelidad.
-                4. **⚙️ Core Diagnosis:** Monitoreo de logs y salud de base de datos.
-                """)
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECCIÓN 4 — BAZAR WEB
+    # ══════════════════════════════════════════════════════════════════════════
+    _section("🛍️", "BAZAR WEB", "Operación del catálogo y tienda online")
 
-                # --- KPIs DE INFRAESTRUCTURA (Saneados con card_metric) ---
-                st.divider()
-                col1, col2, col3 = st.columns(3)
+    b1, b2, b3, b4 = st.columns([1, 1, 1, 2])
 
-                with col1:
-                    # Sustitución de st.metric por componente blindado
-                    card_metric("Módulos Activos", "5", "Saludable")
-                    st.write(f"**Sync:** {settings.LOG_PREFIX}")
+    _card(
+        b1,
+        icon  = "🛒",
+        title = "Pedidos Web",
+        desc  = "Recepción y confirmación de pedidos del catálogo online.",
+        btn_key     = "nav_pw",
+        module_key  = "pedido_web",
+    )
+    _card(
+        b2,
+        icon  = "📥",
+        title = "Compra Web",
+        desc  = "Recepción de mercadería en almacén web (ALM_WEB_01).",
+        btn_key     = "nav_cw",
+        module_key  = "compra_web",
+    )
+    _card(
+        b3,
+        icon  = "📦",
+        title = "Depósito Web",
+        desc  = "Stock disponible en tienda. Vista de saldo por artículo.",
+        btn_key     = "nav_dw",
+        module_key  = "deposito_web",
+    )
 
-                with col2:
-                    card_metric("Ecosistema", "Quantum-Cloud", f"Node: {edition}")
-                    st.write(f"**Engine:** PostgreSQL")
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECCIÓN 5 — SISTEMA
+    # ══════════════════════════════════════════════════════════════════════════
+    _section("⚙️", "SISTEMA", "Herramientas de mantenimiento y diagnóstico")
 
-                with col3:
-                    card_metric("Seguridad", f"v{version}", "2026 Titanium Active")
-                    st.write("**Shield:** Active")
+    s1, s2, s3 = st.columns([1, 1, 3])
 
-                # --- DETALLES TÉCNICOS ---
-                st.divider()
-                with st.expander(f"ℹ️ Especificaciones Técnicas de {sys_name}"):
-                    st.markdown(f"""
-                    **{settings.COMPANY_NAME} Business Intelligence - Nexus Edition**
+    _card(
+        s1,
+        icon  = "📥",
+        title = "Importar Datos",
+        desc  = "Carga de archivos F9, catálogos y datos históricos.",
+        btn_key     = "nav_import",
+        module_key  = "import",
+    )
+    _card(
+        s2,
+        icon  = "🔧",
+        title = "Estado del Sistema",
+        desc  = "Diagnóstico de conexión, logs y salud de la base de datos.",
+        btn_key     = "nav_status",
+        module_key  = "diagnostics",
+    )
 
-                    - **Visual:** AgGrid Engine con `UI_CONFIG` centralizado.
-                    - **Lógica de Datos:** Variación Blindada con `_safe_variacion`.
-                    - **Piano Geometry:** Arquitectura de niveles con bordes dinámicos.
-                    - **Agnosticismo:** Desacoplamiento total de strings y estilos.
-                    """)
-        else:
-            DBInspector.log("❌ Fallo de enlace central", "CRITICAL")
-            StatusFactory.alert("error", "Fallo crítico: El cerebro central no responde.")
-            st.warning("Verifique la conexión con el servidor o el archivo de secretos.")
+    # ── FOOTER ────────────────────────────────────────────────────────────────
+    st.markdown("<div style='margin-top:32px;'></div>", unsafe_allow_html=True)
+    st.markdown(f"""
+        <div style="text-align:center; color:#334155; font-size:0.68rem; padding: 16px 0;">
+            {settings.COMPANY_NAME} · {settings.SYSTEM_NAME} v{settings.VERSION}
+            &nbsp;·&nbsp; {settings.EDITION}
+        </div>
+    """, unsafe_allow_html=True)
 
-    except Exception as e:
-        # 🎙️ MICROFONÍA: Captura de colapso
-        DBInspector.log(f"💥 COLAPSO EN INTERFAZ HOME: {str(e)}", "CRITICAL")
-        StatusFactory.alert("error", f"Colapso en la infraestructura: {str(e)}")
-
-        import traceback
-        with st.expander("🔍 Caja Negra (Debug Trace)"):
-            st.code(traceback.format_exc())
-
-    # 🎙️ MICROFONÍA: Fin de renderizado
-    DBInspector.log(f"🏁 UI Home Renderizado completado", "V2-TRACE")
+    DBInspector.log("🚀 [HOME] Launcher v2.0 renderizado", "SUCCESS")

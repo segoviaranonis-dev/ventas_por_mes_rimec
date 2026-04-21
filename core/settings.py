@@ -173,11 +173,6 @@ class BrandConfig:
         thread.start()
 
     @classmethod
-    def get_column_alias(cls, logical_name):
-        """Retorna el nombre físico de la columna según el SCHEMA_MAP."""
-        return cls.SCHEMA_MAP['COLUMNS'].get(logical_name, logical_name)
-
-    @classmethod
     def get(cls, key, default=None):
         return getattr(cls, key, default)
 

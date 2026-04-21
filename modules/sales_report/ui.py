@@ -13,7 +13,6 @@ import zipfile
 import pandas as pd
 import numpy as np
 from io import BytesIO
-from core.settings import settings
 from core.queries import QueryCenter
 from core.styles import header_section, card_metric, StatusFactory
 from core.filters import FilterManager
@@ -103,8 +102,6 @@ def render_table_header(title, pkg_data, group_cols, key_suffix, show_total=True
 # ─────────────────────────────────────────────────────────────────────────────
 @st.fragment
 def render_fragmented_grid(pkg_data, height=500, key_suffix="", group_cols=[], tree_path_col=None):
-    t_grid = time.time()
-
     if isinstance(pkg_data, dict):
         df = pkg_data['data'].copy()
         totals = pkg_data.get('totals', {})
@@ -179,7 +176,7 @@ def render_fragmented_grid(pkg_data, height=500, key_suffix="", group_cols=[], t
                                 }});
                             }}
                             if (sumObj > 0) return (sumReal - sumObj) / sumObj * 100;
-                            if (sumReal > 0) return 100;
+                            if (sumReal > 0) return null;  // sin base → ∞ en formatter
                             return 0;
                         }}
                     """)
@@ -300,9 +297,7 @@ def render_sales_interface():
         with st.spinner("Sincronizando..."):
             raw_data = QueryCenter.get_main_sales_query(f)
             if raw_data is not None and not raw_data.empty:
-                st.session_state.sales_package = SalesLogic.get_full_analysis_package(
-                    raw_data, f.get("objetivo_pct", 0), f.get("meses", [])
-                )
+                st.session_state.sales_package = SalesLogic.get_full_analysis_package(raw_data)
             else:
                 st.session_state.sales_package = None
             FilterManager.set_reload_state(False)

@@ -68,10 +68,11 @@ def render_sidebar() -> str:
             options=nav_list,
             index=current_index,
             label_visibility="collapsed",
-            key="main_nav_radio"
         )
         modulo_key = opciones[seleccion]
 
+        # Si el usuario clickeó el radio (o un botón cambió piso_actual),
+        # sincronizamos y recargamos.
         if st.session_state.piso_actual != modulo_key:
             DBInspector.log(
                 f"🧭 [NAV] Cambio: {st.session_state.piso_actual} → {modulo_key}",
@@ -80,10 +81,9 @@ def render_sidebar() -> str:
             st.session_state.piso_actual = modulo_key
             st.rerun()
 
-    # ── CONTROLES DE SIDEBAR ─────────────────────────────────────────────────
-    raw_universe = st.session_state.get("raw_universe") if modulo_key == "sales" else None
+    # ── CONTROLES DE SIDEBAR (dispatcher genérico — agnóstico de módulo) ─────
     try:
-        render_sidebar_controls(modulo_key, df_raw=raw_universe)
+        render_sidebar_controls(modulo_key)
     except Exception as e:
         DBInspector.log(f"[CRÍTICO] Fallo Render Sidebar: {e}", "ERROR")
         st.sidebar.error("Error en controles del módulo.")

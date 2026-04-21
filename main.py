@@ -74,7 +74,7 @@ if 'sistema_inicializado' not in st.session_state:
 
 # 4. IMPORTACIONES CORE (Sincronización de Componentes)
 try:
-    from core.auth import AuthManager
+    from core.auth import AuthManager, _MAX_INTENTOS
     from core.styles import apply_ui_theme
     from core.navigation import render_sidebar, render_page_content
     import core.registry as registry  # Registro central de módulos
@@ -128,15 +128,23 @@ def render_login_screen():
             submit = st.form_submit_button("INICIAR PROTOCOLO DE ACCESO")
 
             if submit:
-                if AuthManager.login(user_input, pass_input):
+                resultado = AuthManager.login(user_input, pass_input)
+                if resultado == True:
                     st.success("Acceso concedido. Sincronizando...")
                     if hasattr(settings, 'safe_log_async'):
                         settings.safe_log_async(f"Login exitoso: {user_input}")
-
                     time.sleep(0.5)
                     st.rerun()
+                elif isinstance(resultado, tuple) and resultado[0] == "blocked":
+                    minutos = resultado[1]
+                    st.error(f"🔒 Demasiados intentos fallidos. Intenta nuevamente en {minutos} minuto(s).")
                 else:
-                    st.error("Credenciales inválidas. Acceso denegado.")
+                    intentos = st.session_state.get("_auth_intentos", 0)
+                    restantes = _MAX_INTENTOS - intentos
+                    if restantes > 0:
+                        st.error(f"Credenciales inválidas. Te quedan {restantes} intento(s).")
+                    else:
+                        st.error("🔒 Cuenta bloqueada temporalmente. Intenta en 15 minutos.")
 
 def main():
     """Motor de Orquestación Principal v100.3.0"""
@@ -166,8 +174,10 @@ def main():
                 settings.safe_log_async(f"CRASH en {modulo_key}: {err_msg}", level="CRITICAL")
 
             st.error("### ⚠️ Anomalía Detectada en el Sector de Interfaz")
-            with st.expander("🔍 Caja Negra (Análisis Técnico)"):
-                st.code(stack)
+            # Solo ADMIN ve el stack trace — nunca exponerlo a roles bajos
+            if st.session_state.get("user", {}).get("role") == "ADMIN":
+                with st.expander("🔍 Caja Negra (Análisis Técnico)"):
+                    st.code(stack)
 
             if st.button("🧹 Purgar Memoria y Reiniciar"):
                 # Purga manual forzada en caso de colapso

@@ -11,7 +11,7 @@ MODULE_INFO = {
     "allowed_roles": ["ADMIN", "DIRECTOR", "ROOT"],
     "render_fn":    "modules.import_data.ui.render_import_interface",
     "needs_engine": True,   # este módulo recibe el engine de DB
-    "order":        3,
+    "order":        10,
 }
 
 __all__ = ["MODULE_INFO"]

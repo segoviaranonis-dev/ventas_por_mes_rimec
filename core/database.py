@@ -147,11 +147,3 @@ def commit_query(query, params=None, show_error=True):
             DBInspector.log(f"🔥 FALLO EN ESCRITURA: {e}", "ERROR")
         return False
 
-def reset_id_sequence(table_name, pk_col='id_venta'):
-    """Sincroniza secuencias para integridad de registros."""
-    query = f"""
-        SELECT setval(pg_get_serial_sequence('{table_name}', '{pk_col}'),
-        COALESCE(MAX({pk_col}), 1), MAX({pk_col}) IS NOT NULL)
-        FROM {table_name};
-    """
-    return commit_query(query, show_error=True)

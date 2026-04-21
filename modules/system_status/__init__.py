@@ -11,7 +11,7 @@ MODULE_INFO = {
     "allowed_roles": ["ADMIN", "ROOT"],
     "render_fn":    "modules.system_status.ui.render_system_status",
     "needs_engine": False,
-    "order":        4,
+    "order":        11,
 }
 
 __all__ = ["MODULE_INFO"]

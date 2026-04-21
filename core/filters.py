@@ -1,196 +1,171 @@
 """
 SISTEMA: NEXUS CORE - BUSINESS INTELLIGENCE
 UBICACIÓN: core/filters.py
-VERSION: 90.5.2 (DEBUG + HOTFIX: RELOAD STATE)
-AUTOR: Héctor & Gemini AI
-DESCRIPCIÓN: Aduana de Integridad con Protocolo de Neutralización Total.
-             Microfonía integrada para rastrear la fuga de datos hacia el PDF.
-             Corrección de atributo faltante set_reload_state.
+VERSION: 91.0.0 (DYNAMIC CATEGORIES - DB DRIVEN)
+DESCRIPCIÓN: Gestión de estado de filtros. Categorías cargadas desde categoria_v2.
+             Sin microfonía debug en producción.
 """
 
 import streamlit as st
 from datetime import datetime
-import pandas as pd
 import time
-from .database import get_dataframe, DBInspector
 import copy
+from .database import get_dataframe, DBInspector
+from core.constants import MESES_LISTA
+
 
 class FilterManager:
-    """
-    Motor de Gestión de Estado NEXUS CORE v72.
-    Controla la persistencia, la neutralización de predicados y el reinicio maestro.
-    """
+    """Gestión de estado de filtros. Draft → Commit → SQL."""
 
-    CATEGORIA_MAP = {
-        "TODOS": 0,
-        "Stock": 1,
-        "Compra Previa": 2,
-        "Programado": 3
-    }
-
-    # Inversión de mapa para traducción humana de IDs
-    CATEGORIA_REV_MAP = {v: k for k, v in CATEGORIA_MAP.items()}
-
-    @staticmethod
-    def initialize_filters():
-        """Inicializa el entorno con sensores de presencia y parámetros de fábrica."""
-        if 'user' not in st.session_state:
-            return
-
-        if 'filters' not in st.session_state:
-            t_init = time.time()
-            DBInspector.log("[FILTER-INIT] Desplegando Chasis v72 - MODO GLOBAL...", "V2-TRACE")
-
-            if 'meses_key_tracker' not in st.session_state:
-                st.session_state.meses_key_tracker = 0
-
-            # 1. Carga de Opciones Maestras
-            FilterManager._load_master_options()
-
-            # 2. Configuración de Inicio (Garantía de Negocio: Calzados/Programado)
-            st.session_state.filters = {
-                "objetivo_pct": 20.0,
-                "departamento": "CALZADOS",
-                "categoria_ids": [3], # ID 3 = Programado
-                "meses": ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio"],
-                "cadenas": [],
-                "clientes": [],
-                "vendedores": [],
-                "marcas": [],
-                "id_cliente_exacto": None,
-                "must_reload": True,
-                "last_sync": datetime.now().strftime("%H:%M:%S")
-            }
-
-            st.session_state.filter_draft = copy.deepcopy(st.session_state.filters)
-            DBInspector.log(f"[FILTER-INIT] Estado inicial inyectado en {time.time()-t_init:.4f}s", "SUCCESS")
-
-    @staticmethod
-    def get_report_metadata():
-        """
-        🎯 MÉTODO DE CONEXIÓN: Prepara el diccionario meta_info para el ReportEngine.
-        """
-        # --- MICROFONÍA DE ENTRADA ---
-        print("\n" + "═"*60)
-        print("🎤 [DEBUG-PDF] CAPTURANDO ESTADO ACTUAL PARA GENERAR PDF...")
-        
-        f = FilterManager.get_all_committed()
-        
-        # Log del estado crudo capturado
-        print(f"📦 ESTADO EN SESSION_STATE (COMMITTED): {f}")
-
-        # 1. Traducción de Categorías (ID -> Texto)
-        cat_names = [FilterManager.CATEGORIA_REV_MAP.get(cid, f"ID:{cid}") for cid in f.get('categoria_ids', [])]
-        cat_str = ", ".join(cat_names) if cat_names else "TODAS"
-        print(f"🏷️ CATEGORÍAS TRADUCIDAS: {cat_str}")
-
-        # 2. Formateo de Periodo (Meses)
-        meses = f.get('meses', [])
-        if not meses:
-            periodo_str = "N/A"
-        elif len(meses) >= 6:
-            periodo_str = f"{meses[0]} - {meses[-1]}"
-        else:
-            periodo_str = ", ".join([m[:3] for m in meses])
-        print(f"📅 PERIODO FORMATEADO: {periodo_str}")
-
-        # 3. Empaquetado Final
-        meta_info = {
-            "porcentaje": f"{f.get('objetivo_pct', 0):,.2f}%",
-            "depto": str(f.get('departamento', 'TODOS')).upper(),
-            "cat": cat_str.upper(),
-            "periodo": periodo_str.upper(),
-            "objetivo_puro": float(f.get('objetivo_pct', 0)) / 100 
-        }
-
-        # --- MICROFONÍA DE SALIDA ---
-        print("🚀 DATOS LISTOS PARA EL MOTOR PDF:")
-        for k, v in meta_info.items():
-            print(f"   ➤ {k}: {v}")
-        print("═"*60 + "\n")
-
-        return meta_info
-
-    @staticmethod
-    def set_reload_state(state: bool):
-        """🔧 HOTFIX: Permite al sistema marcar si los datos requieren nueva consulta SQL."""
-        FilterManager.initialize_filters()
-        if 'filters' in st.session_state:
-            st.session_state.filters["must_reload"] = state
-
-    @staticmethod
-    def reset_all_filters():
-        """🔄 PROTOCOLO DE REINICIO MAESTRO"""
-        DBInspector.log("[RESET-MAESTRO] Ejecutando purga...", "AVISO")
-        
-        factory_settings = {
-            "objetivo_pct": 20.0,
-            "departamento": "CALZADOS",
-            "categoria_ids": [3],
-            "meses": ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio"],
-            "cadenas": [],
-            "clientes": [],
-            "vendedores": [],
-            "marcas": [],
-            "id_cliente_exacto": None
-        }
-        
-        for key, value in factory_settings.items():
-            st.session_state.filter_draft[key] = value
-        
-        st.session_state.meses_key_tracker += 1
-        FilterManager.commit_filters()
+    # ── CATEGORÍAS DINÁMICAS ──────────────────────────────────────────────────
 
     @staticmethod
     @st.cache_data(ttl=3600)
-    def _fetch_master_types():
+    def _fetch_categories() -> dict:
+        """Carga {nombre: id} desde categoria_v2. Fallback hardcodeado si falla BD."""
         try:
-            query = "SELECT DISTINCT descp_tipo FROM tipo_v2 ORDER BY descp_tipo"
-            df_tipos = get_dataframe(query)
-            if df_tipos is not None and not df_tipos.empty:
-                res = sorted([str(x).strip() for x in df_tipos['descp_tipo'].unique()])
+            df = get_dataframe(
+                "SELECT id_categoria, TRIM(descp_categoria) AS nombre "
+                "FROM categoria_v2 ORDER BY id_categoria"
+            )
+            if df is not None and not df.empty:
+                result = {"TODOS": 0}
+                for _, row in df.iterrows():
+                    result[str(row['nombre']).title()] = int(row['id_categoria'])
+                return result
+        except Exception as e:
+            DBInspector.log(f"[FILTER] Error cargando categorías: {e}", "ERROR")
+        return {"TODOS": 0, "Stock": 1, "Pre Venta": 2, "Programado": 3}
+
+    @staticmethod
+    def get_categoria_map() -> dict:
+        """Retorna el mapa {nombre: id} desde master_options o BD."""
+        return st.session_state.get('master_options', {}).get(
+            'categorias_map', FilterManager._fetch_categories()
+        )
+
+    # ── TIPOS (DEPARTAMENTOS) ─────────────────────────────────────────────────
+
+    @staticmethod
+    @st.cache_data(ttl=3600)
+    def _fetch_master_types() -> list:
+        try:
+            df = get_dataframe("SELECT DISTINCT descp_tipo FROM tipo_v2 ORDER BY descp_tipo")
+            if df is not None and not df.empty:
+                res = sorted([str(x).strip() for x in df['descp_tipo'].unique()])
                 if "TODOS" not in res:
                     res.insert(0, "TODOS")
                 return res
         except Exception as e:
-            DBInspector.log(f"[DB-FETCH-ERROR] {str(e)}", "ERROR")
+            DBInspector.log(f"[FILTER] Error cargando tipos: {e}", "ERROR")
         return ["TODOS", "CALZADOS", "TEXTIL"]
+
+    # ── INICIALIZACIÓN ────────────────────────────────────────────────────────
 
     @staticmethod
     def _load_master_options():
+        # Invalida caché si el formato es antiguo (sin categorias_map)
+        if st.session_state.get('master_options', {}).get('categorias_map') is None:
+            st.session_state.pop('master_options', None)
+
         if 'master_options' not in st.session_state:
-            tipos = FilterManager._fetch_master_types()
+            tipos    = FilterManager._fetch_master_types()
+            cat_map  = FilterManager._fetch_categories()
             st.session_state.master_options = {
-                "departamentos": tipos,
-                "categorias": list(FilterManager.CATEGORIA_MAP.keys())
+                "departamentos":  tipos,
+                "categorias_map": cat_map,
+                "categorias":     list(cat_map.keys()),
             }
 
     @staticmethod
-    def get_sales_ui_universe(df_raw):
-        maestros = st.session_state.get('master_options', {})
-        if df_raw is None or df_raw.empty:
-            return {
-                "departamentos": maestros.get("departamentos", ["TODOS", "CALZADOS"]),
-                "categorias": maestros.get("categorias", ["TODOS", "Programado", "Stock", "Compra Previa"]),
-                "marcas": [], "cadenas": [], "clientes": [], "vendedores": []
+    def initialize_filters():
+        if 'user' not in st.session_state:
+            return
+        if 'filters' not in st.session_state:
+            t = time.time()
+            DBInspector.log("[FILTER-INIT] Inicializando estado...", "V2-TRACE")
+            if 'meses_key_tracker' not in st.session_state:
+                st.session_state.meses_key_tracker = 0
+            FilterManager._load_master_options()
+            st.session_state.filters = {
+                "objetivo_pct":     20.0,
+                "departamento":     "CALZADOS",
+                "categoria_ids":    [3],        # ID 3 = Programado
+                "meses":            MESES_LISTA[:6],
+                "cadenas":          [],
+                "clientes":         [],
+                "vendedores":       [],
+                "marcas":           [],
+                "id_cliente_exacto": None,
+                "must_reload":      True,
+                "last_sync":        datetime.now().strftime("%H:%M:%S"),
             }
+            st.session_state.filter_draft = copy.deepcopy(st.session_state.filters)
+            DBInspector.log(f"[FILTER-INIT] Listo en {time.time()-t:.4f}s", "SUCCESS")
+
+    # ── METADATA PARA PDF ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def get_report_metadata() -> dict:
+        f       = FilterManager.get_all_committed()
+        cat_map = FilterManager.get_categoria_map()
+        rev_map = {v: k for k, v in cat_map.items()}
+
+        cat_names   = [rev_map.get(cid, f"ID:{cid}") for cid in f.get('categoria_ids', [])]
+        cat_str     = ", ".join(cat_names) if cat_names else "TODAS"
+        meses       = f.get('meses', [])
+        periodo_str = (f"{meses[0]} - {meses[-1]}" if len(meses) >= 6
+                       else ", ".join(m[:3] for m in meses) if meses else "N/A")
+
+        return {
+            "porcentaje":   f"{f.get('objetivo_pct', 0):,.2f}%",
+            "depto":        str(f.get('departamento', 'TODOS')).upper(),
+            "cat":          cat_str.upper(),
+            "periodo":      periodo_str.upper(),
+            "objetivo_puro": float(f.get('objetivo_pct', 0)) / 100,
+        }
+
+    # ── UNIVERSO UI ───────────────────────────────────────────────────────────
+
+    @staticmethod
+    def get_sales_ui_universe(df_raw) -> dict:
+        maestros = st.session_state.get('master_options', {})
 
         def clean_list(serie, force_item=None):
-            if serie is None: return []
-            res = sorted([str(x).strip() for x in serie.dropna().unique() 
-                         if str(x).strip() not in ["", "None", "nan", "CLIENTE S/I", "nan", "NaN"]])
+            if serie is None:
+                return []
+            res = sorted([str(x).strip() for x in serie.dropna().unique()
+                          if str(x).strip() not in ("", "None", "nan", "NaN", "CLIENTE S/I")])
             if force_item and force_item not in res:
                 res.insert(0, force_item)
             return res
 
-        return {
-            "departamentos": maestros.get("departamentos"),
-            "categorias": maestros.get("categorias"),
-            "marcas": clean_list(df_raw.get('marca')),
-            "vendedores": clean_list(df_raw.get('vendedor')),
-            "cadenas": clean_list(df_raw.get('cadena'), force_item="S/C"),
-            "clientes": clean_list(df_raw.get('cliente'))
+        base = {
+            "departamentos": maestros.get("departamentos", ["TODOS", "CALZADOS"]),
+            "categorias":    maestros.get("categorias",    ["TODOS"]),
+            "marcas": [], "cadenas": [], "clientes": [], "vendedores": [],
         }
+        if df_raw is None or df_raw.empty:
+            return base
+
+        base.update({
+            "marcas":     clean_list(df_raw.get('marca')),
+            "vendedores": clean_list(df_raw.get('vendedor')),
+            "cadenas":    clean_list(df_raw.get('cadena'), force_item="S/C"),
+            "clientes":   clean_list(df_raw.get('cliente')),
+        })
+        return base
+
+    # ── CRUD DE ESTADO ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def update_draft(key, value):
+        FilterManager.initialize_filters()
+        if key == "categoria_ids":
+            cat_map = FilterManager.get_categoria_map()
+            value   = [cat_map.get(v, v) if isinstance(v, str) else v for v in value]
+        if 'filter_draft' in st.session_state:
+            st.session_state.filter_draft[key] = value
 
     @staticmethod
     def update_meses_shortcut(meses_list):
@@ -200,20 +175,31 @@ class FilterManager:
         FilterManager.commit_filters()
 
     @staticmethod
-    def update_draft(key, value):
-        FilterManager.initialize_filters()
-        if key == "categoria_ids":
-            value = [FilterManager.CATEGORIA_MAP.get(v, v) if isinstance(v, str) else v for v in value]
-        
-        if 'filter_draft' in st.session_state:
-            st.session_state.filter_draft[key] = value
-
-    @staticmethod
     def commit_filters():
         FilterManager.initialize_filters()
         st.session_state.filters = copy.deepcopy(st.session_state.filter_draft)
         st.session_state.filters["must_reload"] = True
-        st.session_state.filters["last_sync"] = datetime.now().strftime("%H:%M:%S")
+        st.session_state.filters["last_sync"]   = datetime.now().strftime("%H:%M:%S")
+
+    @staticmethod
+    def reset_all_filters():
+        DBInspector.log("[FILTER] Reinicio maestro.", "AVISO")
+        defaults = {
+            "objetivo_pct": 20.0, "departamento": "CALZADOS",
+            "categoria_ids": [3], "meses": MESES_LISTA[:6],
+            "cadenas": [], "clientes": [], "vendedores": [],
+            "marcas": [], "id_cliente_exacto": None,
+        }
+        for k, v in defaults.items():
+            st.session_state.filter_draft[k] = v
+        st.session_state.meses_key_tracker += 1
+        FilterManager.commit_filters()
+
+    @staticmethod
+    def set_reload_state(state: bool):
+        FilterManager.initialize_filters()
+        if 'filters' in st.session_state:
+            st.session_state.filters["must_reload"] = state
 
     @staticmethod
     def get_draft(key, default=None):
@@ -221,11 +207,11 @@ class FilterManager:
         return st.session_state.filter_draft.get(key, default)
 
     @staticmethod
-    def get_all_committed():
+    def get_all_committed() -> dict:
         FilterManager.initialize_filters()
         return copy.deepcopy(st.session_state.filters)
 
     @staticmethod
-    def should_reload():
+    def should_reload() -> bool:
         FilterManager.initialize_filters()
         return st.session_state.filters.get("must_reload", True)

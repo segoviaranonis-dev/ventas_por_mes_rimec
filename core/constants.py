@@ -70,10 +70,28 @@ DNA_MAP = {
     "Margen %":          DNA_RATIO
 }
 
-# 4. CONFIGURACIÓN DE TELEMETRÍA (IronConfig)
+# 4. CALENDARIOS (Fuente única — importar desde aquí, no redefinir en otros módulos)
+# -----------------------------------------------------------------------------
+MES_MAP = {
+    "Enero": 1, "Febrero": 2, "Marzo": 3, "Abril": 4,
+    "Mayo": 5, "Junio": 6, "Julio": 7, "Agosto": 8,
+    "Septiembre": 9, "Octubre": 10, "Noviembre": 11, "Diciembre": 12
+}
+MES_NOMBRES = {v: k for k, v in MES_MAP.items()}   # {1: "Enero", ...}
+MESES_LISTA = list(MES_MAP.keys())                  # Orden natural para UI
+
+# 5. CONFIGURACIÓN DE TELEMETRÍA (IronConfig)
 # -----------------------------------------------------------------------------
 # Tiempo límite para la validación de la tubería de datos (Supabase Contract)
 IRON_CONFIG_TIMEOUT = 1.5  # Segundos
+
+# 6. SHOWROOM NEXUS — Servidor de imágenes de producto
+# -----------------------------------------------------------------------------
+# URL base del servidor de imágenes.
+# Patrón de archivo: {linea}-{referencia}-{id_material}-{id_color}.jpg
+# Ejemplo: .../productos/1122-806-13488-104068.jpg
+# Dejar vacío ("") mientras no haya servidor configurado — el card muestra placeholder.
+SHOWROOM_IMG_BASE_URL = "https://extrlcvcgypwazxipvqm.supabase.co/storage/v1/object/public/productos"
 
 # 5. WHITELIST DE EXPORTACIÓN
 # -----------------------------------------------------------------------------

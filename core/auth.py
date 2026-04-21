@@ -7,17 +7,58 @@
 
 import streamlit as st
 import pandas as pd
+import time
 from core.database import get_dataframe
+
+_MAX_INTENTOS  = 5
+_BLOQUEO_SEG   = 900   # 15 minutos
 
 class AuthManager:
     """
-    Motor de Seguridad RIMEC v3.1: RBAC con Auditoría de Terminal Activa.
-    Optimizado para validación relámpago y compatibilidad con el esquema v2.
+    Motor de Seguridad RIMEC v3.2: RBAC con Rate-Limiting y Auditoría.
     """
 
     @staticmethod
+    def _check_rate_limit() -> tuple[bool, int]:
+        """
+        Devuelve (bloqueado, segundos_restantes).
+        Usa session_state para persistir el estado por sesión de browser.
+        """
+        now = time.time()
+        bloqueo_hasta = st.session_state.get("_auth_bloqueo_hasta", 0)
+
+        if bloqueo_hasta > now:
+            return True, int(bloqueo_hasta - now)
+        if bloqueo_hasta > 0 and bloqueo_hasta <= now:
+            # Período de bloqueo expiró — resetear
+            st.session_state["_auth_intentos"]      = 0
+            st.session_state["_auth_bloqueo_hasta"] = 0
+        return False, 0
+
+    @staticmethod
+    def _registrar_fallo():
+        """Incrementa contador de intentos fallidos. Activa bloqueo al llegar al límite."""
+        intentos = st.session_state.get("_auth_intentos", 0) + 1
+        st.session_state["_auth_intentos"] = intentos
+        if intentos >= _MAX_INTENTOS:
+            st.session_state["_auth_bloqueo_hasta"] = time.time() + _BLOQUEO_SEG
+            print(f"🚨 [AUTH-SEC] Bloqueo activado tras {intentos} intentos fallidos.")
+
+    @staticmethod
+    def _resetear_intentos():
+        st.session_state["_auth_intentos"]      = 0
+        st.session_state["_auth_bloqueo_hasta"] = 0
+
+    @staticmethod
     def login(username_input, password):
-        """Valida credenciales en usuario_v2 con mapeo de privilegios."""
+        """Valida credenciales en usuario_v2 con mapeo de privilegios y rate limiting."""
+        # ── RATE LIMIT ────────────────────────────────────────────────────────
+        bloqueado, segundos = AuthManager._check_rate_limit()
+        if bloqueado:
+            minutos = segundos // 60
+            print(f"🚫 [AUTH-SEC] Login bloqueado. Tiempo restante: {segundos}s")
+            return "blocked", minutos
+
         user_clean = str(username_input).strip()
 
         print(f"\n🔑 [AUTH-MIC] >>> INICIANDO PROTOCOLO DE ACCESO")
@@ -39,6 +80,7 @@ class AuthManager:
 
             if df is None or df.empty:
                 print(f"⚠️ [AUTH-MIC] RECHAZO: Credenciales inválidas para '{user_clean}'.")
+                AuthManager._registrar_fallo()
                 return False
 
             # Extracción de metadata
@@ -46,8 +88,6 @@ class AuthManager:
             raw_role = str(user_data['categoria']).upper().strip()
 
             # --- MAPEO DE PODER (Sincronización con Aduana) ---
-            # Si el rol en DB es DIRECTOR o ROOT, lo normalizamos a ADMIN
-            # para que el main.py no bloquee el acceso a los sectores críticos.
             role_map = {
                 "DIRECTOR": "ADMIN",
                 "ROOT": "ADMIN",
@@ -62,17 +102,19 @@ class AuthManager:
                 "id": user_data['id_usuario'],
                 "name": user_data['descp_usuario'],
                 "role": final_role,
-                "raw_role": raw_role, # Guardamos el original por auditoría
+                "raw_role": raw_role,
                 "auth_time": pd.Timestamp.now(),
                 "bypass": True if final_role == "ADMIN" else False
             }
 
+            AuthManager._resetear_intentos()
             print(f"✅ [AUTH-MIC] ¡ACCESO CONCEDIDO! Rango: {final_role}")
             print(f"🔐 [AUTH-MIC] Sesión inyectada para {user_data['descp_usuario']}.")
             return True
 
         except Exception as e:
             print(f"🚨 [AUTH-MIC] FALLO TÉCNICO EN LOGIN: {str(e)}")
+            AuthManager._registrar_fallo()
             return False
 
     @staticmethod

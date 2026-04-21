@@ -32,10 +32,12 @@ class ExportManager:
         }
 
     @staticmethod
-    def generate_general_report(title, pkg_item, group_cols=None, meta_info=None, show_total=True):
+    def generate_general_report(title, pkg_item, group_cols=None, meta_info=None,
+                                show_total=True, mode="gerencial"):
         """
         Orquestador principal de PDF.
-        Acepta un Súper Objeto {data, totals, dna} o un DataFrame crudo.
+        mode="gerencial" → reporte ejecutivo con jerarquía y subtotales.
+        mode="listado"   → listado informativo, fila completa sin ocultar repetidos.
         """
         from core.report_engine import ReportEngine
 
@@ -46,5 +48,6 @@ class ExportManager:
             df_to_print,
             group_cols=group_cols,
             meta_info=meta_info,
-            show_total=show_total
+            show_total=show_total,
+            mode=mode,
         )

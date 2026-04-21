@@ -25,7 +25,9 @@ class SalesGridStyles:
 
         return JsCode(f"""
             function(params) {{
-                if (params.value == null || isNaN(params.value)) return '';
+                if (params.value == null || isNaN(params.value)) {{
+                    return {js_is_pct} ? '∞' : '';
+                }}
                 let val = parseFloat(params.value);
 
                 // Formato Alemán para consistencia financiera (1.250,00)

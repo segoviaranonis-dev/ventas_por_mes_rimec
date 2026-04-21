@@ -19,14 +19,8 @@ import time
 from decimal import Decimal
 from core.database import DBInspector
 from core.constants import (
-    ALIAS_CURRENT_VALUE, ALIAS_TARGET_VALUE, ALIAS_VARIATION
+    ALIAS_CURRENT_VALUE, ALIAS_TARGET_VALUE, ALIAS_VARIATION, MES_NOMBRES
 )
-
-_MES_NOMBRES = {
-    1: 'Enero',     2: 'Febrero',   3: 'Marzo',    4: 'Abril',
-    5: 'Mayo',      6: 'Junio',     7: 'Julio',     8: 'Agosto',
-    9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
-}
 
 _CADENA_NULA = {'S/C', 'NONE', 'NAN', 'N/A', '', 'NULL', 'S/I', '---', '-'}
 _SEP = '|||'
@@ -37,21 +31,35 @@ _SEP = '|||'
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _calc_var(df_in, real_col, obj_col):
-    """Variación % con blindaje ante división por cero."""
+    """Variación % con blindaje ante división por cero.
+    Cuando obj=0 y real>0: NaN (sin base de comparación → ∞ en UI).
+    Cuando obj=0 y real=0: 0.0 (sin movimiento en ningún año).
+    """
     return np.where(
         df_in[obj_col] > 0,
         (df_in[real_col] - df_in[obj_col]) / df_in[obj_col] * 100,
-        np.where(df_in[real_col] > 0, 100.0, 0.0)
+        np.where(df_in[real_col] > 0, np.nan, 0.0)
     )
 
 
+_CANT_OBJ = 'Cant. Obj'
+_CANT_ACT = 'Cant. 2026'
+_CANT_VAR = 'Cant. V. %'
+
+
 def _agg(df, group_cols):
-    """Agrupa y suma las columnas de alias. Recalcula variación."""
-    df_g = df.groupby(group_cols, as_index=False).agg(**{
+    """Agrupa y suma montos + cantidades (si existen). Recalcula variaciones."""
+    agg_kw = {
         ALIAS_CURRENT_VALUE: (ALIAS_CURRENT_VALUE, 'sum'),
         ALIAS_TARGET_VALUE:  (ALIAS_TARGET_VALUE,  'sum'),
-    })
+    }
+    for cant_col in [_CANT_OBJ, _CANT_ACT]:
+        if cant_col in df.columns:
+            agg_kw[cant_col] = (cant_col, 'sum')
+    df_g = df.groupby(group_cols, as_index=False).agg(**agg_kw)
     df_g[ALIAS_VARIATION] = _calc_var(df_g, ALIAS_CURRENT_VALUE, ALIAS_TARGET_VALUE)
+    if _CANT_OBJ in df_g.columns and _CANT_ACT in df_g.columns:
+        df_g[_CANT_VAR] = _calc_var(df_g, _CANT_ACT, _CANT_OBJ)
     return df_g
 
 
@@ -83,7 +91,7 @@ class SalesLogic:
         return data
 
     @staticmethod
-    def get_full_analysis_package(raw_data, objetivo=100, meses=None):
+    def get_full_analysis_package(raw_data):
         """
         CONTRATO UI v104 — misma estructura que v103:
         {
@@ -114,7 +122,7 @@ class SalesLogic:
             df_evol['Semestre'] = df_evol['mes_idx'].apply(
                 lambda x: '1er SEMESTRE' if int(x) <= 6 else '2do SEMESTRE'
             )
-            df_evol['Mes'] = df_evol['mes_idx'].map(_MES_NOMBRES).fillna('S/D')
+            df_evol['Mes'] = df_evol['mes_idx'].map(MES_NOMBRES).fillna('S/D')
             df_evol = df_evol.sort_values('mes_idx').drop(columns=['mes_idx'])
             col_order = ['Semestre', 'Mes', ALIAS_TARGET_VALUE, ALIAS_CURRENT_VALUE, ALIAS_VARIATION]
             df_evol = df_evol[[c for c in col_order if c in df_evol.columns]]
@@ -214,7 +222,8 @@ class SalesLogic:
             df_ven_gen = _agg(df, ['vendedor'])
             df_ven_gen.rename(columns={'vendedor': 'Vendedor'}, inplace=True)
             df_ven_gen = df_ven_gen.sort_values(ALIAS_CURRENT_VALUE, ascending=False)
-            _vg_cols = ['Vendedor', ALIAS_TARGET_VALUE, ALIAS_CURRENT_VALUE, ALIAS_VARIATION]
+            _vg_cols = ['Vendedor', ALIAS_TARGET_VALUE, ALIAS_CURRENT_VALUE, ALIAS_VARIATION,
+                        _CANT_OBJ, _CANT_ACT, _CANT_VAR]
             df_ven_gen = df_ven_gen[[c for c in _vg_cols if c in df_ven_gen.columns]]
 
             det_g_v = ['vendedor']
@@ -229,7 +238,7 @@ class SalesLogic:
             df_ven_det = _agg(df, det_g_v)
             df_ven_det.rename(columns=det_r_v, inplace=True)
             if 'mes_idx' in df_ven_det.columns:
-                df_ven_det['Mes'] = df_ven_det['mes_idx'].map(_MES_NOMBRES).fillna('S/D')
+                df_ven_det['Mes'] = df_ven_det['mes_idx'].map(MES_NOMBRES).fillna('S/D')
                 df_ven_det = df_ven_det.drop(columns=['mes_idx'])
 
             def _path_ven(r):
@@ -247,7 +256,8 @@ class SalesLogic:
 
             df_ven_det['_path'] = df_ven_det.apply(_path_ven, axis=1)
             _vd_cols = ['Vendedor', 'Cadena', 'Cliente', 'Marca', 'Mes',
-                        ALIAS_TARGET_VALUE, ALIAS_CURRENT_VALUE, ALIAS_VARIATION, '_path']
+                        ALIAS_TARGET_VALUE, ALIAS_CURRENT_VALUE, ALIAS_VARIATION,
+                        _CANT_OBJ, _CANT_ACT, _CANT_VAR, '_path']
             df_ven_det = df_ven_det[[c for c in _vd_cols if c in df_ven_det.columns]]
         else:
             _empty_v = pd.DataFrame(

@@ -46,8 +46,19 @@ def _register(module_package: str) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 _register("modules.home")
 _register("modules.sales_report")
-_register("modules.import_data")
-_register("modules.system_status")
+_register("modules.intencion_compra")
+_register("modules.pedido_proveedor")
+# ── Ciclo Abastecimiento ────────────────────────────
+_register("modules.compra_legal")    # 5 — COMPRA (consolidador PPs)
+_register("modules.deposito")        # 6 — DEPÓSITO RIMEC (saldo físico)
+_register("modules.facturacion")     # 7 — FACTURACIÓN (FAC-INT → Bazar)
+_register("modules.compra_web")      # 8 — COMPRA WEB (recepción Bazar)
+_register("modules.deposito_web")    # 9 — DEPÓSITO WEB (stock tienda)
+# ────────────────────────────────────────────────────
+_register("modules.pedido_web")      # 10 — Recepción pedidos catálogo web
+_register("modules.import_data")     # 11
+_register("modules.system_status")   # 12
+_register("modules.rimec_engine")    # 13 — Motor de Precios
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -87,6 +98,15 @@ def get_allowed_roles(key: str) -> list[str]:
     if not info:
         return ["ADMIN"]  # Módulo desconocido: acceso mínimo
     return info.get("allowed_roles", ["ADMIN"])
+
+
+def get_sidebar_fn(key: str) -> str | None:
+    """
+    Retorna la ruta a la función de sidebar del módulo, o None si no tiene.
+    El Dispatcher de Sidebar llama esto para saber qué controles renderizar.
+    """
+    info = _registry.get(key)
+    return info.get("sidebar_fn") if info else None
 
 
 def render(key: str, **kwargs) -> None:

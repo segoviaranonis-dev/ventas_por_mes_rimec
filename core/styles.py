@@ -89,36 +89,98 @@ class GlowDynamics:
         """)
 
 def apply_ui_theme():
-    """Inyección de CSS: El blindaje Obsidian v70.4.5."""
+    """Inyección de CSS: El blindaje Obsidian v70.5.0 — anti light-mode."""
     print(f"🎨 [STYLES] Sincronizando Armadura Obsidian v{settings.VERSION}")
 
     st.markdown(f"""
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
 
-        /* 1. RESET Y FONDO OBSIDIANA */
-        html, body, [data-testid="stAppViewContainer"], [data-testid="stHeader"] {{
+        /* ═══════════════════════════════════════════════════════════
+           0. BLINDAJE TOTAL CONTRA MODO CLARO DEL NAVEGADOR
+           Fuerza dark-scheme a nivel raíz para que el navegador
+           no sobreescriba colores de texto con su CSS de sistema.
+           ═══════════════════════════════════════════════════════════ */
+        :root {{
+            color-scheme: dark !important;
+        }}
+
+        /* Override explícito cuando el SO está en modo claro */
+        @media (prefers-color-scheme: light) {{
+            :root {{ color-scheme: dark !important; }}
+            html, body {{
+                background-color: {COLOR_DEEP} !important;
+                color: {COLOR_TEXT} !important;
+            }}
+            * {{ color: {COLOR_TEXT} !important; }}
+            /* Re-aplicar excepciones que necesitan colores propios */
+            div.stButton > button {{ color: {COLOR_GOLD} !important; }}
+            div.stButton > button:hover {{ color: {COLOR_DEEP} !important; }}
+            a {{ color: {COLOR_GOLD} !important; }}
+        }}
+
+        /* ═══════════════════════════════════════════════════════════
+           1. RESET Y FONDO OBSIDIANA
+           ═══════════════════════════════════════════════════════════ */
+        html, body, [data-testid="stAppViewContainer"],
+        [data-testid="stHeader"], [data-testid="stMain"] {{
             background-color: {COLOR_DEEP} !important;
             font-family: 'Inter', sans-serif !important;
             color: {COLOR_TEXT} !important;
         }}
 
+        /* Todos los textos generados por Streamlit heredan el color claro */
+        p, span, div, li, td, th, label, small, caption,
+        .stMarkdown, .stText, .element-container {{
+            color: {COLOR_TEXT} !important;
+        }}
+
+        /* Selectores específicos de Streamlit */
+        [data-testid="stMarkdownContainer"] p,
+        [data-testid="stMarkdownContainer"] span,
+        [data-testid="stMarkdownContainer"] li,
+        [data-testid="stMarkdownContainer"] strong,
+        [data-testid="stMarkdownContainer"] em {{
+            color: {COLOR_TEXT} !important;
+        }}
+
+        /* Labels de inputs, selects, sliders */
+        .stTextInput label, .stSelectbox label, .stMultiSelect label,
+        .stSlider label, .stRadio label, .stCheckbox label,
+        .stFileUploader label, .stDateInput label,
+        .stNumberInput label, .stTextArea label {{
+            color: {COLOR_TEXT} !important;
+        }}
+
+        /* Captions y texto muted */
+        [data-testid="stCaptionContainer"],
+        .stCaption, .stCaption p {{
+            color: {settings.TEXT_MUTED} !important;
+        }}
+
         [data-testid="stSidebarNav"] {{ display: none !important; }}
 
-        /* 2. SIDEBAR PROFESIONAL */
-        [data-testid="stSidebar"] {{
+        /* ═══════════════════════════════════════════════════════════
+           2. SIDEBAR PROFESIONAL
+           ═══════════════════════════════════════════════════════════ */
+        [data-testid="stSidebar"],
+        [data-testid="stSidebar"] > div {{
             background-color: {COLOR_SOFT} !important;
             border-right: 1px solid {COLOR_GOLD}44;
         }}
 
-        /* 3. TÍTULOS Y TEXTO */
-        h1, h2, h3 {{
+        /* ═══════════════════════════════════════════════════════════
+           3. TÍTULOS Y TEXTO
+           ═══════════════════════════════════════════════════════════ */
+        h1, h2, h3, h4, h5, h6 {{
             color: {COLOR_TEXT} !important;
             font-weight: 800 !important;
-            letter-spacing: -0.05em !important;
+            letter-spacing: -0.03em !important;
         }}
 
-        /* 4. BOTONES: Estilo Prestige */
+        /* ═══════════════════════════════════════════════════════════
+           4. BOTONES: Estilo Prestige
+           ═══════════════════════════════════════════════════════════ */
         div.stButton > button {{
             border-radius: 10px !important;
             background-color: {COLOR_DEEP} !important;
@@ -127,17 +189,19 @@ def apply_ui_theme():
             font-weight: 700 !important;
             padding: 0.5rem 1rem !important;
             width: 100% !important;
-            transition: all 0.3s ease;
+            transition: all 0.25s ease;
         }}
 
         div.stButton > button:hover {{
             background-color: {COLOR_GOLD} !important;
             color: {COLOR_DEEP} !important;
-            box-shadow: 0 0 20px {COLOR_GOLD}66;
+            box-shadow: 0 0 20px {COLOR_GOLD}55;
             transform: translateY(-2px);
         }}
 
-        /* 5. CARDS DINÁMICAS (OBSIDIAN GLOW) */
+        /* ═══════════════════════════════════════════════════════════
+           5. CARDS LEGACY (rimec-card)
+           ═══════════════════════════════════════════════════════════ */
         .rimec-card {{
             background-color: {COLOR_SOFT} !important;
             padding: 22px;
@@ -153,8 +217,122 @@ def apply_ui_theme():
             box-shadow: 0 6px 20px {COLOR_GOLD}22;
         }}
 
-        /* 6. ESTILO PARA AG-GRID (Integración Obsidian & Piano) */
-        .ag-theme-balham {{
+        /* ═══════════════════════════════════════════════════════════
+           6. LAUNCHER CARDS (módulo home)
+           ═══════════════════════════════════════════════════════════ */
+        .nx-card {{
+            background: {COLOR_SOFT};
+            border: 1px solid rgba(255,255,255,0.07);
+            border-radius: 14px;
+            padding: 20px 18px 14px 18px;
+            margin-bottom: 6px;
+            transition: all 0.2s ease;
+            min-height: 120px;
+        }}
+
+        .nx-card:hover {{
+            border-color: {COLOR_GOLD}88;
+            background: #1E2030;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+        }}
+
+        .nx-card-icon {{
+            font-size: 1.7rem;
+            line-height: 1;
+            margin-bottom: 8px;
+            display: block;
+        }}
+
+        .nx-card-title {{
+            font-size: 0.88rem;
+            font-weight: 700;
+            color: {COLOR_TEXT} !important;
+            line-height: 1.3;
+            margin-bottom: 4px;
+        }}
+
+        .nx-card-desc {{
+            font-size: 0.71rem;
+            color: {settings.TEXT_MUTED} !important;
+            line-height: 1.4;
+        }}
+
+        .nx-section-label {{
+            font-size: 0.68rem;
+            font-weight: 700;
+            color: {settings.TEXT_MUTED} !important;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid {COLOR_GOLD}30;
+            margin-bottom: 2px;
+        }}
+
+        .nx-hero {{
+            background: linear-gradient(135deg, {COLOR_SOFT} 0%, #0F1120 100%);
+            border: 1px solid {COLOR_GOLD}33;
+            border-radius: 16px;
+            padding: 28px 32px;
+            margin-bottom: 8px;
+            position: relative;
+            overflow: hidden;
+        }}
+
+        .nx-hero::before {{
+            content: '';
+            position: absolute;
+            top: -40px; right: -40px;
+            width: 180px; height: 180px;
+            background: radial-gradient(circle, {COLOR_GOLD}15 0%, transparent 70%);
+            pointer-events: none;
+        }}
+
+        .nx-hero-brand {{
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: {COLOR_GOLD} !important;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            margin-bottom: 4px;
+        }}
+
+        .nx-hero-title {{
+            font-size: 2rem;
+            font-weight: 800;
+            color: {COLOR_TEXT} !important;
+            line-height: 1.1;
+            margin-bottom: 6px;
+        }}
+
+        .nx-hero-sub {{
+            font-size: 0.82rem;
+            color: {settings.TEXT_MUTED} !important;
+        }}
+
+        .nx-status-badge {{
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(16,185,129,0.12);
+            border: 1px solid rgba(16,185,129,0.35);
+            border-radius: 20px;
+            padding: 4px 12px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: {settings.COLOR_SUCCESS} !important;
+        }}
+
+        .nx-status-badge.offline {{
+            background: rgba(239,68,68,0.12);
+            border-color: rgba(239,68,68,0.35);
+            color: {settings.COLOR_CRITICAL} !important;
+        }}
+
+        /* ═══════════════════════════════════════════════════════════
+           7. AG-GRID (Integración Obsidian & Piano)
+           ═══════════════════════════════════════════════════════════ */
+        .ag-theme-balham, .ag-theme-alpine-dark {{
             --ag-background-color: {COLOR_DEEP} !important;
             --ag-header-background-color: {COLOR_SOFT} !important;
             --ag-header-foreground-color: {COLOR_GOLD} !important;
@@ -167,15 +345,17 @@ def apply_ui_theme():
             --ag-font-size: 13px;
         }}
 
-        /* Ajustes para Scrollbars en Obsidian Mode */
-        ::-webkit-scrollbar {{ width: 8px; height: 8px; }}
+        /* ═══════════════════════════════════════════════════════════
+           8. SCROLLBARS
+           ═══════════════════════════════════════════════════════════ */
+        ::-webkit-scrollbar {{ width: 7px; height: 7px; }}
         ::-webkit-scrollbar-track {{ background: {COLOR_DEEP}; }}
         ::-webkit-scrollbar-thumb {{ background: #334155; border-radius: 10px; }}
         ::-webkit-scrollbar-thumb:hover {{ background: {COLOR_GOLD}88; }}
         </style>
     """, unsafe_allow_html=True)
 
-    print(f"✅ {settings.LOG_PREFIX} >>> ARMADURA OBSIDIAN DESPLEGADA (v{settings.VERSION}).")
+    print(f"✅ {settings.LOG_PREFIX} >>> ARMADURA OBSIDIAN v70.5.0 DESPLEGADA.")
 
 def header_section(title, subtitle=None):
     """Encabezado Premium con subrayado en Oro."""

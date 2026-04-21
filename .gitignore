@@ -168,3 +168,14 @@ sales-intelligence-platform_respaldo/
 # Ignorar archivos de logs de la terminal de auditoría
 audit_terminal.log
 *.log
+
+# Archivos de datos locales (no van al repo)
+*.xlsx
+*.xls
+
+# Scripts de carga local
+loader_f9.py
+loader_ventas_f9.py
+
+# Configuración local del agente Claude
+.claude/settings.local.json

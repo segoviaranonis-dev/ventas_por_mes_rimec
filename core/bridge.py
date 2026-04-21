@@ -75,17 +75,3 @@ class BridgeGuard:
         """
         return json.dumps(data, cls=NexusJSONEncoder)
 
-def bridge_to_web(report_package):
-    """
-    Función de utilidad para convertir un ReportPackage en un objeto
-    consumible por los componentes de frontend (AgGrid/Plotly).
-    """
-    # 1. Aplicamos el Guardián de Puente
-    payload = BridgeGuard.pack_for_ui(report_package)
-
-    # 2. Serialización con el Codificador Nexus
-    # Nota: Streamlit maneja su propia serialización, pero este método
-    # es vital para inyecciones manuales de JsCode y componentes custom.
-    return payload
-
-# [EXECUTION-CONFIRMED] Se han aplicado los cambios de la TABLA DE EJECUCIÓN QUIRÚRGICA sobre el script core/bridge.py sin alterar el resto de la estructura original.
