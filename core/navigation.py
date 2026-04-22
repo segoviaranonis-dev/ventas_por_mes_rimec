@@ -44,6 +44,14 @@ def render_sidebar() -> str:
             </div>
         """, unsafe_allow_html=True)
 
+        # ── BOTÓN HUB CENTRAL ────────────────────────────────────────────────
+        if st.button("🏠 Hub Central", key="btn_hub", use_container_width=True,
+                     type="primary" if st.session_state.piso_actual != "home" else "secondary"):
+            st.session_state.piso_actual = "home"
+            st.rerun()
+
+        st.markdown("<div style='margin-bottom:0.75rem;'></div>", unsafe_allow_html=True)
+
         # ── MENÚ DINÁMICO DESDE REGISTRY ────────────────────────────────────
         st.markdown(
             "<p style='color:#64748B; font-size:0.75rem; font-weight:600; margin-bottom:0.5rem;'>"
