@@ -108,9 +108,79 @@ def render_page_content(modulo_key: str) -> None:
     Importación dinámica garantiza aislamiento de errores entre módulos.
     """
     if modulo_key != "home":
-        col_hub, _ = st.columns([1, 8])
-        if col_hub.button("🏠 Hub", key="btn_hub_content", help="Volver al Hub Central"):
+        # Botón Streamlit oculto — el FAB lo activa vía JS
+        if st.button("↩", key="btn_hub_content"):
             st.session_state.piso_actual = "home"
             st.rerun()
+
+        st.markdown("""
+        <style>
+        /* Ocultar el botón Streamlit trigger */
+        div[data-testid="stMainBlockContainer"]
+            div[data-testid="stVerticalBlock"]
+            > div:first-child
+            button[data-testid="baseButton-secondary"] {
+            position: absolute !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+            width: 1px !important;
+            height: 1px !important;
+            overflow: hidden !important;
+        }
+
+        /* FAB — Floating Action Button */
+        .nexus-fab {
+            position: fixed;
+            bottom: 2.2rem;
+            right: 2.2rem;
+            z-index: 99999;
+            background: linear-gradient(135deg, #D4AF37 0%, #9A7D10 100%);
+            color: #0F172A;
+            border: none;
+            border-radius: 3rem;
+            padding: 0.85rem 1.75rem;
+            font-size: 0.88rem;
+            font-weight: 800;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 0.55rem;
+            box-shadow:
+                0 4px 20px rgba(212, 175, 55, 0.5),
+                0 2px 8px  rgba(0, 0, 0, 0.4),
+                inset 0 1px 0 rgba(255,255,255,0.2);
+            transition: transform 0.18s cubic-bezier(.4,0,.2,1),
+                        box-shadow 0.18s cubic-bezier(.4,0,.2,1);
+            user-select: none;
+        }
+        .nexus-fab:hover {
+            transform: translateY(-4px) scale(1.04);
+            box-shadow:
+                0 10px 36px rgba(212, 175, 55, 0.65),
+                0 4px 16px  rgba(0, 0, 0, 0.45),
+                inset 0 1px 0 rgba(255,255,255,0.25);
+        }
+        .nexus-fab:active {
+            transform: translateY(0) scale(0.97);
+            box-shadow: 0 2px 10px rgba(212,175,55,0.4);
+        }
+        .nexus-fab .fab-icon {
+            font-size: 1.1rem;
+            line-height: 1;
+        }
+        </style>
+
+        <button class="nexus-fab" onclick="
+            (function(){
+                var btn = Array.from(window.parent.document.querySelectorAll('button'))
+                    .find(function(b){ return b.innerText.trim() === '↩'; });
+                if (btn) btn.click();
+            })();
+        ">
+            <span class="fab-icon">🏠</span> Hub Central
+        </button>
+        """, unsafe_allow_html=True)
 
     registry.render(modulo_key)
