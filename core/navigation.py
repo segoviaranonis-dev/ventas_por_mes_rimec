@@ -175,12 +175,17 @@ def render_page_content(modulo_key: str) -> None:
 
         <button class="nexus-fab" onclick="
             (function(){
-                var docs = [document, window.parent ? window.parent.document : null];
-                for (var d of docs) {
-                    if (!d) continue;
-                    var btn = Array.from(d.querySelectorAll('button'))
-                        .find(function(b){ return b.innerText.trim() === '↩'; });
-                    if (btn) { btn.click(); break; }
+                var allBtns = Array.from(document.querySelectorAll('button'));
+                var parentBtns = window.parent ? Array.from(window.parent.document.querySelectorAll('button')) : [];
+                console.log('[FAB] document buttons:', allBtns.length, allBtns.map(function(b){ return JSON.stringify(b.innerText.trim()); }));
+                console.log('[FAB] parent.document buttons:', parentBtns.length, parentBtns.map(function(b){ return JSON.stringify(b.innerText.trim()); }));
+                var allCombined = allBtns.concat(parentBtns);
+                var target = allCombined.find(function(b){ return b.innerText.trim() === '↩'; });
+                if (target) {
+                    console.log('[FAB] Botón encontrado — ejecutando click');
+                    target.click();
+                } else {
+                    alert('[FAB DEBUG] Botón ↩ NO encontrado.\\nBotones en document: ' + allBtns.map(function(b){ return JSON.stringify(b.innerText.trim()); }).join(', '));
                 }
             })();
         ">
