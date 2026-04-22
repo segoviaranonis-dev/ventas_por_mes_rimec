@@ -115,16 +115,17 @@ def render_page_content(modulo_key: str) -> None:
 
         st.markdown("""
         <style>
-        /* Ocultar el botón Streamlit trigger */
+        /* Minimizar el botón Streamlit trigger — visible pero discreto */
         div[data-testid="stMainBlockContainer"]
             div[data-testid="stVerticalBlock"]
             > div:first-child
             button[data-testid="baseButton-secondary"] {
-            position: absolute !important;
-            opacity: 0 !important;
-            pointer-events: none !important;
-            width: 1px !important;
-            height: 1px !important;
+            opacity: 0.01 !important;
+            min-height: 0 !important;
+            height: 4px !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            border: none !important;
             overflow: hidden !important;
         }
 
@@ -174,9 +175,13 @@ def render_page_content(modulo_key: str) -> None:
 
         <button class="nexus-fab" onclick="
             (function(){
-                var btn = Array.from(window.parent.document.querySelectorAll('button'))
-                    .find(function(b){ return b.innerText.trim() === '↩'; });
-                if (btn) btn.click();
+                var docs = [document, window.parent ? window.parent.document : null];
+                for (var d of docs) {
+                    if (!d) continue;
+                    var btn = Array.from(d.querySelectorAll('button'))
+                        .find(function(b){ return b.innerText.trim() === '↩'; });
+                    if (btn) { btn.click(); break; }
+                }
             })();
         ">
             <span class="fab-icon">🏠</span> Hub Central
