@@ -44,14 +44,6 @@ def render_sidebar() -> str:
             </div>
         """, unsafe_allow_html=True)
 
-        # ── BOTÓN HUB CENTRAL ────────────────────────────────────────────────
-        if st.button("🏠 Hub Central", key="btn_hub", use_container_width=True,
-                     type="primary" if st.session_state.piso_actual != "home" else "secondary"):
-            st.session_state.piso_actual = "home"
-            st.rerun()
-
-        st.markdown("<div style='margin-bottom:0.75rem;'></div>", unsafe_allow_html=True)
-
         # ── MENÚ DINÁMICO DESDE REGISTRY ────────────────────────────────────
         st.markdown(
             "<p style='color:#64748B; font-size:0.75rem; font-weight:600; margin-bottom:0.5rem;'>"
@@ -115,4 +107,10 @@ def render_page_content(modulo_key: str) -> None:
     Delega el renderizado al módulo correspondiente a través del Registry.
     Importación dinámica garantiza aislamiento de errores entre módulos.
     """
+    if modulo_key != "home":
+        col_hub, _ = st.columns([1, 8])
+        if col_hub.button("🏠 Hub", key="btn_hub_content", help="Volver al Hub Central"):
+            st.session_state.piso_actual = "home"
+            st.rerun()
+
     registry.render(modulo_key)
