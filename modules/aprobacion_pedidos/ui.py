@@ -272,7 +272,7 @@ def render_aprobacion():
             for p in pedidos:
                 _render_tarjeta_pendiente(p)
 
-    # ── Tab Confirmadas: Historial de FIs aprobadas con detalle ─────────
+    # ── Tab Confirmadas: FIs aprobadas con detalle completo ──────────────
     with tab_conf:
         fis = get_fi_confirmadas()
         if not fis:
@@ -283,25 +283,30 @@ def render_aprobacion():
                 nro = fi.get("nro_factura", "")
                 cli = fi.get("cliente_nombre", "—")
                 marca = fi.get("marca", "—")
+                caso = fi.get("caso", "—")
                 pares = fi.get("total_pares", 0)
                 monto = fi.get("total_monto", 0)
                 nro_pp = fi.get("nro_pp", "—")
+                vendedor = fi.get("vendedor_nombre", "—")
 
                 with st.expander(
                     f"✅ **{nro}** · {cli} · {marca} · {pares:,} pares · {_fmt_gs(monto)}",
-                    expanded=False,
+                    expanded=True,
                 ):
-                    c1, c2, c3, c4 = st.columns(4)
+                    # Cabecera
+                    c0, c1, c2, c3, c4 = st.columns([2, 1, 1, 1, 1])
+                    c0.markdown(f"### `{nro}`")
+                    c0.caption(f"PP {nro_pp} · Caso: {caso}")
                     c1.metric("Cliente", cli)
-                    c2.metric("PP", nro_pp)
-                    c3.metric("Marca", marca)
-                    c4.metric("Pares", f"{pares:,}")
+                    c2.metric("Marca", marca)
+                    c3.metric("Pares", f"{pares:,}")
+                    c4.metric("Monto", _fmt_gs(monto))
                     st.caption(
-                        f"Vendedor: {fi.get('vendedor_nombre', '—')} · "
+                        f"Vendedor: {vendedor} · "
                         f"Descuentos: {_descuentos_label(fi)}"
                     )
 
-                    # Detalles con miniatura y gradas
+                    # Productos con miniatura
                     detalles = get_fi_detalles(fi["id"])
                     if detalles:
                         st.markdown("---")
@@ -331,7 +336,8 @@ def render_aprobacion():
                                     st.caption(gradas)
                             with cn:
                                 st.write(f"{det.get('cajas', 0)} caj · {det.get('pares', 0)} p")
-                                st.caption(_fmt_gs(det.get("subtotal", 0)))
+                                st.caption(f"Neto: {_fmt_gs(det.get('precio_neto', 0))}")
+                                st.caption(f"Sub: {_fmt_gs(det.get('subtotal', 0))}")
 
     # ── Tab Anuladas: Historial de FIs rechazadas ────────────────────────
     with tab_anul:
