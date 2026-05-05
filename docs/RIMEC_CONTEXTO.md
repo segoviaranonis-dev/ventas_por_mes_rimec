@@ -1,6 +1,6 @@
 # RIMEC — Contexto del Proyecto
 > Subir este archivo al inicio de cada sesión con el Maestro de Obras.
-> Última actualización: 23/04/2026 — Biblioteca de Casos + Admin Líneas con filtros y lotes
+> Última actualización: 05/05/2026 — Reestructuración Facturas Internas (FI)
 
 ---
 
@@ -68,13 +68,24 @@ Evolución post-mayo: Next.js + Supabase
 | Módulo Digitación | ✅ Producción — Bandeja + Asignación + Flujo Rechazo (← Devolver)  |
 | Bazar Web | ✅ Construido — entrega 01/05 |
 | Migración 004 (refacción identidad) | ✅ Ejecutada |
+| Migración 009 (FI Reestructuración) | ✅ Ejecutada — Nomenclatura [PP_ID]-PV[NNN], estado RESERVADA |
 | Reset Operativo | ✅ Ejecutado |
 | Motor Forense Precios (gerencial) | 📋 Post-mayo — hermano de Sales Report |
 | Next.js plataforma | 📋 Post-mayo |
 
 ---
 
-## Decisiones Importantes Tomadas Hoy
+## Decisiones Importantes Tomadas Hoy (05/05/2026)
+
+- **Reestructuración Facturas Internas (FI)**:
+  - TRUNCATE factura_interna CASCADE (limpieza de pruebas)
+  - Nueva nomenclatura: `[PP_ID]-PV[NNN]` (ej: 15-PV001, 15-PV002)
+  - El correlativo PV se resetea por cada Pedido Proveedor
+  - Estado inicial `RESERVADA` (soft-discount en stock en tránsito)
+  - Función `revertir_stock_fi()` para ANULAR y devolver mercadería al tránsito
+  - La migración 009 debe ejecutarse antes de usar el sistema
+
+## Decisiones Anteriores
 
 - `combinacion` vaciada en reset — se reconstruye via importación del lunes
 - No restaurar backups de datos viejos — re-importación limpia es la fuente de verdad
@@ -182,6 +193,7 @@ UI: Dashboard de navegación → Paso A (Tipo + Categoría) → Paso B (flujo ex
 | Matriz Negociación | `ALBANIL_MATRIZ_NEGOCIACION_1.md` | ✅ Completada |
 | Reset Precios + Admin Líneas | `ALBANIL_RESET_PRECIOS_LINEAS.md` | ✅ Completada |
 | Biblioteca de Casos + Lotes | `ALBANIL_BIBLIOTECA_CASOS_LOTES.md` | ✅ Completada |
+| Reestructuración FI | Orden directa 05/05/2026 | ✅ Completada |
 
 ## Arquitectura de Trazabilidad (decisión 22/04/2026)
 

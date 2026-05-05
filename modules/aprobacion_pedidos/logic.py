@@ -148,33 +148,71 @@ def get_pedidos_rechazados() -> list[dict]:
 # NUMERACIÓN PV-YYYY-XXXX
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _get_next_nro_pv() -> str:
-    anio = date.today().year
+def _get_next_nro_pv(pp_id: int) -> str:
+    """
+    Genera número de Factura Interna/Preventa con nomenclatura [PP_ID]-PV[NNN].
+    El correlativo se resetea por cada Pedido Proveedor.
+    Ejemplo: 15-PV001, 15-PV002, 16-PV001...
+    """
     df = get_dataframe("""
         SELECT COALESCE(
-            MAX(CAST(SPLIT_PART(nro_factura, '-', 3) AS INTEGER)), 0
-        ) AS ultimo
+            MAX(
+                CAST(
+                    REGEXP_REPLACE(nro_factura, '^[0-9]+-PV', '')
+                    AS INTEGER
+                )
+            ),
+            0
+        ) + 1 AS correlativo
         FROM factura_interna
-        WHERE nro_factura ~ '^PV-[0-9]{4}-[0-9]+$'
-          AND nro_factura LIKE :patron
-    """, {"patron": f"PV-{anio}-%"})
-    ultimo = int(df["ultimo"].iloc[0]) if df is not None and not df.empty else 0
-    return f"PV-{anio}-{ultimo + 1:04d}"
+        WHERE pp_id = :pp_id
+          AND nro_factura ~ '^[0-9]+-PV[0-9]+$'
+    """, {"pp_id": pp_id})
+    correlativo = int(df["correlativo"].iloc[0]) if df is not None and not df.empty else 1
+    return f"{pp_id}-PV{correlativo:03d}"
 
 
-def _generar_nros_pv(cantidad: int) -> list[str]:
-    """Pre-genera `cantidad` números PV consecutivos antes de abrir la transacción."""
-    anio = date.today().year
-    df = get_dataframe("""
-        SELECT COALESCE(
-            MAX(CAST(SPLIT_PART(nro_factura, '-', 3) AS INTEGER)), 0
-        ) AS ultimo
-        FROM factura_interna
-        WHERE nro_factura ~ '^PV-[0-9]{4}-[0-9]+$'
-          AND nro_factura LIKE :patron
-    """, {"patron": f"PV-{anio}-%"})
-    base = int(df["ultimo"].iloc[0]) if df is not None and not df.empty else 0
-    return [f"PV-{anio}-{base + i + 1:04d}" for i in range(cantidad)]
+def _generar_nros_pv_por_pp(grupos: dict) -> dict[str, str]:
+    """
+    Pre-genera números PV para cada grupo (clave → nro_pv).
+    La nomenclatura es [PP_ID]-PV[NNN], correlativo reseteado por PP.
+    """
+    # Agrupar por pp_id para calcular correlativos
+    pp_counts: dict[int, int] = {}
+    pp_bases: dict[int, int] = {}
+    
+    for clave, grupo in grupos.items():
+        pp_id = grupo["pp_id"]
+        if pp_id not in pp_counts:
+            pp_counts[pp_id] = 0
+            # Obtener base actual de BD
+            df = get_dataframe("""
+                SELECT COALESCE(
+                    MAX(
+                        CAST(
+                            REGEXP_REPLACE(nro_factura, '^[0-9]+-PV', '')
+                            AS INTEGER
+                        )
+                    ),
+                    0
+                ) AS ultimo
+                FROM factura_interna
+                WHERE pp_id = :pp_id
+                  AND nro_factura ~ '^[0-9]+-PV[0-9]+$'
+            """, {"pp_id": pp_id})
+            pp_bases[pp_id] = int(df["ultimo"].iloc[0]) if df is not None and not df.empty else 0
+        pp_counts[pp_id] += 1
+    
+    # Generar números
+    result: dict[str, str] = {}
+    pp_current: dict[int, int] = {pp_id: base for pp_id, base in pp_bases.items()}
+    
+    for clave, grupo in grupos.items():
+        pp_id = grupo["pp_id"]
+        pp_current[pp_id] += 1
+        result[clave] = f"{pp_id}-PV{pp_current[pp_id]:03d}"
+    
+    return result
 
 
 def get_preventa_de_celula(pp_id: int, marca: str, caso: str) -> dict | None:
@@ -292,17 +330,17 @@ def autorizar_pedido(pedido_id: int) -> tuple[bool, str, list[str]]:
         return False, "El pedido no tiene ítems.", []
 
     # Pre-generar todos los números PV antes de abrir la transacción
-    # (evita UniqueViolation por leer MAX desde fuera de la tx en cada iteración)
-    nros_pv = _generar_nros_pv(len(grupos))
+    # Nomenclatura: [PP_ID]-PV[NNN] — correlativo reseteado por cada PP
+    nros_pv_map = _generar_nros_pv_por_pp(grupos)
     preventas_generadas: list[str] = []
 
     try:
         with engine.begin() as conn:
-            for idx, (clave, grupo) in enumerate(grupos.items()):
+            for clave, grupo in grupos.items():
                 items       = grupo["items"]
                 total_pares = sum(i.get("pares", 0) for i in items)
                 total_neto  = sum(i.get("subtotal", 0) for i in items)
-                nro_pv      = nros_pv[idx]
+                nro_pv      = nros_pv_map[clave]
 
                 # ── Crear Preventa (factura_interna) ──────────────────────────
                 res = conn.execute(sqlt("""
@@ -470,7 +508,7 @@ def crear_preventa_desde_celula(pedido_id: int, celula: dict) -> tuple[bool, str
     pp_id       = _si(celula["pp_id"])
     total_pares = sum(i.get("pares", 0) for i in items)
     total_monto = sum(i.get("subtotal", 0) for i in items)
-    nro_pv      = _generar_nros_pv(1)[0]  # genera el número ANTES de abrir la tx
+    nro_pv      = _get_next_nro_pv(pp_id)  # genera el número ANTES de abrir la tx
 
     try:
         with engine.begin() as conn:

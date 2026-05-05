@@ -2219,15 +2219,28 @@ def get_lista_precios_completa(evento_id: int) -> pd.DataFrame:
 # FACTURAS INTERNAS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _get_next_nro_fi(anio: int) -> str:
+def _get_next_nro_fi(pp_id: int) -> str:
+    """
+    Genera número de Factura Interna con nomenclatura [PP_ID]-PV[NNN].
+    El correlativo se resetea por cada Pedido Proveedor.
+    Ejemplo: 15-PV001, 15-PV002, 16-PV001...
+    """
     df = get_dataframe("""
-        SELECT COALESCE(MAX(CAST(SPLIT_PART(nro_factura,'-',3) AS INTEGER)),0) AS ultimo
+        SELECT COALESCE(
+            MAX(
+                CAST(
+                    REGEXP_REPLACE(nro_factura, '^[0-9]+-PV', '')
+                    AS INTEGER
+                )
+            ),
+            0
+        ) + 1 AS correlativo
         FROM factura_interna
-        WHERE nro_factura ~ '^FI-[0-9]{4}-[0-9]+$'
-          AND nro_factura LIKE :patron
-    """, {"patron": f"FI-{anio}-%"})
-    ultimo = int(df["ultimo"].iloc[0]) if df is not None and not df.empty else 0
-    return f"FI-{anio}-{ultimo+1:04d}"
+        WHERE pp_id = :pp_id
+          AND nro_factura ~ '^[0-9]+-PV[0-9]+$'
+    """, {"pp_id": pp_id})
+    correlativo = int(df["correlativo"].iloc[0]) if df is not None and not df.empty else 1
+    return f"{pp_id}-PV{correlativo:03d}"
 
 
 def get_facturas_interna_de_pp(pp_id: int) -> pd.DataFrame:
@@ -2302,9 +2315,11 @@ def crear_factura_interna(
     items: list[dict],
     usuario_id: int | None = None,
 ) -> tuple[bool, str]:
-    from datetime import date as _date
-    anio = _date.today().year
-    nro  = _get_next_nro_fi(anio)
+    """
+    Crea una Factura Interna con estado RESERVADA (soft-discount).
+    Nomenclatura: [PP_ID]-PV[NNN] — correlativo reseteado por PP.
+    """
+    nro  = _get_next_nro_fi(pp_id)
     total_pares = sum(int(i.get("pares", 0)) for i in items)
     total_neto  = round(sum(float(i.get("subtotal", 0)) for i in items), 2)
     try:
