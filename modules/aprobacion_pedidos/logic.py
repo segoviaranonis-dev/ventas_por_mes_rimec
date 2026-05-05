@@ -46,6 +46,56 @@ def _si(val) -> int | None:
 # LOOKUP: código de línea → nombre de caso (desde pilar linea_caso)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def validar_saldo_pp(pp_id: int, pares_requeridos: int) -> tuple[bool, int]:
+    """
+    Valida que el PP tenga suficientes pares disponibles en tránsito.
+    Retorna (tiene_saldo, saldo_actual).
+    """
+    df = get_dataframe("""
+        SELECT 
+            COALESCE(SUM(ppd.cantidad_pares), 0) AS total_pares,
+            COALESCE(SUM(ppd.pares_vendidos), 0) AS vendidos
+        FROM pedido_proveedor_detalle ppd
+        WHERE ppd.pedido_proveedor_id = :pp_id
+    """, {"pp_id": pp_id})
+    
+    if df is None or df.empty:
+        return False, 0
+    
+    total = int(df["total_pares"].iloc[0] or 0)
+    vendidos = int(df["vendidos"].iloc[0] or 0)
+    saldo = total - vendidos
+    
+    return saldo >= pares_requeridos, saldo
+
+
+def get_saldo_detallado_pp(pp_id: int) -> dict:
+    """
+    Retorna el saldo detallado de un PP para diagnóstico.
+    """
+    df = get_dataframe("""
+        SELECT 
+            ppd.linea,
+            ppd.referencia,
+            ppd.cantidad_pares,
+            COALESCE(ppd.pares_vendidos, 0) AS vendidos,
+            ppd.cantidad_pares - COALESCE(ppd.pares_vendidos, 0) AS saldo
+        FROM pedido_proveedor_detalle ppd
+        WHERE ppd.pedido_proveedor_id = :pp_id
+        ORDER BY ppd.linea, ppd.referencia
+    """, {"pp_id": pp_id})
+    
+    if df is None or df.empty:
+        return {"items": [], "total": 0, "vendidos": 0, "saldo": 0}
+    
+    return {
+        "items": df.to_dict("records"),
+        "total": int(df["cantidad_pares"].sum()),
+        "vendidos": int(df["vendidos"].sum()),
+        "saldo": int(df["saldo"].sum()),
+    }
+
+
 def get_linea_caso_map(pp_ids: list[int] | None = None) -> dict[str, str]:
     """
     Retorna {codigo_proveedor_linea: caso_nombre} desde linea_caso.
@@ -329,6 +379,23 @@ def autorizar_pedido(pedido_id: int) -> tuple[bool, str, list[str]]:
     if not grupos:
         return False, "El pedido no tiene ítems.", []
 
+    # ── VALIDACIÓN DE SALDO por cada PP ───────────────────────────────────
+    # Agrupar pares requeridos por PP
+    pares_por_pp: dict[int, int] = {}
+    for clave, grupo in grupos.items():
+        pp_id = grupo["pp_id"]
+        pares = sum(i.get("pares", 0) for i in grupo["items"])
+        pares_por_pp[pp_id] = pares_por_pp.get(pp_id, 0) + pares
+    
+    # Validar cada PP
+    for pp_id, pares_req in pares_por_pp.items():
+        tiene_saldo, saldo_actual = validar_saldo_pp(pp_id, pares_req)
+        if not tiene_saldo:
+            return False, (
+                f"Stock insuficiente en PP {pp_id}: "
+                f"disponible={saldo_actual:,} pares, requerido={pares_req:,} pares"
+            ), []
+
     # Pre-generar todos los números PV antes de abrir la transacción
     # Nomenclatura: [PP_ID]-PV[NNN] — correlativo reseteado por cada PP
     nros_pv_map = _generar_nros_pv_por_pp(grupos)
@@ -485,6 +552,8 @@ def crear_preventa_desde_celula(pedido_id: int, celula: dict) -> tuple[bool, str
     """
     Aprueba UNA célula (PP+Marca+Caso). Genera exactamente una Preventa.
     Stock se descuenta por linea/referencia TEXT.
+    
+    VALIDACIÓN: Verifica saldo disponible en tránsito antes de reservar.
     """
     print(f"\n{'='*60}")
     print(f"[APROBACION] pedido_id={pedido_id} PP={celula.get('pp_id')} "
@@ -495,6 +564,21 @@ def crear_preventa_desde_celula(pedido_id: int, celula: dict) -> tuple[bool, str
         print(f"  item[{i}] linea={item.get('linea_codigo')} ref={item.get('ref_codigo')} "
               f"pares={item.get('pares')} cajas={item.get('cajas')} "
               f"precio={item.get('precio_neto')} sub={item.get('subtotal')}")
+    
+    # ── VALIDACIÓN DE SALDO ───────────────────────────────────────────────
+    pp_id_val = _si(celula.get("pp_id"))
+    pares_requeridos = sum(i.get("pares", 0) for i in celula.get("items", []))
+    
+    if pp_id_val:
+        tiene_saldo, saldo_actual = validar_saldo_pp(pp_id_val, pares_requeridos)
+        print(f"[VALIDACION] PP {pp_id_val}: saldo={saldo_actual}, requerido={pares_requeridos}, ok={tiene_saldo}")
+        
+        if not tiene_saldo:
+            msg = (f"Stock insuficiente en PP {pp_id_val}: "
+                   f"disponible={saldo_actual:,} pares, requerido={pares_requeridos:,} pares")
+            DBInspector.log(f"[CELULA] {msg}", "ERROR")
+            return False, msg
+    
     df = get_dataframe("""
         SELECT cliente_id, vendedor_id, plazo_id, lista_precio_id,
                descuento_1, descuento_2, descuento_3, descuento_4, nro_pedido

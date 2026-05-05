@@ -271,22 +271,29 @@ def _render_fi_card(fi: dict):
     pares = fi.get("total_pares", 0)
     monto = fi.get("total_monto", 0)
     nro_pp = fi.get("nro_pp", "—")
+    pp_id = fi.get("pp_id", "—")
     vendedor = fi.get("vendedor_nombre", "—")
+    estado = fi.get("estado", "RESERVADA")
+
+    # Badge de estado
+    estado_badge = "🟡 RESERVADA" if estado == "RESERVADA" else estado
 
     with st.expander(
-        f"📋 **{nro}** · {cli} · {marca} · {pares:,} pares · {_fmt_gs(monto)}",
+        f"📋 **{nro}** · {estado_badge} · {cli} · {marca} · {pares:,} pares · {_fmt_gs(monto)}",
         expanded=True,
     ):
-        # Cabecera con métricas
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("PP", nro_pp)
-        c2.metric("Marca", marca)
+        # Cabecera con métricas — mostrar código compuesto prominente
+        c0, c1, c2, c3, c4 = st.columns([2, 1, 1, 1, 1])
+        c0.markdown(f"### `{nro}`")
+        c0.caption(f"PP #{pp_id} · {nro_pp}")
+        c1.metric("Marca", marca)
+        c2.metric("Caso", caso or "—")
         c3.metric("Pares", f"{pares:,}")
         c4.metric("Monto", _fmt_gs(monto))
 
         # Info adicional
         st.caption(
-            f"Caso: `{caso}` · Cliente: {cli} · Vendedor: {vendedor} · "
+            f"Cliente: {cli} · Vendedor: {vendedor} · "
             f"Descuentos: {_descuentos_label(fi)}"
         )
 
