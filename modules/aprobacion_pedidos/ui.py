@@ -1,9 +1,8 @@
 # =============================================================================
 # MÓDULO: Aprobación de Pedidos RIMEC
 # ARCHIVO: modules/aprobacion_pedidos/ui.py
-# PARADIGMA: BD como único canal. No objetos Python entre módulos.
-#   - Tab "Reservadas": FIs pendientes de aprobación (nacen en PP/PVR)
-#   - Tab "Pendientes PVR": Pedidos web esperando autorización
+# PARADIGMA: BD como único canal. Cada célula se aprueba individualmente.
+#   - Tab "Pendientes": Pedidos web con células para aprobar/rechazar una a una
 #   - Tab "Confirmadas": FIs aprobadas (historial)
 #   - Tab "Anuladas": FIs rechazadas con stock revertido
 # =============================================================================
@@ -52,7 +51,7 @@ def _descuentos_label(p: dict) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CONSTRUCCIÓN DE CÉLULAS (para PVR)
+# CONSTRUCCIÓN DE CÉLULAS
 # ─────────────────────────────────────────────────────────────────────────────
 
 def construir_celulas(lotes: list) -> list:
@@ -87,22 +86,12 @@ def construir_celulas(lotes: list) -> list:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ACCIONES DE CÉLULA (PVR)
+# ACCIONES DE CÉLULA
 # ─────────────────────────────────────────────────────────────────────────────
 
 def aprobar_celula(pedido_id: int, celula: dict):
-    print(f"\n{'='*60}")
-    print(f"[APROBAR] pedido_id={pedido_id}")
-    print(f"[APROBAR] pp_id={celula.get('pp_id')} marca={celula.get('marca')} caso={celula.get('caso')}")
-    print(f"[APROBAR] items={len(celula.get('items',[]))}")
-    for i, item in enumerate(celula.get('items',[])):
-        print(f"[APROBAR] item[{i}] linea={item.get('linea_codigo')} ref={item.get('ref_codigo')} pares={item.get('pares')}")
-    print(f"{'='*60}")
-
     from modules.aprobacion_pedidos.logic import crear_preventa_desde_celula
     ok, msg = crear_preventa_desde_celula(pedido_id, celula)
-
-    print(f"[RESULTADO] ok={ok} msg={msg}")
 
     if ok:
         st.success(f"✅ Preventa generada: {msg}")
@@ -110,7 +99,6 @@ def aprobar_celula(pedido_id: int, celula: dict):
         st.rerun()
     else:
         st.error(f"❌ Error: {msg}")
-        print(f"[ERROR COMPLETO] {msg}")
 
 
 def rechazar_celula(pedido_id: int, celula: dict, motivo: str):
@@ -129,7 +117,7 @@ def rechazar_celula(pedido_id: int, celula: dict, motivo: str):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# RENDER DE UNA CÉLULA (PVR)
+# RENDER DE UNA CÉLULA (dentro de un pedido pendiente)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _render_celula(pedido_id: int, celula: dict):
@@ -154,6 +142,7 @@ def _render_celula(pedido_id: int, celula: dict):
             if preventa:
                 st.success(f"✅ {preventa['nro_factura']}")
 
+        # Detalle de items
         for item in celula["items"]:
             ci, cd, cn = st.columns([1, 4, 2])
             with ci:
@@ -181,6 +170,7 @@ def _render_celula(pedido_id: int, celula: dict):
                 st.write(f"{item.get('cajas', 0)} caj · {item.get('pares', 0)} p")
                 st.caption(_fmt_gs(item.get("subtotal", 0)))
 
+        # Acciones: aprobar/rechazar solo si aún no tiene preventa
         if not preventa:
             col_a, col_r, col_mot = st.columns([1, 1, 3])
             with col_a:
@@ -203,7 +193,7 @@ def _render_celula(pedido_id: int, celula: dict):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TARJETA DE PEDIDO PVR
+# TARJETA DE PEDIDO PENDIENTE
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _render_tarjeta_pendiente(p: dict):
@@ -223,7 +213,7 @@ def _render_tarjeta_pendiente(p: dict):
 
         st.divider()
         st.markdown("### Células de Aprobación")
-        st.caption("Cada célula es independiente. Aprobá o rechazá por separado.")
+        st.caption("Cada célula se aprueba por separado. El pedido pasa a AUTORIZADO cuando todas estén aprobadas.")
 
         payload = _parse_payload(p.get("payload_json"))
         lotes   = payload.get("lotes", [])
@@ -259,104 +249,24 @@ def _render_tarjeta_pendiente(p: dict):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TARJETA DE FI RESERVADA (Flujo Reserva → Liberación)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _render_fi_card(fi: dict):
-    """Renderiza una FI pendiente de aprobación con acciones Confirmar/Anular."""
-    nro = fi.get("nro_factura", f"FI-{fi['id']}")
-    cli = fi.get("cliente_nombre", "—")
-    marca = fi.get("marca", "—")
-    caso = fi.get("caso", "—")
-    pares = fi.get("total_pares", 0)
-    monto = fi.get("total_monto", 0)
-    nro_pp = fi.get("nro_pp", "—")
-    pp_id = fi.get("pp_id", "—")
-    vendedor = fi.get("vendedor_nombre", "—")
-    estado = fi.get("estado", "RESERVADA")
-
-    # Badge de estado
-    estado_badge = "🟡 RESERVADA" if estado == "RESERVADA" else estado
-
-    with st.expander(
-        f"📋 **{nro}** · {estado_badge} · {cli} · {marca} · {pares:,} pares · {_fmt_gs(monto)}",
-        expanded=True,
-    ):
-        # Cabecera con métricas — mostrar código compuesto prominente
-        c0, c1, c2, c3, c4 = st.columns([2, 1, 1, 1, 1])
-        c0.markdown(f"### `{nro}`")
-        c0.caption(f"PP #{pp_id} · {nro_pp}")
-        c1.metric("Marca", marca)
-        c2.metric("Caso", caso or "—")
-        c3.metric("Pares", f"{pares:,}")
-        c4.metric("Monto", _fmt_gs(monto))
-
-        # Info adicional
-        st.caption(
-            f"Cliente: {cli} · Vendedor: {vendedor} · "
-            f"Descuentos: {_descuentos_label(fi)}"
-        )
-
-        # Acciones
-        col_a, col_r, col_m = st.columns([1, 1, 3])
-        with col_a:
-            if st.button("✅ Confirmar", key=f"ok_fi_{fi['id']}", type="primary"):
-                ok, msg = confirmar_fi(fi["id"])
-                if ok:
-                    st.success(f"✅ {nro} confirmada")
-                    import time; time.sleep(0.5)
-                    st.rerun()
-                else:
-                    st.error(msg)
-        with col_r:
-            if st.button("❌ Anular", key=f"no_fi_{fi['id']}"):
-                motivo = st.session_state.get(f"mot_fi_{fi['id']}", "")
-                ok, msg = anular_fi(fi["id"], motivo)
-                if ok:
-                    st.warning(f"↩ {nro} anulada. Stock revertido.")
-                    import time; time.sleep(0.5)
-                    st.rerun()
-                else:
-                    st.error(msg)
-        with col_m:
-            st.text_input(
-                "Motivo anulación",
-                key=f"mot_fi_{fi['id']}",
-                label_visibility="collapsed",
-                placeholder="Motivo (opcional)",
-            )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # RENDER PRINCIPAL
 # ─────────────────────────────────────────────────────────────────────────────
 
 def render_aprobacion():
     st.markdown("## ✅ Aprobación de Pedidos RIMEC")
-    st.caption("Flujo Reserva → Liberación: las facturas nacen RESERVADAS y se confirman aquí.")
+    st.caption("Cada célula (PP+Marca+Caso) se aprueba individualmente. El pedido cierra cuando todas estén confirmadas.")
 
-    tab_res, tab_pend, tab_conf, tab_anul = st.tabs([
-        "⏳ Reservadas",
-        "📋 Pendientes PVR",
+    tab_pend, tab_conf, tab_anul = st.tabs([
+        "📋 Pendientes",
         "✅ Confirmadas",
         "❌ Anuladas",
     ])
 
-    # ── Tab Reservadas: FIs pendientes de aprobación ─────────────────────
-    with tab_res:
-        fis = get_fi_reservadas()
-        if not fis:
-            st.info("No hay facturas internas pendientes de aprobación.", icon="⏳")
-        else:
-            st.caption(f"{len(fis)} factura(s) interna(s) esperando aprobación")
-            for fi in fis:
-                _render_fi_card(fi)
-
-    # ── Tab Pendientes PVR: Pedidos web (flujo legacy) ───────────────────
+    # ── Tab Pendientes: Pedidos web con células para aprobar ─────────────
     with tab_pend:
         pedidos = get_pedidos_pendientes()
         if not pedidos:
-            st.info("No hay pedidos PVR pendientes.", icon="📋")
+            st.info("No hay pedidos pendientes de aprobación.", icon="📋")
         else:
             st.caption(f"{len(pedidos)} pedido(s) esperando autorización")
             for p in pedidos:
