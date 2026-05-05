@@ -101,7 +101,7 @@ def render_home():
     # ══════════════════════════════════════════════════════════════════════════
     _section("🚢", "CICLO DE IMPORTACIÓN", "Motor de precios · Flujo completo desde intención hasta depósito")
 
-    c0, c1, c2, c3, c4, c5 = st.columns(6)
+    c0, c1, c2, c3, c4, c5, c6, c7 = st.columns(8)
 
     _card(
         c0,
@@ -121,6 +121,14 @@ def render_home():
     )
     _card(
         c2,
+        icon  = "⌨️",
+        title = "Digitación",
+        desc  = "Asigna nro. de fábrica a ICs autorizadas y las agrupa en Pedidos Proveedor.",
+        btn_key     = "nav_dig",
+        module_key  = "digitacion",
+    )
+    _card(
+        c3,
         icon  = "📦",
         title = "Pedido Proveedor",
         desc  = "SKUs F9, gradaciones, proformas y ventas en tránsito.",
@@ -128,7 +136,15 @@ def render_home():
         module_key  = "pedido_proveedor",
     )
     _card(
-        c3,
+        c4,
+        icon  = "✅",
+        title = "Aprobación de Pedidos",
+        desc  = "Pedidos RIMEC mayorista. Verificar y autorizar. Divide por PP, Marca y Caso.",
+        btn_key     = "nav_aprobacion",
+        module_key  = "aprobacion_pedidos",
+    )
+    _card(
+        c5,
         icon  = "🏛️",
         title = "Compra Legal",
         desc  = "Consolidación de PPs. Generación de compras legales y traspasos.",
@@ -136,7 +152,7 @@ def render_home():
         module_key  = "compra_legal",
     )
     _card(
-        c4,
+        c6,
         icon  = "🧾",
         title = "Facturación",
         desc  = "FAC-INT en tránsito. Distribución a sucursales y cliente 5000.",
@@ -144,7 +160,7 @@ def render_home():
         module_key  = "facturacion",
     )
     _card(
-        c5,
+        c7,
         icon  = "🏭",
         title = "Depósito RIMEC",
         desc  = "Saldo físico en depósito. Compra inicial menos venta en tránsito.",

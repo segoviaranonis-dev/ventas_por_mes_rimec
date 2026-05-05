@@ -47,7 +47,9 @@ def _register(module_package: str) -> None:
 _register("modules.home")
 _register("modules.sales_report")
 _register("modules.intencion_compra")
+_register("modules.digitacion")       # 3.5 — Puente IC → PP (nro fábrica + evento precio)
 _register("modules.pedido_proveedor")
+_register("modules.aprobacion_pedidos")  # 4.5 — Autorización preventas mayoristas
 # ── Ciclo Abastecimiento ────────────────────────────
 _register("modules.compra_legal")    # 5 — COMPRA (consolidador PPs)
 _register("modules.deposito")        # 6 — DEPÓSITO RIMEC (saldo físico)

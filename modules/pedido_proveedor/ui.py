@@ -29,8 +29,23 @@ from modules.pedido_proveedor.logic import (
     get_marcas_de_pp,
     get_skus_por_marcas,
     save_factura_manual,
+    get_datos_ics_de_pp,
+    get_evento_precio_pp,
+    get_precios_stock_pp,
+    actualizar_eta_pp,
+    desasignar_ic_de_pp,
+    get_todos_eventos_precio,
+    get_lista_precios_completa,
+    parse_proforma,
+    populate_pp_from_proforma,
+    guardar_configuracion_pp,
+    get_facturas_interna_de_pp,
+    get_skus_con_precio_para_fi,
+    crear_factura_interna,
+    registrar_arribo,
 )
 from modules.pedido_proveedor.showroom import render_showroom
+from modules.rimec_engine.hiedra import extraer_valor_numerico_talla
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -38,10 +53,18 @@ from modules.pedido_proveedor.showroom import render_showroom
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _fmt_date(val) -> str:
-    if val is None or (isinstance(val, float) and pd.isna(val)):
+    if val is None:
         return "—"
     try:
-        return str(val)[:10]
+        if pd.isnull(val):
+            return "—"
+    except Exception:
+        pass
+    s = str(val).strip()
+    if s in ("", "None", "NaT", "nan", "NaN", "NULL"):
+        return "—"
+    try:
+        return s[:10]
     except Exception:
         return "—"
 
@@ -91,10 +114,20 @@ def _render_cabecera_modulo():
 
 def _quincena_label(fecha) -> str:
     """Devuelve '1ª Quincena de Mayo 2026' a partir de una fecha."""
-    if fecha is None or (isinstance(fecha, float) and pd.isna(fecha)):
+    if fecha is None:
         return "Sin fecha"
     try:
-        dt  = pd.to_datetime(fecha)
+        if pd.isnull(fecha):          # atrapa NaT, NaN y None
+            return "Sin fecha"
+    except Exception:
+        pass
+    s = str(fecha).strip()
+    if s in ("", "None", "NaT", "nan", "NaN", "NULL"):
+        return "Sin fecha"
+    try:
+        dt  = pd.to_datetime(fecha, errors="coerce")
+        if pd.isnull(dt):
+            return "Sin fecha"
         q   = "1ª" if dt.day <= 15 else "2ª"
         mes = MES_NOMBRES.get(dt.month, str(dt.month))
         return f"{q} Quincena de {mes} {dt.year}"
@@ -110,26 +143,24 @@ def _render_lista_pp():
         st.info("No hay pedidos que coincidan con los filtros.")
         return
 
-    # ── Calcular saldo y quincena ─────────────────────────────────────────────
-    df["saldo"] = (
-        df["pares_comprometidos"].fillna(0).astype(int)
-        - df["total_vendido"].fillna(0).astype(int)
-    )
-    # Ordenar cronológicamente ASC por fecha de arribo estimada
+    def _si(v):
+        try:
+            if v is None or (isinstance(v, float) and pd.isna(v)): return 0
+            s = str(v).strip()
+            return 0 if s in ("", "None", "nan") else int(float(s))
+        except Exception: return 0
+
     df["_fecha_eta_dt"] = pd.to_datetime(df["fecha_eta"], errors="coerce")
     df = df.sort_values("_fecha_eta_dt", ascending=True, na_position="last")
-
     df["quincena_label"] = df["fecha_eta"].apply(_quincena_label)
-
-    # Quincenas en el orden ya establecido por el sort
     quincenas = list(dict.fromkeys(df["quincena_label"].tolist()))
 
     for quincena in quincenas:
-        df_q   = df[df["quincena_label"] == quincena]
-        total_ini  = int(df_q["pares_comprometidos"].sum())
-        total_vend = int(df_q["total_vendido"].sum())
-        pct_q  = round(total_vend / total_ini * 100, 1) if total_ini > 0 else 0.0
-        n_pps  = len(df_q)
+        df_q       = df[df["quincena_label"] == quincena]
+        total_ini  = int(df_q["pares_comprometidos"].fillna(0).apply(_si).sum())
+        total_vend = int(df_q["total_vendido"].fillna(0).apply(_si).sum())
+        pct_q      = round(total_vend / total_ini * 100, 1) if total_ini > 0 else 0.0
+        n_pps      = len(df_q)
 
         exp_label = (
             f"📅  {quincena}"
@@ -138,129 +169,435 @@ def _render_lista_pp():
             f"  ·  {pct_q} % ejecutado"
         )
 
-        # Mantener expandido si hay un formulario de "Enviar a Compra" abierto
-        any_ec_open = any(
-            st.session_state.get(f"_pp_enviar_open_{int(r['id'])}")
-            for _, r in df_q.iterrows()
-        )
-        with st.expander(exp_label, expanded=any_ec_open):
-            # ── Botones de preventa (2 columnas) ──────────────────────────────
-            n_cols = 2
-            rows   = [df_q.iloc[i : i + n_cols] for i in range(0, len(df_q), n_cols)]
+        with st.expander(exp_label, expanded=False):
+            # Encabezado de columnas
+            h = st.columns([3, 2, 1.5, 1.5, 1])
+            for col, lbl in zip(h, ["Pedido / Marcas", "ETA · Cliente", "Pares", "Estado", ""]):
+                col.markdown(
+                    f"<span style='color:#64748B;font-size:.72rem;"
+                    f"letter-spacing:.06em;text-transform:uppercase;'>{lbl}</span>",
+                    unsafe_allow_html=True,
+                )
+            st.divider()
 
-            for row_df in rows:
-                cols = st.columns(n_cols)
-                for col, (_, pp) in zip(cols, row_df.iterrows()):
-                    ini     = int(pp["pares_comprometidos"] or 0)
-                    vend    = int(pp["total_vendido"] or 0)
-                    saldo   = int(pp["saldo"])
-                    pct     = round(vend / ini * 100, 1) if ini > 0 else 0.0
-                    bar_w   = min(int(pct), 100)
-
-                    if pct >= 80:
-                        bar_color = "#22C55E"; pct_color = "#22C55E"
-                    elif pct >= 40:
-                        bar_color = "#F59E0B"; pct_color = "#F59E0B"
-                    else:
-                        bar_color = "#3B82F6"; pct_color = "#3B82F6"
-
-                    estado_color = _ESTADO_COLOR.get(str(pp["estado"]), "#94A3B8")
-
-                    with col:
-                        st.markdown(
-                            f"""
-                            <div style="background:linear-gradient(135deg,#1C2E3F,#0F1E2F);
-                                        border:1px solid #334155;border-radius:14px;
-                                        padding:20px 24px;margin-bottom:4px;">
-                              <div style="display:flex;justify-content:space-between;
-                                          align-items:flex-start;margin-bottom:12px;">
-                                <div>
-                                  <div style="font-size:.72rem;color:#64748B;
-                                              letter-spacing:.06em;text-transform:uppercase;">
-                                    Preventa</div>
-                                  <div style="font-size:1.1rem;font-weight:700;
-                                              color:#F1F5F9;margin-top:2px;">
-                                    {pp['numero_registro']}</div>
-                                  <div style="font-size:.82rem;color:#94A3B8;margin-top:2px;">
-                                    {pp['marcas']} &nbsp;·&nbsp; Proforma {pp['numero_proforma']}</div>
-                                </div>
-                                <span style="background:{estado_color}22;color:{estado_color};
-                                             font-size:.68rem;font-weight:600;padding:3px 8px;
-                                             border-radius:4px;letter-spacing:.04em;">
-                                  {pp['estado']}
-                                </span>
-                              </div>
-                              <div style="display:flex;gap:24px;margin-bottom:14px;">
-                                <div>
-                                  <div style="color:#64748B;font-size:.66rem;
-                                              letter-spacing:.05em;text-transform:uppercase;">
-                                    Compra Inicial</div>
-                                  <div style="color:#F1F5F9;font-size:1.05rem;font-weight:700;">
-                                    {ini:,} pares</div>
-                                </div>
-                                <div>
-                                  <div style="color:#64748B;font-size:.66rem;
-                                              letter-spacing:.05em;text-transform:uppercase;">
-                                    Venta Tránsito</div>
-                                  <div style="color:#D4AF37;font-size:1.05rem;font-weight:700;">
-                                    {vend:,} pares</div>
-                                </div>
-                                <div>
-                                  <div style="color:#64748B;font-size:.66rem;
-                                              letter-spacing:.05em;text-transform:uppercase;">
-                                    Saldo Real</div>
-                                  <div style="color:#22C55E;font-size:1.05rem;font-weight:700;">
-                                    {saldo:,}</div>
-                                </div>
-                              </div>
-                              <div style="display:flex;align-items:center;gap:10px;">
-                                <div style="flex:1;background:#0F1E2F;
-                                            border-radius:4px;height:8px;">
-                                  <div style="background:{bar_color};width:{bar_w}%;
-                                              height:8px;border-radius:4px;"></div>
-                                </div>
-                                <span style="color:{pct_color};font-size:.82rem;
-                                             font-weight:700;min-width:44px;text-align:right;">
-                                  {pct} %</span>
-                              </div>
-                            </div>""",
-                            unsafe_allow_html=True,
-                        )
-                        if st.button(
-                            "📋 Abrir detalle",
-                            key=f"pp_open_{pp['id']}",
-                            use_container_width=True,
-                            type="primary",
-                        ):
-                            st.session_state["pp_selected_id"] = int(pp["id"])
-                            st.rerun()
-                        if str(pp["estado"]) == "ENVIADO":
-                            st.markdown(
-                                "<div style='background:#EF444422;border:1px solid #EF4444;"
-                                "border-radius:8px;padding:7px 14px;text-align:center;"
-                                "color:#EF4444;font-size:.8rem;font-weight:600;'>"
-                                "🔒 Transferido a Compra</div>",
-                                unsafe_allow_html=True,
-                            )
-                        else:
-                            if st.button(
-                                "📦 Enviar a Compra",
-                                key=f"pp_ec_{pp['id']}",
-                                use_container_width=True,
-                            ):
-                                st.session_state[f"_pp_enviar_open_{int(pp['id'])}"] = True
-                                st.rerun()
-
-            # ── Formulario inline Enviar a Compra ─────────────────────────
             for _, pp in df_q.iterrows():
-                if st.session_state.get(f"_pp_enviar_open_{int(pp['id'])}"):
-                    st.divider()
-                    _render_enviar_a_compra(int(pp["id"]), str(pp["numero_proforma"]))
-                    break
+                ini    = _si(pp["pares_comprometidos"])
+                vend   = _si(pp["total_vendido"])
+                estado = str(pp["estado"])
+                estado_color = _ESTADO_COLOR.get(estado, "#94A3B8")
+
+                marcas_val   = str(pp.get("marcas", "—") or "—")
+                proforma_val = str(pp.get("numero_proforma") or "—")
+                cliente_val  = str(pp.get("cliente",  "—") or "—")
+                vendedor_val = str(pp.get("vendedor", "—") or "—")
+                eta_val      = _fmt_date(pp.get("fecha_eta"))
+
+                col_info, col_eta, col_pares, col_estado, col_btn = st.columns([3, 2, 1.5, 1.5, 1])
+
+                with col_info:
+                    st.markdown(
+                        f"<div style='line-height:1.4;'>"
+                        f"<span style='font-weight:700;color:#F1F5F9;font-size:.9rem;'>"
+                        f"{pp['numero_registro']}</span>"
+                        f"<span style='color:#64748B;font-size:.78rem;'> · {marcas_val}</span><br>"
+                        f"<span style='color:#D4AF37;font-size:.75rem;'>{cliente_val}</span>"
+                        f"<span style='color:#475569;font-size:.72rem;'> · {vendedor_val}</span><br>"
+                        f"<span style='color:#475569;font-size:.68rem;'>Proforma {proforma_val}</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                with col_eta:
+                    # ETA — semáforo por urgencia
+                    from datetime import date as _d_hoy
+                    _eta_color = "#64748B"
+                    dias: int | None = None
+                    _raw_eta = pp.get("fecha_eta")
+                    _eta_es_valida = (
+                        _raw_eta is not None
+                        and str(_raw_eta).strip() not in ("", "None", "NaT", "nan", "NaN", "NULL")
+                    )
+                    if _eta_es_valida:
+                        try:
+                            _dt = pd.to_datetime(_raw_eta, errors="coerce")
+                            if _dt is not pd.NaT and not pd.isnull(_dt):
+                                dias = (_dt.date() - _d_hoy.today()).days
+                                if dias < 0:
+                                    _eta_color = "#EF4444"
+                                elif dias <= 15:
+                                    _eta_color = "#F59E0B"
+                                else:
+                                    _eta_color = "#22C55E"
+                        except Exception:
+                            dias = None
+
+                    dias_str = f"<br><span style='color:#94A3B8;font-size:.7rem;'>{dias} días</span>" if dias is not None else ""
+                    st.markdown(
+                        f"<div style='line-height:1.5;'>"
+                        f"<span style='color:{_eta_color};font-size:.88rem;font-weight:700;'>"
+                        f"📅 {eta_val}</span>{dias_str}"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                    # Botón para editar ETA inline
+                    key_edit = f"_eta_edit_{int(pp['id'])}"
+                    if st.button("✏ ETA", key=f"_eta_btn_{int(pp['id'])}", help="Editar fecha ETA"):
+                        st.session_state[key_edit] = True
+                    if st.session_state.get(key_edit):
+                        _val_default = _d_hoy.today()
+                        if _eta_es_valida:
+                            try:
+                                _dt2 = pd.to_datetime(_raw_eta, errors="coerce")
+                                if _dt2 is not pd.NaT and not pd.isnull(_dt2):
+                                    _val_default = _dt2.date()
+                            except Exception:
+                                pass
+                        nueva_eta = st.date_input(
+                            "Nueva ETA", value=_val_default,
+                            key=f"_eta_val_{int(pp['id'])}",
+                            label_visibility="collapsed",
+                        )
+                        c_ok, c_no = st.columns(2)
+                        if c_ok.button("✓", key=f"_eta_ok_{int(pp['id'])}", type="primary"):
+                            if actualizar_eta_pp(int(pp["id"]), nueva_eta):
+                                st.session_state.pop(key_edit, None)
+                                st.rerun()
+                        if c_no.button("✗", key=f"_eta_no_{int(pp['id'])}"):
+                            st.session_state.pop(key_edit, None)
+                            st.rerun()
+
+                with col_pares:
+                    st.markdown(
+                        f"<div style='text-align:center;'>"
+                        f"<div style='color:#F1F5F9;font-size:1rem;font-weight:700;'>{ini:,}</div>"
+                        f"<div style='color:#64748B;font-size:.68rem;'>{vend:,} vend.</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                with col_estado:
+                    st.markdown(
+                        f"<span style='background:{estado_color}22;color:{estado_color};"
+                        f"font-size:.72rem;font-weight:600;padding:3px 8px;"
+                        f"border-radius:4px;'>{estado}</span>",
+                        unsafe_allow_html=True,
+                    )
+
+                with col_btn:
+                    if st.button("Abrir →", key=f"pp_open_{pp['id']}",
+                                 use_container_width=True, type="primary"):
+                        st.session_state["pp_selected_id"] = int(pp["id"])
+                        st.rerun()
+
+                st.divider()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# VISTA DETALLE — Padre + Ala Norte + Ala Sur
+# CARGAR PROFORMA — reemplaza F9 para PPs creados por Digitación
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _mostrar_exito_importacion(resultado: dict, pp_id: int) -> None:
+    """Pantalla de éxito post-importación — imposible de ignorar."""
+    st.balloons()
+    st.success("✅ ¡Importación completada con éxito!")
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Artículos importados", resultado["total_articulos"])
+    col2.metric("Pares en tránsito",    f"{resultado['total_pares']:,}")
+    col3.metric("FOB total (USD)",      f"{resultado['total_fob']:,.2f}")
+
+    st.info(
+        f"📦 **{resultado['total_pares']:,} pares** ya forman parte "
+        f"de tu stock en tránsito bajo el **{resultado['pp_nro']}**.\n\n"
+        "Podés verlos ahora en la pestaña **Importación / Stock** "
+        "y comenzar a crear facturas internas."
+    )
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("📋 Ver stock importado", type="primary",
+                     key=f"_exito_stock_{pp_id}", use_container_width=True):
+            st.session_state[f"_pf_exito_{pp_id}"] = None
+            st.session_state["tab_activa"] = "hijo_mayor"
+            st.rerun()
+    with col_b:
+        if st.button("🧾 Crear primera factura interna",
+                     key=f"_exito_fac_{pp_id}", use_container_width=True):
+            st.session_state[f"_pf_exito_{pp_id}"] = None
+            st.session_state["tab_activa"] = "hijo_menor"
+            st.rerun()
+
+
+def _render_importar_proforma(pp_id: int):
+    """
+    Carga la Fatura Proforma del proveedor en un PP vacío (creado por Digitación).
+    Captura: proforma, nro pedido externo, descuentos comerciales escalados, ETA.
+    Los precios FOB se almacenan como referencia; el precio de venta viene
+    del evento de precio (rimec_engine). La comparación con la invoice se
+    hace en el módulo Compra.
+    """
+    # ── Pantalla de éxito post-importación ───────────────────────────────────
+    exito = st.session_state.get(f"_pf_exito_{pp_id}")
+    if exito is not None:
+        _mostrar_exito_importacion(exito, pp_id)
+        return
+
+    df_ics = get_datos_ics_de_pp(pp_id)
+
+    st.markdown(
+        "<div style='background:#1C2E3F;border:1px solid #D4AF37;"
+        "border-radius:10px;padding:16px 22px;margin:8px 0 16px 0;'>"
+        "<span style='color:#D4AF37;font-size:.95rem;font-weight:700;'>"
+        "📤 Cargar Proforma — este PP aún no tiene artículos registrados</span><br>"
+        "<span style='color:#94A3B8;font-size:.82rem;'>"
+        "Cargá la Fatura Proforma del proveedor (.xls/.xlsx). "
+        "Los precios FOB son referencia contable; el precio de venta "
+        "lo define la lista de precios asignada.</span>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if df_ics.empty:
+        st.warning("Este PP no tiene ICs asignadas. Contactá a Digitación.")
+        return
+
+    # ── ICs vinculadas ────────────────────────────────────────────────────────
+    pares_limite = int(df_ics["pares"].fillna(0).sum())
+    ic_ref       = df_ics.iloc[0]
+    categoria_id = int(ic_ref["categoria_id"]) if ic_ref.get("categoria_id") is not None else None
+
+    with st.expander("📋 ICs vinculadas a este PP", expanded=False):
+        for _, ic in df_ics.iterrows():
+            st.markdown(
+                f"**{ic['nro_ic']}** · {ic['marca']} · "
+                f"{int(ic['pares']):,} pares aprobados · "
+                f"Fábrica: `{ic.get('nro_pedido_fabrica','—')}`"
+            )
+    st.caption(f"Límite total autorizado: **{pares_limite:,} pares**")
+
+    st.divider()
+
+    # ── BLOQUE 1: Cabecera comercial ─────────────────────────────────────────
+    st.markdown("#### 1 · Cabecera comercial")
+
+    col_pf, col_ext, col_eta = st.columns(3)
+    proforma = col_pf.text_input(
+        "Nro Proforma",
+        key=f"_pf_pf_{pp_id}",
+        placeholder="Ej: 6421",
+    )
+    nro_externo = col_ext.text_input(
+        "Nro PP externo (sistema legado)",
+        key=f"_pf_ext_{pp_id}",
+        placeholder="Ej: PP-654-2026-001",
+        help="Número en el sistema RIMEC actual. Solo referencia.",
+    )
+    from datetime import date as _date
+    fecha_eta = col_eta.date_input(
+        "Fecha ETA",
+        value=None,
+        key=f"_pf_eta_{pp_id}",
+    )
+
+    st.divider()
+
+    # ── BLOQUE 2: Descuentos comerciales escalados ────────────────────────────
+    st.markdown("#### 2 · Descuentos comerciales escalados")
+    st.caption(
+        "Se aplican en cascada sobre el precio FOB unitario. "
+        "Ej: D1=18% + D2=6% → precio × (1−0.18) × (1−0.06). "
+        "Solo se almacenan y muestran aquí; no afectan el precio de venta."
+    )
+
+    dc1, dc2, dc3, dc4 = st.columns(4)
+    d1 = dc1.number_input("Descuento 1 (%)", min_value=0.0, max_value=100.0,
+                          value=0.0, step=0.5, format="%.2f",
+                          key=f"_pf_d1_{pp_id}") / 100
+    d2 = dc2.number_input("Descuento 2 (%)", min_value=0.0, max_value=100.0,
+                          value=0.0, step=0.5, format="%.2f",
+                          key=f"_pf_d2_{pp_id}") / 100
+    d3 = dc3.number_input("Descuento 3 (%)", min_value=0.0, max_value=100.0,
+                          value=0.0, step=0.5, format="%.2f",
+                          key=f"_pf_d3_{pp_id}") / 100
+    d4 = dc4.number_input("Descuento 4 (%)", min_value=0.0, max_value=100.0,
+                          value=0.0, step=0.5, format="%.2f",
+                          key=f"_pf_d4_{pp_id}") / 100
+
+    # Preview del efecto de descuentos
+    if any(x > 0 for x in (d1, d2, d3, d4)):
+        factor = 1.0
+        pasos  = []
+        for i, d in enumerate((d1, d2, d3, d4), 1):
+            if d > 0:
+                factor *= (1 - d)
+                pasos.append(f"×(1−{d*100:.1f}%)")
+        st.markdown(
+            f"<div style='background:#0F1E2F;border-radius:6px;padding:8px 14px;"
+            f"color:#D4AF37;font-size:.85rem;'>"
+            f"Factor neto: {' '.join(pasos)} = <b>{factor:.6f}</b> "
+            f"→ sobre USD 100 = <b>USD {100*factor:.2f}</b></div>",
+            unsafe_allow_html=True,
+        )
+
+    st.divider()
+
+    # ── BLOQUE 3: Archivo proforma ────────────────────────────────────────────
+    st.markdown("#### 3 · Fatura Proforma del proveedor")
+    uploaded = st.file_uploader(
+        "Archivo proforma (.xls o .xlsx)",
+        type=["xls", "xlsx"],
+        key=f"_pf_file_{pp_id}",
+    )
+
+    col_proc, _ = st.columns([1, 3])
+    if col_proc.button(
+        "🔍 Procesar Proforma",
+        key=f"_pf_proc_{pp_id}",
+        disabled=not uploaded,
+    ):
+        with st.spinner("Analizando proforma..."):
+            df_p, total_p, err_p = parse_proforma(uploaded.getvalue())
+        st.session_state[f"_pf_df_{pp_id}"]  = df_p
+        st.session_state[f"_pf_tot_{pp_id}"] = total_p
+        st.session_state[f"_pf_err_{pp_id}"] = err_p
+
+    df_p    = st.session_state.get(f"_pf_df_{pp_id}")
+    total_p = st.session_state.get(f"_pf_tot_{pp_id}", 0)
+    err_p   = st.session_state.get(f"_pf_err_{pp_id}")
+
+    if err_p:
+        st.error(err_p)
+        return
+    if df_p is None:
+        return
+    if df_p.empty:
+        st.warning("La proforma no devolvió artículos. Verificá el archivo.")
+        return
+
+    # ── Preview ───────────────────────────────────────────────────────────────
+    if total_p > pares_limite:
+        st.error(
+            f"🚨 La proforma tiene **{total_p:,} pares** pero el límite autorizado "
+            f"es **{pares_limite:,}** — excede en **{total_p - pares_limite:,} pares**."
+        )
+        puede_guardar = False
+    else:
+        st.success(f"✅ **{total_p:,} pares** dentro del límite de {pares_limite:,}.")
+        puede_guardar = True
+
+    # Preview — 5 pilares + datos comerciales
+    def _fob_aj(fob):
+        r = float(fob)
+        for d in (d1, d2, d3, d4):
+            if d > 0: r *= (1 - d)
+        return round(r, 4)
+
+    df_prev = df_p[["brand", "linea_cod", "ref_cod", "name",
+                    "material_code", "material", "color_code", "color",
+                    "boxes", "pairs", "unit_fob", "grade_range"]].copy()
+    df_prev["fob_ajustado"] = df_prev["unit_fob"].apply(_fob_aj)
+    df_prev = df_prev.rename(columns={
+        "brand":        "Marca",
+        "linea_cod":    "Línea",
+        "ref_cod":      "Ref.",
+        "name":         "Descripción",
+        "material_code":"Cód.Mat",
+        "material":     "Material",
+        "color_code":   "Cód.Col",
+        "color":        "Color",
+        "boxes":        "Cajas",
+        "pairs":        "Pares",
+        "unit_fob":     "FOB USD",
+        "fob_ajustado": "FOB Ajustado",
+        "grade_range":  "Tallas",
+    })
+
+    st.dataframe(
+        df_prev,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Marca":        st.column_config.TextColumn(width=80),
+            "Línea":        st.column_config.TextColumn(width=55),
+            "Ref.":         st.column_config.TextColumn(width=45),
+            "Descripción":  st.column_config.TextColumn(width=160),
+            "Cód.Mat":      st.column_config.TextColumn(width=60),
+            "Material":     st.column_config.TextColumn(width=170),
+            "Cód.Col":      st.column_config.TextColumn(width=60),
+            "Color":        st.column_config.TextColumn(width=130),
+            "Cajas":        st.column_config.NumberColumn(format="%d", width=55),
+            "Pares":        st.column_config.NumberColumn(format="%d", width=55),
+            "FOB USD":      st.column_config.NumberColumn(format="$%.4f", width=80),
+            "FOB Ajustado": st.column_config.NumberColumn(format="$%.4f", width=85),
+            "Tallas":       st.column_config.TextColumn(width=60),
+        },
+    )
+    st.caption(
+        f"{len(df_p)} SKUs · {total_p:,} pares · "
+        f"Marcas: {', '.join(sorted(df_p['brand'].unique()))}"
+    )
+
+    if not puede_guardar or not proforma:
+        if not proforma:
+            st.warning("Ingresá el Nro de Proforma antes de guardar.")
+        return
+
+    st.divider()
+    _, col_ok = st.columns([3, 1])
+    if col_ok.button(
+        "🔒 CARGAR PROFORMA",
+        type="primary",
+        use_container_width=True,
+        key=f"_pf_ok_{pp_id}",
+    ):
+        articulos  = df_p.to_dict("records")
+        total_arts = len(articulos)
+        total_fob  = round(sum(float(r.get("amount_fob", 0)) for r in articulos), 2)
+
+        # ── Barra de progreso visual ──────────────────────────────────────
+        barra = st.progress(0, text="Iniciando importación...")
+        for i, art in enumerate(articulos):
+            pct = int((i + 1) / total_arts * 100)
+            barra.progress(
+                pct,
+                text=f"Preparando artículo {i+1} de {total_arts} — "
+                     f"L{art.get('linea_cod','')}.{art.get('ref_cod','')}",
+            )
+        barra.empty()
+
+        # ── Insert real ───────────────────────────────────────────────────
+        with st.spinner(f"Guardando {total_arts} artículos en la base de datos..."):
+            ok, msg = populate_pp_from_proforma(
+                pp_id        = pp_id,
+                proforma     = proforma,
+                nro_externo  = nro_externo,
+                descuento_1  = d1,
+                descuento_2  = d2,
+                descuento_3  = d3,
+                descuento_4  = d4,
+                fecha_eta    = fecha_eta,
+                categoria_id = categoria_id,
+                detalle_rows = articulos,
+            )
+
+        if ok:
+            for k in (f"_pf_df_{pp_id}", f"_pf_tot_{pp_id}", f"_pf_err_{pp_id}"):
+                st.session_state.pop(k, None)
+            header_pp = get_pp_header(pp_id)
+            st.session_state[f"_pf_exito_{pp_id}"] = {
+                "total_articulos": total_arts,
+                "total_pares":     total_p,
+                "total_fob":       total_fob,
+                "pp_id":           pp_id,
+                "pp_nro":          header_pp.get("numero_registro", f"PP-{pp_id}") if header_pp else f"PP-{pp_id}",
+            }
+            st.rerun()
+        else:
+            st.error(msg)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VISTA DETALLE — Contenedor con 3 Hijos
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _render_detalle_pp(id_pp: int):
@@ -271,6 +608,11 @@ def _render_detalle_pp(id_pp: int):
 
     estado       = header["estado"]
     estado_color = _ESTADO_COLOR.get(estado, "#F1F5F9")
+
+    # ── Botón volver ─────────────────────────────────────────────────────────
+    if st.button("← Volver a la lista", key="pp_volver"):
+        st.session_state.pop("pp_selected_id", None)
+        st.rerun()
 
     # ── Título ────────────────────────────────────────────────────────────────
     st.markdown(
@@ -285,44 +627,740 @@ def _render_detalle_pp(id_pp: int):
         unsafe_allow_html=True,
     )
 
+    # ── Cabecera: Cliente · Vendedor · ETA · Estado digitación ───────────────
+    st.markdown(
+        f"<div style='background:#0F1E2F;border:1px solid #334155;border-radius:8px;"
+        f"padding:8px 16px;margin-bottom:12px;display:flex;gap:24px;flex-wrap:wrap;'>"
+        f"<div><span style='color:#64748B;font-size:.68rem;text-transform:uppercase;'>"
+        f"Cliente</span><br>"
+        f"<span style='color:#D4AF37;font-weight:600;'>{header.get('cliente','—')}</span></div>"
+        f"<div><span style='color:#64748B;font-size:.68rem;text-transform:uppercase;'>"
+        f"Vendedor</span><br>"
+        f"<span style='color:#D4AF37;font-weight:600;'>{header.get('vendedor','—')}</span></div>"
+        f"<div><span style='color:#64748B;font-size:.68rem;text-transform:uppercase;'>"
+        f"ETA</span><br>"
+        f"<span style='color:#F1F5F9;'>{_fmt_date(header.get('fecha_promesa'))}</span></div>"
+        f"<div><span style='color:#64748B;font-size:.68rem;text-transform:uppercase;'>"
+        f"Marcas</span><br>"
+        f"<span style='color:#F1F5F9;'>{header.get('marcas','—')}</span></div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
     # ── Métricas de resumen ───────────────────────────────────────────────────
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Artículos F9",   header["total_articulos"])
+    c1.metric("Artículos F9",    header["total_articulos"])
     c2.metric("Pares Iniciales", f"{header['total_pares']:,}")
     c3.metric("Vendido",         f"{header['total_vendido']:,}")
     c4.metric("Saldo disponible", f"{header['saldo']:,}",
               delta=f"{header['saldo']:,}" if header['saldo'] > 0 else None,
               delta_color="normal")
 
-    # ── Datos complementarios ─────────────────────────────────────────────────
-    col_a, col_b, col_c = st.columns(3)
-    col_a.markdown(f"**Marcas:** {header['marcas']}")
-    col_b.markdown(f"**IC Vinculada:** {header['ic_nro']}")
-    col_c.markdown(f"**Fecha Promesa:** {_fmt_date(header.get('fecha_promesa'))}")
+    st.divider()
 
-    if header.get("notas"):
-        st.caption(f"📝 {header['notas']}")
+    # ── 3 HIJOS ───────────────────────────────────────────────────────────────
+    tiene_stock = header["total_articulos"] > 0
+    label_menor = "🧾 Facturas Internas" if tiene_stock else "🔒 Facturas Internas"
 
-    # ── Botón ENVIAR A COMPRA ─────────────────────────────────────────────────
-    _render_enviar_a_compra(id_pp, header["numero_proforma"])
+    tab_adoptado, tab_mayor, tab_menor = st.tabs([
+        "📋 ICs Asignadas",
+        "📦 Importación / Stock",
+        label_menor,
+    ])
+
+    with tab_adoptado:
+        _render_hijo_adoptado(id_pp)
+
+    with tab_mayor:
+        _render_hijo_mayor(id_pp, header)
+
+    with tab_menor:
+        _render_hijo_menor(id_pp, tiene_stock, header)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HIJO ADOPTADO — ICs asignadas vía tabla puente
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _render_hijo_adoptado(pp_id: int):
+    st.subheader("Intenciones de Compra asignadas")
+    st.caption("Las ICs se asignan desde el módulo de Digitación.")
+
+    df_ics = get_datos_ics_de_pp(pp_id)
+
+    if df_ics.empty:
+        st.info("No hay ICs asignadas a este PP todavía.")
+        return
+
+    total_pares = int(df_ics["pares"].fillna(0).sum()) if "pares" in df_ics.columns else 0
+
+    col1, col2 = st.columns(2)
+    col1.metric("ICs asignadas", len(df_ics))
+    col2.metric("Total pares", f"{total_pares:,}")
 
     st.divider()
 
-    # ── Ala Norte — Drill-Up ─────────────────────────────────────────────────
-    with st.expander(
-        f"📦  Detalle de Importación (Stock Teórico)  —  {header['total_articulos']} artículos · {header['total_pares']:,} pares",
-        expanded=False,
-    ):
-        st.caption("Catálogo de lo que está en camino. Snapshot fijo del F9 (compra_inicial).")
-        _render_ala_norte(id_pp)
+    h = st.columns([2, 2, 1.5, 2.5, 1.5, 1])
+    for col, lbl in zip(h, ["NRO IC", "Marca", "Pares", "Nro Fábrica", "ETA", ""]):
+        col.markdown(
+            f"<span style='color:#64748B;font-size:.72rem;text-transform:uppercase;'>{lbl}</span>",
+            unsafe_allow_html=True,
+        )
 
-    # ── Ala Sur — Drill-Down ─────────────────────────────────────────────────
-    with st.expander(
-        f"🛒  Facturas Internas (Ventas Registradas)  —  {header['total_vendido']:,} pares · {round(header['total_vendido']/header['total_pares']*100,1) if header['total_pares'] else 0} % ejecutado",
-        expanded=False,
-    ):
-        st.caption("Ventas en tránsito: consumo del stock antes del arribo.")
-        _render_ala_sur(id_pp, estado)
+    for _, ic in df_ics.iterrows():
+        pares_ic = int(ic["pares"]) if ic.get("pares") is not None else 0
+        eta_ic   = str(ic.get("eta", "—") or "—")[:10]
+        ic_id    = int(ic["ic_id"]) if "ic_id" in ic.index else None
+
+        c = st.columns([2, 2, 1.5, 2.5, 1.5, 1])
+        c[0].markdown(f"**{ic.get('nro_ic','—')}**")
+        c[1].write(ic.get("marca", "—"))
+        c[2].write(f"{pares_ic:,}")
+        c[3].caption(str(ic.get("nro_pedido_fabrica", "—")))
+        c[4].caption(eta_ic)
+
+        # Botón desasignar — solo si tenemos el ic_id
+        if ic_id:
+            key_confirm = f"_desasig_confirm_{pp_id}_{ic_id}"
+            if st.session_state.get(key_confirm):
+                with c[5]:
+                    st.markdown(
+                        "<span style='color:#EF4444;font-size:.72rem;font-weight:600;'>"
+                        "¿Confirmar?</span>",
+                        unsafe_allow_html=True,
+                    )
+                col_si, col_no = st.columns(2)
+                if col_si.button("Sí", key=f"_desasig_si_{pp_id}_{ic_id}", type="primary"):
+                    if desasignar_ic_de_pp(ic_id, pp_id):
+                        st.session_state.pop(key_confirm, None)
+                        st.success(f"IC {ic.get('nro_ic')} devuelta al pool de Digitación.")
+                        st.rerun()
+                    else:
+                        st.error("Error al desasignar. Revisar logs.")
+                if col_no.button("No", key=f"_desasig_no_{pp_id}_{ic_id}"):
+                    st.session_state.pop(key_confirm, None)
+                    st.rerun()
+            else:
+                if c[5].button("⬆ Mover", key=f"_desasig_btn_{pp_id}_{ic_id}",
+                               help="Quitar esta IC del PP y devolverla al pool de Digitación"):
+                    st.session_state[key_confirm] = True
+                    st.rerun()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HIJO MAYOR — Importación / Stock + Precios LPN/LPC
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _render_hijo_mayor(pp_id: int, header: dict):
+    tiene_stock = header["total_articulos"] > 0
+
+    if not tiene_stock:
+        _render_importar_proforma(pp_id)
+        _render_explorador_precios(pp_id)
+        return
+
+    # Detalle de importación existente
+    st.subheader(
+        f"Detalle de Importación — {header['total_articulos']} artículos · "
+        f"{header['total_pares']:,} pares"
+    )
+    st.caption("Snapshot fijo del F9 (compra_inicial).")
+    _render_ala_norte(pp_id)
+
+    st.divider()
+
+    # Precios LPN / LPC del evento vigente
+    evento_id = get_evento_precio_pp(pp_id)
+
+    def _fmt_p(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+        try: return f"{float(v):,.0f}"
+        except: return "—"
+
+    if evento_id:
+        df_precios = get_precios_stock_pp(pp_id, evento_id)
+        if not df_precios.empty:
+            st.subheader("Precios de este stock")
+            sin_precio = df_precios["lpn"].isna().sum()
+            if sin_precio > 0:
+                st.warning(
+                    f"⚠ {sin_precio} artículos sin precio en el evento {evento_id}. "
+                    "Verificar que el listado de precios incluye estas líneas/materiales."
+                )
+            st.caption(
+                f"Evento de precio ID **{evento_id}** · heredado de las ICs asignadas. "
+                f"Columna **Caso** = fórmula exacta aplicada."
+            )
+
+            headers = ["Línea", "Ref.", "Cód.Mat", "Material", "Disp.",
+                       "LPN", "LPC02", "LPC03", "LPC04", "Caso aplicado", "Dólar", "Índice"]
+            widths  = [0.7, 0.7, 0.8, 2.0, 0.7, 1.2, 1.2, 1.2, 1.2, 2.2, 1.0, 1.0]
+            h = st.columns(widths)
+            for col, lbl in zip(h, headers):
+                col.markdown(
+                    f"<span style='color:#64748B;font-size:.68rem;"
+                    f"text-transform:uppercase;'>{lbl}</span>",
+                    unsafe_allow_html=True,
+                )
+
+            for _, row in df_precios.iterrows():
+                disp = int(row.get("saldo", 0) or 0)
+                has_price = row.get("lpn") is not None
+                c = st.columns(widths)
+                c[0].write(str(row.get("linea_codigo", "—")))
+                c[1].write(str(row.get("referencia_codigo", "—")))
+                c[2].write(str(row.get("cod_material", "—")))
+                c[3].write(str(row.get("material", "—")))
+                c[4].write(f"{disp:,}")
+                c[5].markdown(
+                    f"<span style='color:{'#22C55E' if has_price else '#EF4444'};"
+                    f"font-weight:700;'>{_fmt_p(row.get('lpn'))}</span>",
+                    unsafe_allow_html=True,
+                )
+                c[6].write(_fmt_p(row.get("lpc02")))
+                c[7].write(_fmt_p(row.get("lpc03")))
+                c[8].write(_fmt_p(row.get("lpc04")))
+                c[9].caption(str(row.get("caso_precio") or "—"))
+                c[10].caption(_fmt_p(row.get("dolar_aplicado")))
+                c[11].caption(_fmt_p(row.get("indice_aplicado")))
+
+    st.divider()
+    _render_explorador_precios(pp_id)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EXPLORADOR DE LISTAS DE PRECIOS — mapa forense de eventos y casos
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _render_explorador_precios(pp_id: int):
+    """
+    Desplegable para explorar cualquier lista de precios del sistema.
+    Muestra LPN / LPC02-04 + caso aplicado + índice + dólar para cada
+    referencia/material, permitiendo trazabilidad forense completa.
+    """
+    with st.expander("📊 Explorador de Listas de Precios", expanded=False):
+        df_eventos = get_todos_eventos_precio()
+        if df_eventos is None or df_eventos.empty:
+            st.info("No hay listas de precios registradas en el sistema.")
+            return
+
+        # Selector de evento
+        opts = {}
+        for _, ev in df_eventos.iterrows():
+            n_p    = int(ev.get("n_precios", 0) or 0)
+            estado = str(ev.get("estado", "")).upper()
+            badge  = "🟢" if estado == "CERRADO" else "🔵"
+            label  = (
+                f"{badge} {ev['nombre_evento']}"
+                f"  ·  {n_p:,} referencias"
+                f"  ·  [{estado}]"
+            )
+            opts[label] = int(ev["id"])
+
+        col_sel, col_vincular = st.columns([4, 1])
+        sel_label = col_sel.selectbox(
+            "Seleccionar evento de precio",
+            list(opts.keys()),
+            key=f"_explorador_evento_{pp_id}",
+        )
+        evento_sel_id = opts[sel_label]
+
+        if col_vincular.button(
+            "🔗 Vincular al PP",
+            key=f"_vincular_ev_{pp_id}",
+            type="primary",
+            help="Asigna este evento de precios al PP y sus ICs",
+        ):
+            if guardar_configuracion_pp(pp_id, None, evento_sel_id, None):
+                st.success("Evento vinculado. Los precios de venta quedan asignados a este PP.")
+                st.rerun()
+            else:
+                st.error("Error al vincular el evento. Revisar logs.")
+
+        df_lista = get_lista_precios_completa(evento_sel_id)
+        if df_lista is None or df_lista.empty:
+            st.info("Este evento no tiene precios cargados.")
+            return
+
+        st.caption(
+            f"{len(df_lista):,} entradas · "
+            f"**Caso** = regla de precio aplicada · "
+            f"**Dólar** e **Índice** = valores del cálculo"
+        )
+
+        # Buscador rápido
+        filtro = st.text_input(
+            "Buscar referencia / material / caso",
+            key=f"_explorador_filtro_{pp_id}",
+            placeholder="ej: 1234 · CUERO · LPN_BASE",
+        ).strip().upper()
+
+        if filtro:
+            mask = (
+                df_lista["referencia"].astype(str).str.upper().str.contains(filtro, na=False)
+                | df_lista["linea"].astype(str).str.upper().str.contains(filtro, na=False)
+                | df_lista["material"].astype(str).str.upper().str.contains(filtro, na=False)
+                | df_lista["caso"].astype(str).str.upper().str.contains(filtro, na=False)
+            )
+            df_lista = df_lista[mask]
+
+        if df_lista.empty:
+            st.warning("Sin coincidencias para ese filtro.")
+            return
+
+        display = df_lista[[
+            "linea", "referencia", "material",
+            "lpn", "lpc02", "lpc03", "lpc04",
+            "caso", "dolar", "indice",
+        ]].copy()
+
+        display = display.rename(columns={
+            "linea":      "Línea",
+            "referencia": "Referencia",
+            "material":   "Material",
+            "lpn":               "LPN",
+            "lpc02":             "LPC02",
+            "lpc03":             "LPC03",
+            "lpc04":             "LPC04",
+            "caso":              "Caso aplicado",
+            "dolar":             "Dólar",
+            "indice":            "Índice",
+        })
+
+        st.dataframe(
+            display,
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "LPN":   st.column_config.NumberColumn(format="%.0f", width=90),
+                "LPC02": st.column_config.NumberColumn(format="%.0f", width=90),
+                "LPC03": st.column_config.NumberColumn(format="%.0f", width=90),
+                "LPC04": st.column_config.NumberColumn(format="%.0f", width=90),
+                "Dólar": st.column_config.NumberColumn(format="%.4f", width=80),
+                "Índice": st.column_config.NumberColumn(format="%.4f", width=80),
+                "Caso aplicado": st.column_config.TextColumn(width=200),
+            },
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HIJO MENOR — Facturas Internas (doble candado sin stock)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _render_hijo_menor(pp_id: int, tiene_stock: bool, header: dict):
+    if not tiene_stock:
+        st.warning(
+            "🔒 Las facturas internas se habilitan cuando el stock haya sido "
+            "importado en la pestaña anterior."
+        )
+        st.caption(
+            "Completá la importación en 'Importación / Stock' para desbloquear esta sección."
+        )
+        return
+
+    estado = header["estado"]
+    es_programado = header.get("categoria_id") == 3
+
+    # ── SECCIÓN ARRIBO ────────────────────────────────────────────────────────
+    _render_arribo(pp_id, header)
+    st.divider()
+
+    # ── FACTURAS INTERNAS (nueva tabla) ───────────────────────────────────────
+    st.subheader("Facturas Internas")
+    if es_programado:
+        st.caption("Intermediación directa — facturas al cliente sin stock en tránsito.")
+    else:
+        st.caption("Ventas en tránsito + stock físico post-arribo.")
+
+    _render_facturas_internas(pp_id, header)
+    st.divider()
+
+    # ── ENVIAR A COMPRA LEGAL ─────────────────────────────────────────────────
+    _render_enviar_a_compra(pp_id, header["numero_proforma"])
+    st.divider()
+
+    # ── VENTAS EN TRÁNSITO (sistema legado — showroom) ────────────────────────
+    with st.expander("📋 Ventas en tránsito (showroom)", expanded=False):
+        _render_ala_sur(pp_id, estado)
+
+    with st.expander("🔬 Trazabilidad Forense", expanded=False):
+        _render_auditoria_pp(pp_id, header.get("numero_registro", ""))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ARRIBO
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _render_arribo(pp_id: int, header: dict):
+    from datetime import date as _date
+
+    estado_arribo = header.get("estado_arribo") or "EN_TRANSITO"
+    fecha_arribo  = header.get("fecha_arribo")
+
+    if estado_arribo == "ARRIBADO":
+        st.markdown(
+            f"<div style='background:#22C55E22;border:1px solid #22C55E;"
+            f"border-radius:8px;padding:10px 18px;display:inline-block;"
+            f"color:#22C55E;font-size:.88rem;font-weight:600;'>"
+            f"✅ PP ARRIBADO — {str(fecha_arribo or '')[:10]}"
+            f"&nbsp;&nbsp;<span style='color:#64748B;font-size:.75rem;font-weight:400;'>"
+            f"Stock disponible en Bazar Web</span></div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    key_open = f"_arribo_open_{pp_id}"
+    if not st.session_state.get(key_open):
+        if st.button("🚢 Registrar Arribo", key=f"_arribo_btn_{pp_id}", type="primary"):
+            st.session_state[key_open] = True
+            st.rerun()
+        return
+
+    st.markdown(
+        "<div style='background:#1C2E3F;border:1px solid #D4AF37;"
+        "border-radius:10px;padding:16px 20px;margin:8px 0;'>"
+        "<b style='color:#D4AF37;'>🚢 Registrar Arribo — esto genera stock en Bazar Web</b>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    col_fecha, col_ok, col_cancel = st.columns([2, 1, 1])
+    fecha = col_fecha.date_input(
+        "Fecha de arribo", value=_date.today(),
+        key=f"_arribo_fecha_{pp_id}",
+        label_visibility="collapsed",
+    )
+    if col_ok.button("✔ Confirmar", key=f"_arribo_ok_{pp_id}", type="primary",
+                     use_container_width=True):
+        with st.spinner("Registrando arribo y generando stock_bazar..."):
+            ok, msg = registrar_arribo(pp_id, fecha)
+        if ok:
+            st.success(f"✅ {msg}")
+            st.session_state.pop(key_open, None)
+            st.rerun()
+        else:
+            st.error(msg)
+    if col_cancel.button("✕ Cancelar", key=f"_arribo_cancel_{pp_id}",
+                         use_container_width=True):
+        st.session_state.pop(key_open, None)
+        st.rerun()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FACTURAS INTERNAS — lista + creación
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _render_facturas_internas(pp_id: int, header: dict):
+    df_fi = get_facturas_interna_de_pp(pp_id)
+
+    # ── Botón nueva factura ───────────────────────────────────────────────────
+    key_fi_open = f"_fi_open_{pp_id}"
+    if not st.session_state.get(key_fi_open):
+        if st.button("＋ Nueva Factura Interna", key=f"_fi_btn_{pp_id}", type="primary"):
+            st.session_state[key_fi_open] = True
+            st.session_state.pop(f"_fi_fase_{pp_id}", None)
+            st.rerun()
+    else:
+        _render_nueva_fi(pp_id, header)
+        return
+
+    # ── Lista de FIs existentes ───────────────────────────────────────────────
+    if df_fi is None or df_fi.empty:
+        st.info("Sin facturas internas aún para este PP.")
+        return
+
+    total_pares = int(df_fi["total_pares"].sum())
+    total_neto  = float(df_fi["total_neto"].sum())
+    st.caption(f"{len(df_fi)} factura(s) · {total_pares:,} pares · ${total_neto:,.0f}")
+
+    for _, fi in df_fi.iterrows():
+        col_nro, col_cli, col_pares, col_neto, col_est = st.columns([2, 3, 1.2, 1.5, 1])
+        col_nro.markdown(f"**{fi['nro_factura']}**")
+        col_cli.write(str(fi.get("cliente") or "—"))
+        col_pares.write(f"{int(fi['total_pares']):,}")
+        col_neto.write(f"${float(fi['total_neto']):,.0f}")
+        color_est = "#22C55E" if fi["estado"] == "CONFIRMADA" else "#EF4444"
+        col_est.markdown(
+            f"<span style='color:{color_est};font-size:.78rem;font-weight:600;'>"
+            f"{fi['estado']}</span>",
+            unsafe_allow_html=True,
+        )
+
+
+def _render_nueva_fi(pp_id: int, header: dict):
+    fase = st.session_state.get(f"_fi_fase_{pp_id}", "A")
+
+    if st.button("← Volver a Facturas", key=f"_fi_back_{pp_id}"):
+        for k in (f"_fi_open_{pp_id}", f"_fi_fase_{pp_id}",
+                  f"_fi_cab_{pp_id}", f"_fi_items_{pp_id}"):
+            st.session_state.pop(k, None)
+        st.rerun()
+
+    if fase == "A":
+        _render_fi_fase_a(pp_id, header)
+    else:
+        _render_fi_fase_b(pp_id, header)
+
+
+def _render_fi_fase_a(pp_id: int, header: dict):
+    st.markdown(
+        "<div style='background:#1C2E3F;border:1px solid #D4AF37;"
+        "border-radius:10px;padding:14px 20px;margin-bottom:12px;'>"
+        "<b style='color:#D4AF37;'>NUEVA FACTURA INTERNA — Cabecera</b></div>",
+        unsafe_allow_html=True,
+    )
+
+    cod_raw = st.text_input("Código de Cliente", key=f"_fi_cod_{pp_id}",
+                            placeholder="Ej: 1234")
+    nombre_cliente, cod_valido, cliente_id = None, False, None
+    if cod_raw.strip().isdigit():
+        nombre_cliente = buscar_cliente_pp(int(cod_raw.strip()))
+        if nombre_cliente:
+            st.success(f"✓  {nombre_cliente}")
+            cod_valido = True
+            cliente_id = int(cod_raw.strip())
+        else:
+            st.warning("Cliente no encontrado.")
+
+    df_vend   = get_vendedores_pp()
+    vend_opts = {"(Sin asignar)": None}
+    for _, v in df_vend.iterrows():
+        vend_opts[str(v["descp_vendedor"])] = int(v["id_vendedor"])
+    sel_vend    = st.selectbox("Vendedor", list(vend_opts.keys()), key=f"_fi_vend_{pp_id}")
+    vendedor_id = vend_opts[sel_vend]
+
+    evento_id = get_evento_precio_pp(pp_id)
+    if not evento_id:
+        st.error("Este PP no tiene evento de precio vinculado. Vinculá uno en 'Importación / Stock'.")
+        return
+
+    col_d1, col_d2, col_d3, col_d4 = st.columns(4)
+    d1 = col_d1.number_input("Desc. 1 (%)", 0.0, 100.0, 0.0, 0.5, key=f"_fi_d1_{pp_id}") / 100
+    d2 = col_d2.number_input("Desc. 2 (%)", 0.0, 100.0, 0.0, 0.5, key=f"_fi_d2_{pp_id}") / 100
+    d3 = col_d3.number_input("Desc. 3 (%)", 0.0, 100.0, 0.0, 0.5, key=f"_fi_d3_{pp_id}") / 100
+    d4 = col_d4.number_input("Desc. 4 (%)", 0.0, 100.0, 0.0, 0.5, key=f"_fi_d4_{pp_id}") / 100
+
+    if st.button("Siguiente →", key=f"_fi_sig_{pp_id}", type="primary"):
+        if not cod_valido:
+            st.error("Ingresá un código de cliente válido.")
+            return
+        df_skus = get_skus_con_precio_para_fi(pp_id, evento_id)
+        if df_skus is None or df_skus.empty:
+            st.error("No hay artículos con saldo y precio resolvible en este PP.")
+            return
+        st.session_state[f"_fi_cab_{pp_id}"] = {
+            "cliente_id": cliente_id, "nombre_cliente": nombre_cliente,
+            "vendedor_id": vendedor_id, "vendedor_label": sel_vend,
+            "lista_precio_id": evento_id,
+            "d1": d1, "d2": d2, "d3": d3, "d4": d4,
+        }
+        st.session_state[f"_fi_items_{pp_id}"] = df_skus.to_dict("records")
+        st.session_state[f"_fi_fase_{pp_id}"] = "B"
+        st.rerun()
+
+
+def _render_fi_fase_b(pp_id: int, header: dict):
+    cab   = st.session_state.get(f"_fi_cab_{pp_id}", {})
+    items = st.session_state.get(f"_fi_items_{pp_id}", [])
+
+    st.markdown(
+        f"<div style='background:#1C2E3F;border:1px solid #334155;"
+        f"border-radius:10px;padding:14px 20px;margin-bottom:12px;'>"
+        f"<b style='color:#D4AF37;'>NUEVA FACTURA — Artículos</b>"
+        f"<div style='color:#94A3B8;font-size:.82rem;margin-top:4px;'>"
+        f"Cliente: <b style='color:#F1F5F9;'>{cab.get('nombre_cliente')}</b>"
+        f"</div></div>",
+        unsafe_allow_html=True,
+    )
+
+    d1, d2, d3, d4 = cab["d1"], cab["d2"], cab["d3"], cab["d4"]
+    factor = (1-d1)*(1-d2)*(1-d3)*(1-d4)
+
+    seleccion: list[dict] = []
+    total_pares = 0
+    total_neto  = 0.0
+
+    cols_h = st.columns([2, 2, 2, 1.5, 1.5, 1.5, 1.5])
+    for col, lbl in zip(cols_h, ["Línea", "Ref.", "Material", "Cajas disp.", "Cajas", "LPN", "Subtotal"]):
+        col.markdown(f"<span style='color:#64748B;font-size:.7rem;text-transform:uppercase;'>{lbl}</span>",
+                     unsafe_allow_html=True)
+
+    for i, sku in enumerate(items):
+        lpn_base = float(sku.get("lpn", 0) or 0)
+        lpn_neto = round(lpn_base * factor)
+        saldo    = int(sku.get("saldo", 0) or 0)
+        cajas_max = int(sku.get("cantidad_cajas", 0) or 0) if saldo >= int(sku.get("pares_inicial", 1) or 1) else max(1, saldo)
+
+        c = st.columns([2, 2, 2, 1.5, 1.5, 1.5, 1.5])
+        c[0].caption(str(sku.get("linea_cod", "—")))
+        c[1].caption(str(sku.get("ref_cod", "—")))
+        c[2].caption(str(sku.get("material", "—"))[:30])
+        c[3].write(str(saldo))
+        n_cajas = c[4].number_input("", min_value=0, max_value=cajas_max,
+                                     value=0, step=1, key=f"_fi_caj_{pp_id}_{i}",
+                                     label_visibility="collapsed")
+        pares_por_caja = max(int(sku.get("pares_inicial", 0) or 0) // max(int(sku.get("cantidad_cajas", 1) or 1), 1), 1)
+        pares_item = n_cajas * pares_por_caja
+        subtotal   = round(pares_item * lpn_neto)
+        c[5].write(f"${lpn_neto:,.0f}" if lpn_neto else "—")
+        c[6].write(f"${subtotal:,.0f}" if pares_item else "—")
+
+        if n_cajas > 0 and sku.get("linea_id") and sku.get("referencia_id") and sku.get("material_id"):
+            seleccion.append({
+                "linea_id":     sku["linea_id"],
+                "referencia_id": sku["referencia_id"],
+                "material_id":  sku["material_id"],
+                "color_id":     sku.get("color_id"),
+                "cajas":        n_cajas,
+                "pares":        pares_item,
+                "precio_unit":  lpn_neto,
+                "subtotal":     subtotal,
+            })
+            total_pares += pares_item
+            total_neto  += subtotal
+
+    st.divider()
+    st.markdown(
+        f"<div style='text-align:right;color:#D4AF37;font-size:1.1rem;font-weight:700;'>"
+        f"Total: {total_pares:,} pares · ${total_neto:,.0f}</div>",
+        unsafe_allow_html=True,
+    )
+
+    col_cancel, col_ok = st.columns(2)
+    if col_cancel.button("← Volver a cabecera", key=f"_fi_b_back_{pp_id}", use_container_width=True):
+        st.session_state[f"_fi_fase_{pp_id}"] = "A"
+        st.rerun()
+
+    if col_ok.button("✅ Confirmar Factura", key=f"_fi_confirm_{pp_id}",
+                     type="primary", use_container_width=True):
+        if not seleccion:
+            st.error("Seleccioná al menos una caja.")
+            return
+        ok, result = crear_factura_interna(
+            pp_id=pp_id,
+            cliente_id=cab["cliente_id"],
+            vendedor_id=cab.get("vendedor_id"),
+            lista_precio_id=cab["lista_precio_id"],
+            descuento_1=cab["d1"], descuento_2=cab["d2"],
+            descuento_3=cab["d3"], descuento_4=cab["d4"],
+            items=seleccion,
+        )
+        if ok:
+            st.success(f"✅ Factura **{result}** creada — {total_pares:,} pares · ${total_neto:,.0f}")
+            for k in (f"_fi_open_{pp_id}", f"_fi_fase_{pp_id}",
+                      f"_fi_cab_{pp_id}", f"_fi_items_{pp_id}"):
+                st.session_state.pop(k, None)
+            st.rerun()
+        else:
+            st.error(f"Error: {result}")
+
+
+def _render_auditoria_pp(id_pp: int, nro_pp: str):
+    """
+    Timeline forense del PP y de todas las ICs vinculadas.
+    Muestra cada evento con su snapshot completo en orden cronológico.
+    """
+    from core.auditoria import get_historial_entidad, get_historial_nro
+    import json
+
+    _ACCION_LABEL = {
+        "DIG_PP_CREADO":    ("🟡", "PP Creado por Digitación"),
+        "DIG_IC_ASIGNADA":  ("🔗", "IC Asignada al PP"),
+        "DIG_PP_CERRADO":   ("🔒", "PP Cerrado por Digitación"),
+        "PP_F9_CARGADO":    ("📦", "F9 Cargado"),
+        "PP_ENVIADO_COMPRA":("📤", "Enviado a Compra Legal"),
+        "IC_CREADA":        ("✨", "IC Creada"),
+        "IC_AUTORIZADA":    ("✅", "IC Autorizada"),
+        "IC_ASIGNADA_PP":   ("🔗", "IC Asignada"),
+        "IC_DEVUELTA_ADMIN":("↩️", "IC Devuelta a Admin"),
+        "IC_REAUTORIZADA":  ("♻️", "IC Re-autorizada"),
+        "IC_ANULADA":       ("❌", "IC Anulada"),
+        "CL_CREADA":        ("📋", "Compra Legal Creada"),
+        "CL_FINALIZADA":    ("🏁", "Compra Legal Finalizada"),
+        "TRASPASO_ENVIADO": ("🚀", "Traspaso Enviado"),
+        "TRASPASO_CONFIRMADO": ("✅", "Traspaso Confirmado"),
+    }
+
+    # Historial del PP
+    eventos_pp = get_historial_entidad("PP", id_pp)
+
+    # Historial de cada IC vinculada (via bridge)
+    from modules.pedido_proveedor.logic import get_datos_ics_de_pp
+    df_ics = get_datos_ics_de_pp(id_pp)
+    eventos_ic = []
+    for _, ic_row in df_ics.iterrows():
+        nro_ic = str(ic_row["nro_ic"])
+        for ev in get_historial_nro(nro_ic):
+            ev["_origen"] = nro_ic
+            eventos_ic.append(ev)
+
+    # Unir y ordenar cronológicamente
+    todos = []
+    for ev in eventos_pp:
+        ev["_origen"] = nro_pp
+        todos.append(ev)
+    todos.extend(eventos_ic)
+    todos.sort(key=lambda e: str(e.get("created_at", "")))
+
+    if not todos:
+        st.caption("Sin eventos registrados aún para este expediente.")
+        return
+
+    st.caption(
+        f"Registro inmutable · {len(todos)} evento(s) · "
+        f"Cadena IC→Digitación→PP→Compra Legal"
+    )
+    st.divider()
+
+    for ev in todos:
+        accion   = str(ev.get("accion", ""))
+        icon, label = _ACCION_LABEL.get(accion, ("📌", accion))
+        ts       = str(ev.get("created_at", ""))[:16].replace("T", " ")
+        origen   = str(ev.get("_origen", ""))
+        ea       = ev.get("estado_antes")  or ""
+        ed       = ev.get("estado_despues") or ""
+        snap     = ev.get("snap") or {}
+        if isinstance(snap, str):
+            try:
+                snap = json.loads(snap)
+            except Exception:
+                snap = {}
+
+        estado_txt = ""
+        if ea and ed:
+            estado_txt = f"<span style='color:#64748B;'>{ea}</span> → <span style='color:#D4AF37;'>{ed}</span>"
+        elif ed:
+            estado_txt = f"→ <span style='color:#D4AF37;'>{ed}</span>"
+
+        # Filas clave del snapshot para mostrar inline
+        snap_items = []
+        for k in ("marca", "proveedor", "cliente", "vendedor", "pares",
+                   "pares_heredados", "total_pares", "n_articulos",
+                   "nro_pedido_fabrica", "proforma", "nro_factura_importacion",
+                   "motivo", "evento_precio"):
+            v = snap.get(k)
+            if v is not None and str(v) not in ("", "None", "null"):
+                snap_items.append(f"<b>{k}:</b> {v}")
+
+        snap_inline = "  ·  ".join(snap_items[:6]) if snap_items else ""
+
+        st.markdown(
+            f"<div style='border-left:3px solid #334155;padding:6px 0 6px 14px;"
+            f"margin-bottom:6px;'>"
+            f"<div style='display:flex;gap:10px;align-items:center;'>"
+            f"<span style='font-size:1rem;'>{icon}</span>"
+            f"<span style='color:#F1F5F9;font-weight:600;font-size:.88rem;'>{label}</span>"
+            f"<span style='color:#475569;font-size:.75rem;margin-left:auto;'>{ts}</span>"
+            f"<span style='color:#64748B;font-size:.72rem;'>[{origen}]</span>"
+            f"</div>"
+            f"{'<div style=margin-top:2px;font-size:.78rem;>' + estado_txt + '</div>' if estado_txt else ''}"
+            f"{'<div style=color:#94A3B8;font-size:.76rem;margin-top:3px;>' + snap_inline + '</div>' if snap_inline else ''}"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        # Expander con snap completo
+        with st.expander(f"Ver snapshot completo — {label} {ts}", expanded=False):
+            st.json(snap)
 
 
 def _render_enviar_a_compra(id_pp: int, numero_proforma: str):
@@ -399,6 +1437,8 @@ def _render_enviar_a_compra(id_pp: int, numero_proforma: str):
 
 
 def _render_ala_norte(id_pp: int):
+    import json as _json
+
     df = get_pp_ala_norte(id_pp)
 
     if df.empty:
@@ -420,56 +1460,106 @@ def _render_ala_norte(id_pp: int):
         with st.expander("Ver resumen por marca", expanded=False):
             resumen = (
                 df.groupby("marca")[["cantidad_inicial", "vendido", "saldo"]]
-                  .sum()
-                  .reset_index()
-                  .rename(columns={
-                      "marca": "Marca",
-                      "cantidad_inicial": "Inicial",
-                      "vendido": "Vendido",
-                      "saldo": "Saldo",
-                  })
+                  .sum().reset_index()
+                  .rename(columns={"marca": "Marca",
+                                   "cantidad_inicial": "Inicial",
+                                   "vendido": "Vendido", "saldo": "Saldo"})
             )
             st.dataframe(resumen, hide_index=True, use_container_width=False)
 
-    # Tabla completa SKU
-    display_cols = [
-        "marca", "linea", "referencia", "material", "color", "grada",
-        "t33", "t34", "t35", "t36", "t37", "t38", "t39", "t40",
-        "cantidad_inicial", "vendido", "saldo",
-    ]
-    rename_map = {
-        "marca": "Marca", "linea": "Línea", "referencia": "Ref.",
-        "material": "Material", "color": "Color", "grada": "Grada",
-        "t33": "33", "t34": "34", "t35": "35", "t36": "36",
-        "t37": "37", "t38": "38", "t39": "39", "t40": "40",
-        "cantidad_inicial": "Inicial", "vendido": "Vendido", "saldo": "Saldo",
-    }
-    cols_present = [c for c in display_cols if c in df.columns]
+    # ── Construir distribución de tallas desde grades_json ─────────────────
+    def _fmt_grades(raw) -> str:
+        """grades_json → '17:1·18:1·19:1·20:2...' o '' si vacío."""
+        if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+            return ""
+        try:
+            g = _json.loads(raw) if isinstance(raw, str) else raw
+            if not g:
+                return ""
+            # Ordenar numéricamente por talla
+            items = sorted(g.items(), key=lambda kv: float(kv[0]))
+            return "  ".join(f"{k}:{v}" for k, v in items if int(v) > 0)
+        except Exception:
+            return ""
 
-    st.dataframe(
-        df[cols_present].rename(columns=rename_map),
-        column_config={
-            "Marca":    st.column_config.TextColumn(width=100),
-            "Línea":    st.column_config.TextColumn(width=80),
-            "Ref.":     st.column_config.TextColumn(width=90),
-            "Material": st.column_config.TextColumn(width=120),
-            "Color":    st.column_config.TextColumn(width=120),
-            "Grada":    st.column_config.TextColumn(width=65),
-            "33": st.column_config.NumberColumn(format="%d", width=48),
-            "34": st.column_config.NumberColumn(format="%d", width=48),
-            "35": st.column_config.NumberColumn(format="%d", width=48),
-            "36": st.column_config.NumberColumn(format="%d", width=48),
-            "37": st.column_config.NumberColumn(format="%d", width=48),
-            "38": st.column_config.NumberColumn(format="%d", width=48),
-            "39": st.column_config.NumberColumn(format="%d", width=48),
-            "40": st.column_config.NumberColumn(format="%d", width=48),
-            "Inicial": st.column_config.NumberColumn(format="%d", width=80),
-            "Vendido": st.column_config.NumberColumn(format="%d", width=80),
-            "Saldo":   st.column_config.NumberColumn(format="%d", width=80),
-        },
-        hide_index=True,
-        use_container_width=True,
-    )
+    # Recolectar todas las tallas únicas presentes en el PP
+    all_grades: list[str] = []
+    for raw in df.get("grades_json", pd.Series()):
+        try:
+            g = _json.loads(raw) if isinstance(raw, str) else (raw or {})
+            for k in g:
+                if k not in all_grades:
+                    all_grades.append(k)
+        except Exception:
+            pass
+    all_grades = sorted(all_grades, key=extraer_valor_numerico_talla)
+
+    # Construir tabla display
+    avail = set(df.columns)
+    ordered_raw = [c for c in
+                   ["marca", "linea", "referencia", "style_code",
+                    "material", "color", "grada",
+                    "cantidad_cajas", "cantidad_inicial", "vendido", "saldo"]
+                   if c in avail]
+
+    display = df[ordered_raw].copy()
+
+    col_map = {
+        "marca":            "Marca",
+        "linea":            "Línea",
+        "referencia":       "Ref.",
+        "style_code":       "Código",
+        "material":         "Material",
+        "color":            "Color",
+        "grada":            "Tallas",
+        "cantidad_cajas":   "_cajas",   # auxiliar, se usa para calcular x Caja
+        "cantidad_inicial": "Inicial",
+        "vendido":          "Vendido",
+        "saldo":            "Saldo",
+    }
+    display.rename(columns={k: v for k, v in col_map.items() if k in display.columns},
+                   inplace=True)
+
+    # Columna "x Caja" = pares por caja
+    if "_cajas" in display.columns and "Inicial" in display.columns:
+        display["x Caja"] = (
+            display["Inicial"] / display["_cajas"].replace(0, 1)
+        ).round(0).astype(int)
+        display.drop(columns=["_cajas"], inplace=True)
+
+    # Añadir columna por talla si hay grades_json
+    if all_grades and "grades_json" in df.columns:
+        for g in all_grades:
+            display[g] = df["grades_json"].apply(
+                lambda raw, _g=g: (
+                    _json.loads(raw) if isinstance(raw, str) else {}
+                ).get(_g, 0) if raw and raw not in ("", "nan", "null", "None") else 0
+            )
+        info_cols = [c for c in ["Marca", "Línea", "Ref.", "Código",
+                                  "Material", "Color", "Tallas", "x Caja"]
+                     if c in display.columns]
+        tot_cols  = ["Inicial", "Vendido", "Saldo"]
+        display   = display[info_cols + all_grades + tot_cols]
+
+    # Column config dinámica
+    col_cfg: dict = {
+        "Marca":    st.column_config.TextColumn(width=90),
+        "Línea":    st.column_config.TextColumn(width=55),
+        "Ref.":     st.column_config.TextColumn(width=45),
+        "Código":   st.column_config.TextColumn(width=75),
+        "Material": st.column_config.TextColumn(width=155),
+        "Color":    st.column_config.TextColumn(width=110),
+        "Tallas":   st.column_config.TextColumn(width=55),
+        "x Caja":   st.column_config.NumberColumn(format="%d", width=55),
+        "Inicial":  st.column_config.NumberColumn(format="%d", width=65),
+        "Vendido":  st.column_config.NumberColumn(format="%d", width=65),
+        "Saldo":    st.column_config.NumberColumn(format="%d", width=65),
+    }
+    for g in all_grades:
+        col_cfg[g] = st.column_config.NumberColumn(format="%d", width=44)
+
+    st.dataframe(display, column_config=col_cfg,
+                 hide_index=True, use_container_width=True)
 
 
 def _render_ala_sur(id_pp: int, estado: str = "ABIERTO"):

@@ -30,11 +30,12 @@ except ImportError:
     print("\n🚨 [FATAL] ARCHIVO settings.py NO DETECTADO. EL EDIFICIO COLAPSA.")
     sys.exit(1)
 
-# 🎙️ MICROFONÍA: Banner de inicio en terminal
-if hasattr(settings, 'get_terminal_banner'):
-    print(settings.get_terminal_banner())
-else:
-    print(f"\n{'='*60}\n RIMEC • NEXUS CORE v{settings.VERSION}\n{'='*60}\n")
+# Banner de inicio en terminal
+try:
+    banner = settings.get_terminal_banner() if hasattr(settings, 'get_terminal_banner') else f"\n{'='*60}\n RIMEC v{settings.VERSION}\n{'='*60}\n"
+    print(banner.encode('utf-8', errors='replace').decode('cp1252', errors='replace'))
+except Exception:
+    pass
 
 # 3. CONFIGURACIÓN DE RUTAS (Orquestación de Directorios Tácticos)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
