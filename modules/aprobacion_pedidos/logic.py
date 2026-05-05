@@ -285,7 +285,6 @@ def _cerrar_pedido_si_completo(pedido_id: int) -> bool:
     Cierra el pedido (estado=AUTORIZADO) solo si TODOS los pp_id del payload
     tienen al menos una factura_interna aprobada. Retorna True si se cerró.
     """
-    import json as _json
     df = get_dataframe(
         "SELECT payload_json FROM pedido_venta_rimec WHERE id=:pid",
         {"pid": pedido_id},
@@ -293,7 +292,18 @@ def _cerrar_pedido_si_completo(pedido_id: int) -> bool:
     if df is None or df.empty:
         return False
     raw = df.iloc[0]["payload_json"]
-    payload = (_json.loads(raw) if isinstance(raw, str) else raw) or {}
+    if isinstance(raw, dict):
+        payload = raw
+    elif isinstance(raw, str):
+        try:
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            try:
+                payload = ast.literal_eval(raw)
+            except Exception:
+                payload = {}
+    else:
+        payload = raw or {}
     lotes = payload.get("lotes", [])
     pp_ids_esperados = {int(l["pp_id"]) for l in lotes if l.get("pp_id")}
     if not pp_ids_esperados:
@@ -776,6 +786,7 @@ def confirmar_fi(fi_id: int) -> tuple[bool, str]:
             entidad="factura_interna", entidad_id=fi_id,
             accion="FI_CONFIRMADA",
             estado_antes="RESERVADA", estado_despues="CONFIRMADA",
+            snap={"fi_id": fi_id},
         )
         DBInspector.log(f"[FI] Confirmada fi_id={fi_id}", "SUCCESS")
         return True, "FI confirmada exitosamente."
