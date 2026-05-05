@@ -617,7 +617,7 @@ def crear_preventa_desde_celula(pedido_id: int, celula: dict) -> tuple[bool, str
                     (:nro, :pp_id, :marca, :caso,
                      :cli, :vend, :plazo, :lista,
                      :d1, :d2, :d3, :d4,
-                     :tp, :tn, 'RESERVADA')
+                     :tp, :tn, 'CONFIRMADA')
                 RETURNING id
             """), {
                 "nro":   nro_pv,
@@ -735,21 +735,53 @@ def get_fi_reservadas() -> list[dict]:
 
 
 def get_fi_confirmadas() -> list[dict]:
-    """Lee FIs confirmadas (aprobadas) para el historial."""
+    """Lee FIs confirmadas (aprobadas) para el historial con detalle."""
     df = get_dataframe("""
         SELECT fi.id, fi.nro_factura, fi.pp_id, fi.marca, fi.caso,
                fi.total_pares, fi.total_monto,
+               fi.cliente_id, fi.vendedor_id,
+               fi.descuento_1, fi.descuento_2, fi.descuento_3, fi.descuento_4,
                c.descp_cliente AS cliente_nombre,
+               v.descp_vendedor AS vendedor_nombre,
                pp.numero_registro AS nro_pp,
                fi.created_at
         FROM factura_interna fi
         LEFT JOIN cliente_v2 c ON c.id_cliente = fi.cliente_id
+        LEFT JOIN vendedor_v2 v ON v.id_vendedor = fi.vendedor_id
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
         WHERE fi.estado = 'CONFIRMADA'
         ORDER BY fi.created_at DESC
         LIMIT 50
     """)
     return df.to_dict("records") if df is not None and not df.empty else []
+
+
+def get_fi_detalles(fi_id: int) -> list[dict]:
+    """Retorna los detalles (items) de una FI con su linea_snapshot."""
+    df = get_dataframe("""
+        SELECT fid.id, fid.pares, fid.cajas, fid.precio_unit,
+               fid.subtotal, fid.precio_neto, fid.linea_snapshot
+        FROM factura_interna_detalle fid
+        WHERE fid.factura_id = :fi_id
+        ORDER BY fid.id
+    """, {"fi_id": fi_id})
+    if df is None or df.empty:
+        return []
+    rows = df.to_dict("records")
+    # Parsear linea_snapshot
+    for row in rows:
+        snap = row.get("linea_snapshot")
+        if isinstance(snap, str):
+            try:
+                row["linea_snapshot"] = json.loads(snap)
+            except Exception:
+                try:
+                    row["linea_snapshot"] = ast.literal_eval(snap)
+                except Exception:
+                    row["linea_snapshot"] = {}
+        elif not isinstance(snap, dict):
+            row["linea_snapshot"] = {}
+    return rows
 
 
 def get_fi_anuladas() -> list[dict]:

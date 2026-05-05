@@ -13,7 +13,7 @@ import streamlit as st
 from modules.aprobacion_pedidos.logic import (
     get_pedidos_pendientes, get_pedidos_autorizados, get_pedidos_rechazados,
     rechazar_pedido, crear_preventa_desde_celula, get_linea_caso_map,
-    get_preventa_de_celula,
+    get_preventa_de_celula, get_fi_detalles,
     # Flujo Reserva → Liberación
     get_fi_reservadas, get_fi_confirmadas, get_fi_anuladas,
     confirmar_fi, anular_fi,
@@ -272,7 +272,7 @@ def render_aprobacion():
             for p in pedidos:
                 _render_tarjeta_pendiente(p)
 
-    # ── Tab Confirmadas: Historial de FIs aprobadas ──────────────────────
+    # ── Tab Confirmadas: Historial de FIs aprobadas con detalle ─────────
     with tab_conf:
         fis = get_fi_confirmadas()
         if not fis:
@@ -280,14 +280,58 @@ def render_aprobacion():
         else:
             st.caption(f"Últimas {len(fis)} facturas confirmadas")
             for fi in fis:
-                st.markdown(
-                    f"✅ **{fi.get('nro_factura','')}** · "
-                    f"{fi.get('cliente_nombre','—')} · "
-                    f"PP-{fi.get('nro_pp','—')} · "
-                    f"{fi.get('marca','—')} · "
-                    f"{fi.get('total_pares',0):,} pares · "
-                    f"{_fmt_gs(fi.get('total_monto',0))}"
-                )
+                nro = fi.get("nro_factura", "")
+                cli = fi.get("cliente_nombre", "—")
+                marca = fi.get("marca", "—")
+                pares = fi.get("total_pares", 0)
+                monto = fi.get("total_monto", 0)
+                nro_pp = fi.get("nro_pp", "—")
+
+                with st.expander(
+                    f"✅ **{nro}** · {cli} · {marca} · {pares:,} pares · {_fmt_gs(monto)}",
+                    expanded=False,
+                ):
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Cliente", cli)
+                    c2.metric("PP", nro_pp)
+                    c3.metric("Marca", marca)
+                    c4.metric("Pares", f"{pares:,}")
+                    st.caption(
+                        f"Vendedor: {fi.get('vendedor_nombre', '—')} · "
+                        f"Descuentos: {_descuentos_label(fi)}"
+                    )
+
+                    # Detalles con miniatura y gradas
+                    detalles = get_fi_detalles(fi["id"])
+                    if detalles:
+                        st.markdown("---")
+                        for det in detalles:
+                            snap = det.get("linea_snapshot", {})
+                            ci, cd, cn = st.columns([1, 4, 2])
+                            with ci:
+                                img = snap.get("imagen_url", "")
+                                if img:
+                                    try:
+                                        st.image(img, width=55)
+                                    except Exception:
+                                        st.write("📦")
+                                else:
+                                    st.write("📦")
+                            with cd:
+                                linea = snap.get("linea_codigo", "?")
+                                ref = snap.get("ref_codigo", "?")
+                                color = snap.get("color_nombre", "")
+                                st.markdown(
+                                    f"**L{linea} · R{ref}** "
+                                    f"<span style='color:#64748B;font-size:0.8em'>{color}</span>",
+                                    unsafe_allow_html=True,
+                                )
+                                gradas = snap.get("gradas_fmt", "")
+                                if gradas:
+                                    st.caption(gradas)
+                            with cn:
+                                st.write(f"{det.get('cajas', 0)} caj · {det.get('pares', 0)} p")
+                                st.caption(_fmt_gs(det.get("subtotal", 0)))
 
     # ── Tab Anuladas: Historial de FIs rechazadas ────────────────────────
     with tab_anul:
