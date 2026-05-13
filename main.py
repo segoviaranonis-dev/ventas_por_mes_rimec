@@ -80,7 +80,7 @@ try:
     from core.navigation import render_sidebar, render_page_content
     import core.registry as registry  # Registro central de módulos
 
-    print(f"🧬 {settings.LOG_PREFIX} [CORE-SYNC] Sinapsis de componentes Obsidian completada.")
+    print(f"[CORE-SYNC] Sinapsis de componentes Obsidian completada.")
 except ImportError as e:
     print(f"🚨 [FATAL-NEXUS] Error en acoplamiento de componentes: {e}")
     st.error(f"Fallo crítico en la estructura del sistema: {e}")
@@ -192,7 +192,7 @@ def main():
     duracion = time.time() - t_start
     u_name = st.session_state.user['name']
 
-    sys.stdout.write(f"\r💓 {settings.LOG_PREFIX} [HEARTBEAT] {duracion:.4f}s | Sector: {modulo_key.upper()} | Operador: {u_name}")
+    sys.stdout.write(f"\r[HEARTBEAT] {duracion:.4f}s | Sector: {modulo_key.upper()} | Operador: {u_name}")
     sys.stdout.flush()
 
 if __name__ == "__main__":

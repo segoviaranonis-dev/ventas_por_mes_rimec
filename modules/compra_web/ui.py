@@ -182,17 +182,27 @@ def _render_detalle_traspaso(id_trp: int):
             if snap:
                 st.json(snap)
         else:
+            # OT-2026-021: Agregar caso_nombre y precio
+            cols_display = ["linea","referencia","material","color","talla","cantidad"]
+            cols_rename = {
+                "linea":     "Línea",
+                "referencia":"Ref.",
+                "material":  "Material",
+                "color":     "Color",
+                "talla":     "Talla",
+                "cantidad":  "Pares",
+            }
+
+            # Agregar caso_nombre y precio si existen
+            if "caso_nombre" in df_lines.columns:
+                cols_display.append("caso_nombre")
+                cols_rename["caso_nombre"] = "Caso"
+            if "precio" in df_lines.columns:
+                cols_display.append("precio")
+                cols_rename["precio"] = "Precio LP"
+
             st.dataframe(
-                df_lines[["linea","referencia","material","color","talla","cantidad"]].rename(
-                    columns={
-                        "linea":     "Línea",
-                        "referencia":"Ref.",
-                        "material":  "Material",
-                        "color":     "Color",
-                        "talla":     "Talla",
-                        "cantidad":  "Pares",
-                    }
-                ),
+                df_lines[cols_display].rename(columns=cols_rename),
                 hide_index=True,
                 use_container_width=True,
             )

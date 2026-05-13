@@ -41,6 +41,8 @@ from modules.rimec_engine.logic import (
     purgar_todas_las_listas,
     get_generos,
     resolver_casos_skus,
+    get_lineas_proveedor,
+    sincronizar_lineas_caso,
 )
 
 
@@ -895,15 +897,16 @@ def _render_historial():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _render_admin_lineas():
+    from core.database import get_dataframe
     from modules.intencion_compra.logic import (
         get_lineas_filtradas, get_valores_filtro_lineas,
-        update_linea_caso_detalle, actualizar_lineas_por_lote, get_proveedores,
+        update_linea_clasificacion, get_proveedores,
     )
 
     _seccion("Administración de Líneas", "Línea · Marca · Caso · Clasificación")
     st.caption(
-        "Línea, Marca y Caso se generan automáticamente al cerrar un evento de precios. "
-        "Género, Estilo y Tipos los completa el administrador."
+        "Tabla `linea` es la única fuente de verdad. Marca y Caso son asignables. "
+        "Caso se autocompleta al cerrar un evento, pero también editable acá."
     )
 
     df_prov = get_proveedores()
@@ -915,11 +918,23 @@ def _render_admin_lineas():
     prov_label = st.selectbox("Proveedor", list(opts_prov.keys()), key="al_prov")
     prov_id    = opts_prov[prov_label]
 
+    # ── Catálogo de casos de la biblioteca del proveedor (dropdown editable) ──
+    df_casos_bib = get_dataframe(
+        "SELECT id, nombre_caso FROM caso_precio_biblioteca "
+        "WHERE proveedor_id = :pid AND activo = true ORDER BY nombre_caso",
+        {"pid": prov_id},
+    )
+    casos_bib: dict[int, str] = (
+        {int(r["id"]): str(r["nombre_caso"]) for _, r in df_casos_bib.iterrows()}
+        if df_casos_bib is not None and not df_casos_bib.empty else {}
+    )
+
     # ── Barra de filtros ──────────────────────────────────────────────────────
     _NULL = "— Vacío —"
+    _SIN_CASO = "— Sin caso —"
     marcas_vals  = ["Todas"]  + get_valores_filtro_lineas(prov_id, "marca")
-    casos_vals   = ["Todos"]  + get_valores_filtro_lineas(prov_id, "caso_nombre")
-    genero_vals  = ["Todos", _NULL] + get_valores_filtro_lineas(prov_id, "genero")
+    casos_vals   = ["Todos", _SIN_CASO] + get_valores_filtro_lineas(prov_id, "caso_nombre")
+    genero_vals  = ["Todos", _NULL]     + get_valores_filtro_lineas(prov_id, "descp_genero")
 
     fc1, fc2, fc3 = st.columns(3)
     f_marca  = fc1.selectbox("Marca",  marcas_vals, key="al_f_marca")
@@ -934,14 +949,13 @@ def _render_admin_lineas():
     )
 
     if df_lineas is None or df_lineas.empty:
-        st.info("No hay líneas para los filtros seleccionados. "
-                "El maestro se genera al cerrar un evento de precios.")
+        st.info("No hay líneas activas para este proveedor con los filtros seleccionados.")
         return
 
     st.markdown(
         f"**{len(df_lineas)} líneas** &nbsp;·&nbsp; "
-        "Línea / Marca / Caso → solo lectura. &nbsp; Género → editable aquí. "
-        "Estilo / Tipo → editables en la pestaña Línea × Referencia.",
+        "Caso y Género → editables fila a fila. &nbsp; "
+        "Estilo / Tipos → editables en la pestaña Línea × Referencia.",
         unsafe_allow_html=True,
     )
 
@@ -989,31 +1003,66 @@ def _render_admin_lineas():
     def _sv(x) -> str:
         return "" if pd.isna(x) or str(x) in ("None", "nan") else str(x)
 
-    hc = st.columns([1, 2, 2, 2, 1])
+    hc = st.columns([1, 2, 3, 2, 1])
     for col, lbl in zip(hc, ["Línea", "Marca", "Caso", "Género", ""]):
         col.markdown(f"**{lbl}**")
     st.markdown("---")
 
-    generos_fila = [""] + get_generos()
+    df_gen_master = get_dataframe(
+        "SELECT id, COALESCE(descripcion, codigo) AS nombre FROM genero "
+        "WHERE activo = true ORDER BY id"
+    )
+    gen_map: dict[str, int] = {}
+    if df_gen_master is not None and not df_gen_master.empty:
+        gen_map = {str(r["nombre"]): int(r["id"]) for _, r in df_gen_master.iterrows()}
+    generos_fila = [""] + list(gen_map.keys())
+
+    casos_opts_ids: list = [None] + list(casos_bib.keys())
+    def _caso_label(cid):
+        return "— Sin caso —" if cid is None else casos_bib.get(int(cid), f"#{cid}")
 
     for _, row in df_lineas.iterrows():
-        lc_id    = int(row["linea_caso_id"])
+        linea_id = int(row["id"])
         cod      = int(row["codigo_proveedor"])
-        gen_act  = _sv(row.get("genero"))
+        gen_act  = _sv(row.get("descp_genero"))
         gen_idx  = generos_fila.index(gen_act) if gen_act in generos_fila else 0
+        caso_id_act = row.get("caso_id")
+        try:
+            caso_idx = casos_opts_ids.index(int(caso_id_act)) if caso_id_act else 0
+        except (ValueError, TypeError):
+            caso_idx = 0
 
-        c0, c1, c2, c3, c4 = st.columns([1, 2, 2, 2, 1])
+        c0, c1, c2, c3, c4 = st.columns([1, 2, 3, 2, 1])
         c0.markdown(f"**{cod}**")
         c1.markdown(_sv(row.get("marca")) or "—")
-        c2.markdown(_sv(row.get("caso_nombre")) or "—")
 
+        caso_sel = c2.selectbox("Caso", casos_opts_ids, index=caso_idx,
+                                 format_func=_caso_label,
+                                 key=f"al_caso_{linea_id}",
+                                 label_visibility="collapsed")
         gen = c3.selectbox("Gén", generos_fila, index=gen_idx,
-                           key=f"al_gen_{lc_id}", label_visibility="collapsed")
+                           key=f"al_gen_{linea_id}", label_visibility="collapsed")
 
-        if c4.button("💾", key=f"al_save_{lc_id}", help="Guardar fila"):
-            ok = update_linea_caso_detalle(lc_id, gen or None)
+        if c4.button("💾", key=f"al_save_{linea_id}", help="Guardar fila"):
+            campos: set = set()
+            kwargs: dict = {}
+            nuevo_caso_id = int(caso_sel) if caso_sel is not None else None
+            actual_caso_id = int(caso_id_act) if caso_id_act else None
+            if nuevo_caso_id != actual_caso_id:
+                campos.add("caso_id")
+                kwargs["caso_id"] = nuevo_caso_id
+            nuevo_gen_id = gen_map.get(gen) if gen else None
+            actual_gen_id = int(row.get("genero_id")) if row.get("genero_id") else None
+            if nuevo_gen_id != actual_gen_id:
+                campos.add("genero_id")
+                kwargs["genero_id"] = nuevo_gen_id
+
+            if not campos:
+                st.info(f"Línea {cod}: sin cambios.")
+                continue
+            ok = update_linea_clasificacion(linea_id, _campos=campos, **kwargs)
             if ok:
-                st.success(f"Línea {cod} guardada.")
+                st.success(f"Línea {cod} guardada ({', '.join(sorted(campos))}).")
                 st.rerun()
             else:
                 st.error(f"Error al guardar línea {cod}.")
@@ -1032,8 +1081,11 @@ def _render_linea_referencia():
 
     # ── Filtros ───────────────────────────────────────────────────────────────
     df_marcas = get_dataframe("""
-        SELECT DISTINCT marca FROM linea_caso
-        WHERE proveedor_id = 654 AND marca IS NOT NULL
+        SELECT DISTINCT mv.descp_marca AS marca
+        FROM linea l
+        JOIN marca_v2 mv ON mv.id_marca = l.marca_id
+        WHERE l.proveedor_id = 654 AND l.activo = true
+          AND mv.descp_marca IS NOT NULL
         ORDER BY marca
     """)
     marcas = ["Todas"] + (df_marcas["marca"].tolist() if df_marcas is not None and not df_marcas.empty else [])
@@ -1065,7 +1117,7 @@ def _render_linea_referencia():
     params: dict = {}
 
     if filtro_marca != "Todas":
-        conditions.append("lc.marca = :marca")
+        conditions.append("mv.descp_marca = :marca")
         params["marca"] = filtro_marca
 
     ge_val = estilo_opts.get(filtro_estilo)
@@ -1090,8 +1142,7 @@ def _render_linea_referencia():
         FROM linea_referencia lr
         JOIN linea      l  ON l.id  = lr.linea_id
         JOIN referencia r  ON r.id  = lr.referencia_id
-        LEFT JOIN linea_caso lc ON lc.linea_id = lr.linea_id
-                               AND lc.proveedor_id = lr.proveedor_id
+        LEFT JOIN marca_v2  mv ON mv.id_marca = l.marca_id
         WHERE {where}
     """, params if params else None)
     total = int(df_total["total"].iloc[0]) if df_total is not None and not df_total.empty else 0
@@ -1099,18 +1150,18 @@ def _render_linea_referencia():
     df = get_dataframe(f"""
         SELECT
             lr.id,
+            l.id                    AS linea_id,
             l.codigo_proveedor      AS linea_cod,
             r.codigo_proveedor      AS ref_cod,
-            lc.marca,
-            ge.descp_grupo_estilo   AS estilo,
-            t1.descp_tipo_1         AS tipo_1,
+            COALESCE(mv.descp_marca, '') AS marca,
+            COALESCE(ge.descp_grupo_estilo, lr.descp_grupo_estilo) AS descp_grupo_estilo,
+            COALESCE(t1.descp_tipo_1, lr.descp_tipo_1)             AS descp_tipo_1,
             lr.grupo_estilo_id,
             lr.tipo_1_id
         FROM linea_referencia lr
         JOIN linea      l  ON l.id  = lr.linea_id
         JOIN referencia r  ON r.id  = lr.referencia_id
-        LEFT JOIN linea_caso     lc ON lc.linea_id = lr.linea_id
-                                   AND lc.proveedor_id = lr.proveedor_id
+        LEFT JOIN marca_v2  mv ON mv.id_marca = l.marca_id
         LEFT JOIN grupo_estilo_v2 ge ON ge.id_grupo_estilo = lr.grupo_estilo_id
         LEFT JOIN tipo_1          t1 ON t1.id_tipo_1       = lr.tipo_1_id
         WHERE {where}
@@ -1129,9 +1180,10 @@ def _render_linea_referencia():
         st.divider()
         # Vista rápida de solo lectura — sin widgets, carga instantánea
         st.dataframe(
-            df[["linea_cod", "ref_cod", "marca", "estilo", "tipo_1"]].rename(columns={
+            df[["linea_id", "linea_cod", "ref_cod", "marca", "descp_grupo_estilo", "descp_tipo_1"]].rename(columns={
+                "linea_id": "linea_id",
                 "linea_cod": "Línea", "ref_cod": "Ref.", "marca": "Marca",
-                "estilo": "Estilo", "tipo_1": "Tipo 1",
+                "descp_grupo_estilo": "Estilo", "descp_tipo_1": "Tipo 1",
             }),
             use_container_width=True,
             hide_index=True,
@@ -1265,7 +1317,10 @@ def _render_admin_casos():
             marcas_s = ", ".join(marcas) if marcas else "—"
             from core.database import get_dataframe
             df_lc = get_dataframe(
-                "SELECT l.codigo_proveedor FROM linea_caso lc JOIN linea l ON lc.linea_id = l.id WHERE lc.proveedor_id = :pid AND lc.caso_nombre = :cn ORDER BY l.codigo_proveedor",
+                "SELECT l.codigo_proveedor FROM linea l "
+                "JOIN caso_precio_biblioteca cpb ON cpb.id = l.caso_id "
+                "WHERE l.proveedor_id = :pid AND cpb.nombre_caso = :cn AND l.activo = true "
+                "ORDER BY l.codigo_proveedor",
                 {"pid": prov_id, "cn": nombre}
             )
             lineas = [str(x) for x in df_lc["codigo_proveedor"].tolist()] if df_lc is not None and not df_lc.empty else []
@@ -1323,6 +1378,16 @@ def _render_admin_casos():
                     nd3 = ed3.number_input("D3 %", 0.0, 99.0, d3_v, 1.0, key=f"ac_d3_{cid}")
                     nd4 = ed4.number_input("D4 %", 0.0, 99.0, d4_v, 1.0, key=f"ac_d4_{cid}")
 
+                    lineas_disponibles = get_lineas_proveedor(prov_id)
+                    lineas_opciones = [cod for cod, _ in lineas_disponibles]
+                    lineas_seleccionadas = st.multiselect(
+                        "Líneas asignadas a este caso",
+                        options=lineas_opciones,
+                        default=lineas,
+                        key=f"ac_lineas_{cid}",
+                        help="Seleccioná las líneas que pertenecen a este caso de precio"
+                    )
+
                     sb1, sb2 = st.columns([1, 4])
                     if sb1.button("💾 Guardar", type="primary", key=f"ac_save_{cid}"):
                         caso_upd = {
@@ -1339,9 +1404,13 @@ def _render_admin_casos():
                             "lineas":             _parse_marcas(row.get("lineas")) if row.get("lineas") else [],
                         }
                         if update_caso_biblioteca(cid, caso_upd):
-                            st.session_state.pop(f"ac_editing_{cid}", None)
-                            st.success(f"Caso **{nuevo_nombre}** actualizado.")
-                            st.rerun()
+                            ok_sync, n_lineas = sincronizar_lineas_caso(prov_id, nuevo_nombre.strip(), lineas_seleccionadas)
+                            if ok_sync:
+                                st.session_state.pop(f"ac_editing_{cid}", None)
+                                st.success(f"Caso **{nuevo_nombre}** actualizado ({n_lineas} líneas asignadas).")
+                                st.rerun()
+                            else:
+                                st.warning(f"Caso actualizado pero error al sincronizar líneas.")
                         else:
                             st.error("Error al guardar.")
                     if sb2.button("Cancelar", key=f"ac_edit_cancel_{cid}"):
@@ -1363,7 +1432,7 @@ def _render_admin_casos():
     with st.expander("🗑️ Purgar TODAS las listas de precios"):
         st.error(
             "**Esta acción elimina todos los eventos de precio, sus casos y todos los SKUs "
-            "de precio_lista.** Los pilares (línea, referencia, material, color, linea_caso) "
+            "de precio_lista.** Los pilares (linea con su caso_id, referencia, material, color) "
             "quedan intactos."
         )
 

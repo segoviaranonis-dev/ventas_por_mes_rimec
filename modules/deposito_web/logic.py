@@ -9,14 +9,15 @@ def get_stock_web() -> pd.DataFrame:
     Stock real en ALM_WEB_01 agrupado por Marca + 5 Pilares + Talla.
     La marca se obtiene desde snapshot_json del traspaso vinculado.
     """
+    # OT-2026-020: Usar nombres correctos post-migración 004
     return get_dataframe("""
         SELECT
             COALESCE(mv.descp_marca, '—')        AS marca,
-            l.codigo                             AS linea,
-            r.codigo                             AS referencia,
+            l.codigo_proveedor                   AS linea,
+            r.codigo_proveedor                   AS referencia,
             COALESCE(mat.descripcion, '—')       AS material,
             COALESCE(col.nombre, '—')            AS color,
-            tl.codigo                            AS talla,
+            tl.talla_etiqueta                    AS talla,
             SUM(md.cantidad * md.signo)          AS stock
         FROM movimiento_detalle md
         JOIN movimiento m   ON m.id = md.movimiento_id
@@ -31,19 +32,20 @@ def get_stock_web() -> pd.DataFrame:
         WHERE m.almacen_destino_id = :alm
           AND m.estado = 'CONFIRMADO'
           AND m.tipo = 'INGRESO_COMPRA'
-        GROUP BY mv.descp_marca, l.codigo, r.codigo, mat.descripcion, col.nombre, tl.codigo
+        GROUP BY mv.descp_marca, l.codigo_proveedor, r.codigo_proveedor, mat.descripcion, col.nombre, tl.talla_etiqueta
         HAVING SUM(md.cantidad * md.signo) > 0
-        ORDER BY mv.descp_marca, l.codigo, r.codigo, tl.codigo
+        ORDER BY mv.descp_marca, l.codigo_proveedor, r.codigo_proveedor, tl.talla_etiqueta
     """, {"alm": ALM_WEB_01})
 
 
 def get_resumen_web() -> pd.DataFrame:
     """Resumen por Marca + Línea + Referencia (sin talla) para vista agrupada."""
+    # OT-2026-020: Usar nombres correctos post-migración 004
     return get_dataframe("""
         SELECT
             COALESCE(mv.descp_marca, '—')        AS marca,
-            l.codigo                             AS linea,
-            r.codigo                             AS referencia,
+            l.codigo_proveedor                   AS linea,
+            r.codigo_proveedor                   AS referencia,
             COALESCE(mat.descripcion, '—')       AS material,
             COALESCE(col.nombre, '—')            AS color,
             SUM(md.cantidad * md.signo)          AS stock_total
@@ -59,7 +61,7 @@ def get_resumen_web() -> pd.DataFrame:
         WHERE m.almacen_destino_id = :alm
           AND m.estado = 'CONFIRMADO'
           AND m.tipo = 'INGRESO_COMPRA'
-        GROUP BY mv.descp_marca, l.codigo, r.codigo, mat.descripcion, col.nombre
+        GROUP BY mv.descp_marca, l.codigo_proveedor, r.codigo_proveedor, mat.descripcion, col.nombre
         HAVING SUM(md.cantidad * md.signo) > 0
-        ORDER BY mv.descp_marca, l.codigo, r.codigo
+        ORDER BY mv.descp_marca, l.codigo_proveedor, r.codigo_proveedor
     """, {"alm": ALM_WEB_01})

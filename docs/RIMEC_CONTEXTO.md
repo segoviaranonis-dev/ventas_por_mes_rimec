@@ -120,10 +120,10 @@ Evolución post-mayo: Next.js + Supabase
 ### Motor de Precios (vaciado — listo para re-importación)
 `precio_evento` · `precio_evento_caso` · `precio_evento_linea_excepcion`
 `precio_lista` · `precio_auditoria` → todos en 0, secuencias reseteadas
-`linea_caso` → tabla nueva: linea_id, proveedor_id, marca, caso_nombre, genero, estilo, tipo_1..4
+`linea` → fuente única de verdad. Columnas: id, proveedor_id, marca_id, caso_id (FK→caso_precio_biblioteca), genero_id, descp_estilo, descp_tipo_1..4. (Tabla `linea_caso` ELIMINADA en 025.)
 `generar_maestro_lineas_desde_evento()` → se ejecuta automáticamente al cerrar un evento
 `caso_precio_biblioteca` → casos permanentes por proveedor (independientes de eventos)
-`caso_precio_biblioteca_linea` → líneas asociadas a casos de biblioteca
+~~`caso_precio_biblioteca_linea`~~ → ELIMINADA en 025 (la asignación caso↔línea vive en `linea.caso_id`)
 
 ### Operativas (vaciadas y reseteadas)
 `intencion_compra` · `pedido_proveedor` · `pedido_proveedor_detalle`

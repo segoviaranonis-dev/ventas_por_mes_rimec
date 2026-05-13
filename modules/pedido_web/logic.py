@@ -34,7 +34,7 @@ def get_pedidos(estado_filtro: str = 'PENDIENTE') -> pd.DataFrame:
 
 def get_detalle_pedido(pedido_id: int) -> pd.DataFrame:
     return get_dataframe("""
-        SELECT id, linea_codigo, referencia_codigo, color_nombre,
+        SELECT id, linea_id, referencia_id, linea_codigo, referencia_codigo, color_nombre,
                talla_codigo, material_desc, marca, cantidad,
                precio_unitario, imagen_url
         FROM pedido_web_detalle
@@ -44,6 +44,7 @@ def get_detalle_pedido(pedido_id: int) -> pd.DataFrame:
 
 
 def _buscar_combinacion_id(linea: str, referencia: str, color: str, talla: str) -> int | None:
+    # OT-2026-020: Usar nombres correctos post-migración 004
     df = get_dataframe("""
         SELECT c.id
         FROM combinacion c
@@ -51,10 +52,10 @@ def _buscar_combinacion_id(linea: str, referencia: str, color: str, talla: str) 
         JOIN referencia r   ON r.id   = c.referencia_id
         JOIN color      col ON col.id = c.color_id
         JOIN talla      tl  ON tl.id  = c.talla_id
-        WHERE l.codigo   = :linea
-          AND r.codigo   = :ref
-          AND col.nombre = :color
-          AND tl.codigo  = :talla
+        WHERE l.codigo_proveedor = :linea
+          AND r.codigo_proveedor = :ref
+          AND col.nombre         = :color
+          AND tl.talla_etiqueta  = :talla
         LIMIT 1
     """, params={"linea": linea, "ref": referencia, "color": color, "talla": talla})
     if df.empty:

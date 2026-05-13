@@ -438,12 +438,32 @@ def _cargar_lookups_maestros(proveedor_id: int, conn) -> tuple[dict, dict, dict]
     return linea_map, ref_map, mat_map
 
 
+def _evento_esta_cerrado(evento_id: int) -> bool:
+    """Retorna True si el evento está CERRADO — bloquea escrituras de precio."""
+    if not evento_id:
+        return False
+    df = get_dataframe(
+        "SELECT estado FROM precio_evento WHERE id = :eid",
+        {"eid": evento_id},
+    )
+    if df is None or df.empty:
+        return False
+    return str(df.iloc[0]["estado"]).lower() == "cerrado"
+
+
 def guardar_precio_lista(filas: list[dict]):
     """
     Inserta todas las filas en precio_lista en UNA sola transacción (bulk).
     Usa linea_id_fk / ref_id_fk / mat_id_fk pre-resueltos por la UI.
     """
     if not filas:
+        return
+    evento_id = filas[0].get("evento_id")
+    if _evento_esta_cerrado(evento_id):
+        DBInspector.log(
+            f"[ENGINE] Escritura bloqueada — evento {evento_id} en estado CERRADO",
+            "WARNING",
+        )
         return
     try:
         with engine.begin() as conn:
@@ -496,17 +516,24 @@ def avanzar_estado_evento(evento_id: int, estado: str):
 
 def generar_maestro_lineas_desde_evento(evento_id: int):
     """
-    Al cerrar un evento, genera/actualiza linea_caso con Línea + Marca + Caso.
-    Se ejecuta una sola vez al cerrar. Upsert por (linea_id, proveedor_id).
-    Solo se actualiza marca y caso_nombre — genero/estilo/tipos los completa el admin.
+    Al cerrar un evento, actualiza linea.caso_id para las lineas que aparecieron
+    en el evento. El "caso conceptual" se busca en caso_precio_biblioteca por
+    (proveedor_id, nombre_caso). Si no hay match en biblioteca, se omite la
+    actualizacion para esa linea (no se inventa un caso).
+
+    Tabla linea es la unica fuente de verdad - ya no se usa linea_caso.
     """
+    if _evento_esta_cerrado(evento_id):
+        DBInspector.log(
+            f"[ENGINE] generar_maestro bloqueado - evento {evento_id} ya CERRADO",
+            "WARNING",
+        )
+        return
     df = get_dataframe("""
         SELECT DISTINCT
-            pl.linea_id                    AS linea_raw,
-            pl.marca,
-            pec.nombre_caso,
-            l.id                           AS linea_id,
-            l.proveedor_id
+            l.id           AS linea_id,
+            l.proveedor_id,
+            pec.nombre_caso
         FROM precio_lista pl
         JOIN precio_evento_caso pec ON pec.id = pl.caso_id
         JOIN linea l ON l.id = pl.linea_id
@@ -518,28 +545,33 @@ def generar_maestro_lineas_desde_evento(evento_id: int):
         DBInspector.log(f"[ENGINE] generar_maestro_lineas: sin datos para evento {evento_id}", "AVISO")
         return
 
-    # Deduplicar: una línea → un caso (el primero encontrado)
     df_dedup = df.drop_duplicates(subset=["linea_id"])
 
     ok_count = 0
+    skipped = 0
     for _, row in df_dedup.iterrows():
         ok = commit_query("""
-            INSERT INTO linea_caso (linea_id, proveedor_id, marca, caso_nombre)
-            VALUES (:lid, :pid, :marca, :caso)
-            ON CONFLICT (linea_id, proveedor_id)
-            DO UPDATE SET marca = EXCLUDED.marca, caso_nombre = EXCLUDED.caso_nombre
+            UPDATE linea
+            SET caso_id = cpb.id
+            FROM caso_precio_biblioteca cpb
+            WHERE linea.id = :lid
+              AND cpb.proveedor_id = :pid
+              AND cpb.nombre_caso  = :caso
+              AND cpb.activo = true
         """, {
-            "lid":   int(row["linea_id"]),
-            "pid":   int(row["proveedor_id"]),
-            "marca": str(row["marca"]),
-            "caso":  str(row["nombre_caso"]).strip(),
+            "lid":  int(row["linea_id"]),
+            "pid":  int(row["proveedor_id"]),
+            "caso": str(row["nombre_caso"]).strip(),
         })
         if ok:
             ok_count += 1
+        else:
+            skipped += 1
 
     DBInspector.log(
-        f"[ENGINE] Maestro líneas generado: {ok_count}/{len(df_dedup)} registros en linea_caso",
-        "SUCCESS"
+        f"[ENGINE] linea.caso_id actualizado: {ok_count}/{len(df_dedup)} lineas "
+        f"({skipped} sin match en biblioteca)",
+        "SUCCESS",
     )
 
 
@@ -643,18 +675,19 @@ def get_preview_skus(skus_caso: pd.DataFrame, caso: dict, n: int = 5) -> pd.Data
 
 def resolver_casos_skus(skus_df: pd.DataFrame, proveedor_id: int, df_bib: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
     """
-    Cruza el DataFrame de SKUs con la tabla maestra de linea_caso.
+    Cruza el DataFrame de SKUs con la asignacion linea.caso_id -> caso_precio_biblioteca.
     Retorna el DataFrame enriquecido con 'caso_asignado' y 'estado_validacion',
-    y un booleano indicando si está listo para calcular (sin errores).
+    y un booleano indicando si esta listo para calcular (sin errores).
     """
     nombres_bib = set(df_bib["nombre_caso"].tolist()) if not df_bib.empty else set()
-    
-    # Mapeo maestro
+
+    # Mapeo: codigo_linea -> nombre_caso (desde linea.caso_id)
     df_maestro = get_dataframe("""
-        SELECT l.codigo_proveedor::text AS linea, lc.caso_nombre
+        SELECT l.codigo_proveedor::text AS linea, cpb.nombre_caso AS caso_nombre
         FROM linea l
-        JOIN linea_caso lc ON lc.linea_id = l.id
-        WHERE lc.proveedor_id = :pid AND lc.caso_nombre IS NOT NULL
+        JOIN caso_precio_biblioteca cpb ON cpb.id = l.caso_id
+        WHERE l.proveedor_id = :pid AND l.activo = true
+          AND cpb.nombre_caso IS NOT NULL
     """, {"pid": proveedor_id})
     
     maestro_map = {}
@@ -1020,8 +1053,88 @@ def update_caso_biblioteca(caso_id: int, caso: dict) -> bool:
     )
 
 
+def get_lineas_proveedor(proveedor_id: int) -> list[tuple[str, int]]:
+    """Retorna lista de tuplas (codigo_proveedor, linea_id) para un proveedor."""
+    df = get_dataframe(
+        "SELECT codigo_proveedor::text, id FROM linea WHERE proveedor_id = :pid AND activo = true ORDER BY codigo_proveedor::int",
+        {"pid": proveedor_id}
+    )
+    if df is None or df.empty:
+        return []
+    return [(str(row["codigo_proveedor"]), int(row["id"])) for _, row in df.iterrows()]
+
+
+def sincronizar_lineas_caso(proveedor_id: int, caso_nombre: str, codigos_proveedor: list[str]) -> tuple[bool, int]:
+    """
+    Sincroniza que lineas (codigos_proveedor) estan asignadas al caso `caso_nombre`
+    de la biblioteca del proveedor. Funciona en dos pasos atomicos:
+      1) Des-asigna (caso_id -> NULL) las lineas del proveedor que hoy tienen ese caso
+         pero NO estan en la lista nueva.
+      2) Asigna ese caso a las lineas de la lista nueva (UPDATE linea.caso_id).
+    """
+    from core.database import engine
+    from sqlalchemy import text
+
+    if not caso_nombre.strip():
+        return False, 0
+
+    try:
+        with engine.begin() as conn:
+            row = conn.execute(
+                text("""SELECT id FROM caso_precio_biblioteca
+                       WHERE proveedor_id = :pid AND nombre_caso = :cn AND activo = true
+                       LIMIT 1"""),
+                {"pid": proveedor_id, "cn": caso_nombre.strip()},
+            ).fetchone()
+            if not row:
+                DBInspector.log(
+                    f"[ENGINE] sincronizar_lineas_caso: caso '{caso_nombre}' no existe "
+                    f"en biblioteca del proveedor {proveedor_id}",
+                    "WARNING",
+                )
+                return False, 0
+            caso_id = int(row[0])
+
+            codigos_int = []
+            for cod in codigos_proveedor:
+                try:
+                    codigos_int.append(int(cod))
+                except (ValueError, TypeError):
+                    continue
+
+            if codigos_int:
+                conn.execute(
+                    text("""UPDATE linea SET caso_id = NULL
+                            WHERE proveedor_id = :pid
+                              AND caso_id = :cid
+                              AND codigo_proveedor::bigint <> ALL(:codigos)"""),
+                    {"pid": proveedor_id, "cid": caso_id, "codigos": codigos_int},
+                )
+            else:
+                conn.execute(
+                    text("""UPDATE linea SET caso_id = NULL
+                            WHERE proveedor_id = :pid AND caso_id = :cid"""),
+                    {"pid": proveedor_id, "cid": caso_id},
+                )
+
+            n_actualizadas = 0
+            if codigos_int:
+                result = conn.execute(
+                    text("""UPDATE linea SET caso_id = :cid
+                            WHERE proveedor_id = :pid
+                              AND codigo_proveedor::bigint = ANY(:codigos)"""),
+                    {"pid": proveedor_id, "cid": caso_id, "codigos": codigos_int},
+                )
+                n_actualizadas = result.rowcount
+
+            return True, n_actualizadas
+    except Exception as e:
+        DBInspector.log(f"[ENGINE] sincronizar_lineas_caso error: {e}", "ERROR")
+        return False, 0
+
+
 # ─────────────────────────────────────────────────────────────────────────────
-# EDITOR DE LINEA_CASO POR RANGO DE CÓDIGO
+# EDITOR DE LINEA POR RANGO DE CODIGO (Caso + Genero)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def actualizar_lineas_por_rango(
@@ -1032,10 +1145,13 @@ def actualizar_lineas_por_rango(
     genero: str | None,
 ) -> tuple[bool, int]:
     """
-    UPDATE linea_caso para todas las líneas del proveedor cuyo codigo_proveedor
-    esté en el rango [cod_desde, cod_hasta] (ambos inclusive).
-    Actualiza caso_nombre y/o genero según lo que se pase (None = no tocar ese campo).
-    Retorna (ok, n_filas_afectadas).
+    UPDATE linea (tabla pilar) para todas las lineas del proveedor cuyo
+    codigo_proveedor este en el rango [cod_desde, cod_hasta] (ambos inclusive).
+
+      - caso_nombre: nombre del caso en caso_precio_biblioteca -> linea.caso_id
+      - genero: descripcion del genero en tabla genero -> linea.genero_id
+
+    None = no tocar ese campo. Retorna (ok, n_filas_afectadas).
     """
     if not caso_nombre and genero is None:
         return False, 0
@@ -1044,21 +1160,51 @@ def actualizar_lineas_por_rango(
     params: dict = {"pid": proveedor_id, "desde": cod_desde, "hasta": cod_hasta}
 
     if caso_nombre:
-        sets.append("caso_nombre = :caso")
-        params["caso"] = caso_nombre.strip()
+        try:
+            with engine.begin() as conn:
+                row = conn.execute(
+                    text("""SELECT id FROM caso_precio_biblioteca
+                            WHERE proveedor_id = :pid AND nombre_caso = :cn AND activo = true
+                            LIMIT 1"""),
+                    {"pid": proveedor_id, "cn": caso_nombre.strip()},
+                ).fetchone()
+            if not row:
+                DBInspector.log(
+                    f"[ENGINE] actualizar_lineas_por_rango: caso '{caso_nombre}' no "
+                    f"encontrado en biblioteca del proveedor {proveedor_id}",
+                    "WARNING",
+                )
+                return False, 0
+            sets.append("caso_id = :caso_id")
+            params["caso_id"] = int(row[0])
+        except Exception as e:
+            DBInspector.log(f"[ENGINE] resolver caso_id error: {e}", "ERROR")
+            return False, 0
+
     if genero is not None:
-        sets.append("genero = :genero")
-        params["genero"] = genero.strip() or None
+        g = (genero or "").strip()
+        if g:
+            with engine.begin() as conn:
+                row = conn.execute(
+                    text("SELECT id FROM genero WHERE descripcion = :g OR codigo = :g LIMIT 1"),
+                    {"g": g},
+                ).fetchone()
+            if not row:
+                DBInspector.log(
+                    f"[ENGINE] actualizar_lineas_por_rango: genero '{g}' no encontrado",
+                    "WARNING",
+                )
+                return False, 0
+            sets.append("genero_id = :gen_id")
+            params["gen_id"] = int(row[0])
+        else:
+            sets.append("genero_id = NULL")
 
     sql = f"""
-        UPDATE linea_caso
+        UPDATE linea
         SET {', '.join(sets)}
         WHERE proveedor_id = :pid
-          AND linea_id IN (
-              SELECT id FROM linea
-              WHERE proveedor_id = :pid
-                AND codigo_proveedor::bigint BETWEEN :desde AND :hasta
-          )
+          AND codigo_proveedor::bigint BETWEEN :desde AND :hasta
     """
     try:
         with engine.begin() as conn:
@@ -1076,7 +1222,7 @@ def actualizar_lineas_por_rango(
 def purgar_todas_las_listas() -> tuple[bool, dict]:
     """
     Elimina TODOS los eventos de precio, sus casos y su precio_lista.
-    Preserva intactos: linea, referencia, material, color, linea_caso, linea_referencia.
+    Preserva intactos: linea (con su caso_id), referencia, material, color, linea_referencia.
     Retorna (ok, {"eventos": n, "casos": n, "skus": n}).
     """
     try:

@@ -46,8 +46,10 @@ def _register(module_package: str) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 _register("modules.home")
 _register("modules.sales_report")
+_register("modules.balance_tiendas_retail")  # 2.1 — Retail Excel + estadísticas (junto a Sales en hub)
 _register("modules.intencion_compra")
 _register("modules.digitacion")       # 3.5 — Puente IC → PP (nro fábrica + evento precio)
+_register("modules.carga_transito")     # 4.2 — Carga Stock Tránsito
 _register("modules.pedido_proveedor")
 _register("modules.aprobacion_pedidos")  # 4.5 — Autorización preventas mayoristas
 # ── Ciclo Abastecimiento ────────────────────────────

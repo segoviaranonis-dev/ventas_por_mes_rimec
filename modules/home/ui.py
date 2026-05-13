@@ -86,14 +86,22 @@ def render_home():
     # ══════════════════════════════════════════════════════════════════════════
     _section("📊", "ANÁLISIS COMERCIAL", "Reportes e inteligencia de ventas")
 
-    col_sr, col_empty = st.columns([1, 2])
+    col_sr, col_rt, col_empty = st.columns([1, 1, 2])
     _card(
         col_sr,
-        icon  = "📊",
-        title = "Sales Report",
-        desc  = "Análisis de ventas por período, vendedor, marca y cadena. Exportación PDF ejecutiva.",
-        btn_key     = "nav_sales",
-        module_key  = "sales",
+        icon="📊",
+        title="Sales Report",
+        desc="Análisis de ventas por período, vendedor, marca y cadena. Exportación PDF ejecutiva.",
+        btn_key="nav_sales",
+        module_key="sales",
+    )
+    _card(
+        col_rt,
+        icon="🏪",
+        title="Retail multi-tienda",
+        desc="Excel multi-origen, estadísticas venta/stock por tienda, álbum local y herramienta de reposición.",
+        btn_key="nav_retail",
+        module_key="balance_tiendas",
     )
 
     # ══════════════════════════════════════════════════════════════════════════

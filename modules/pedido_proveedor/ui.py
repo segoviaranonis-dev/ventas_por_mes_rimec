@@ -40,10 +40,12 @@ from modules.pedido_proveedor.logic import (
     populate_pp_from_proforma,
     guardar_configuracion_pp,
     get_facturas_interna_de_pp,
+    get_fi_detalles_canonico,
     get_skus_con_precio_para_fi,
     crear_factura_interna,
     registrar_arribo,
 )
+from core.fi_card import render_fi_card
 from modules.pedido_proveedor.showroom import render_showroom
 from modules.rimec_engine.hiedra import extraer_valor_numerico_talla
 
@@ -171,8 +173,8 @@ def _render_lista_pp():
 
         with st.expander(exp_label, expanded=False):
             # Encabezado de columnas
-            h = st.columns([3, 2, 1.5, 1.5, 1])
-            for col, lbl in zip(h, ["Pedido / Marcas", "ETA · Cliente", "Pares", "Estado", ""]):
+            h = st.columns([3, 2, 1.5, 1.5, 2.2])
+            for col, lbl in zip(h, ["Pedido / Marcas", "ETA · Cliente", "Pares", "Estado", "Acceso rápido"]):
                 col.markdown(
                     f"<span style='color:#64748B;font-size:.72rem;"
                     f"letter-spacing:.06em;text-transform:uppercase;'>{lbl}</span>",
@@ -192,7 +194,7 @@ def _render_lista_pp():
                 vendedor_val = str(pp.get("vendedor", "—") or "—")
                 eta_val      = _fmt_date(pp.get("fecha_eta"))
 
-                col_info, col_eta, col_pares, col_estado, col_btn = st.columns([3, 2, 1.5, 1.5, 1])
+                col_info, col_eta, col_pares, col_estado, col_btn = st.columns([3, 2, 1.5, 1.5, 2.2])
 
                 with col_info:
                     st.markdown(
@@ -284,9 +286,28 @@ def _render_lista_pp():
                     )
 
                 with col_btn:
+                    # Fila 1: Botón principal Abrir
                     if st.button("Abrir →", key=f"pp_open_{pp['id']}",
                                  use_container_width=True, type="primary"):
                         st.session_state["pp_selected_id"] = int(pp["id"])
+                        st.session_state.pop("tab_activa", None)
+                        st.rerun()
+                    # Fila 2: Accesos directos a pestañas
+                    _b1, _b2, _b3 = st.columns(3)
+                    if _b1.button("📋", key=f"pp_tab_ic_{pp['id']}",
+                                  help="ICs Asignadas", use_container_width=True):
+                        st.session_state["pp_selected_id"] = int(pp["id"])
+                        st.session_state["tab_activa"] = "hijo_adoptado"
+                        st.rerun()
+                    if _b2.button("📦", key=f"pp_tab_stock_{pp['id']}",
+                                  help="Importación / Stock", use_container_width=True):
+                        st.session_state["pp_selected_id"] = int(pp["id"])
+                        st.session_state["tab_activa"] = "hijo_mayor"
+                        st.rerun()
+                    if _b3.button("🧾", key=f"pp_tab_fi_{pp['id']}",
+                                  help="Facturas Internas", use_container_width=True):
+                        st.session_state["pp_selected_id"] = int(pp["id"])
+                        st.session_state["tab_activa"] = "hijo_menor"
                         st.rerun()
 
                 st.divider()
@@ -382,9 +403,10 @@ def _render_importar_proforma(pp_id: int):
 
     col_pf, col_ext, col_eta = st.columns(3)
     proforma = col_pf.text_input(
-        "Nro Proforma",
+        "Nro Proforma *",
         key=f"_pf_pf_{pp_id}",
         placeholder="Ej: 6421",
+        help="Campo obligatorio. Sin este número el sistema no puede guardar la proforma.",
     )
     nro_externo = col_ext.text_input(
         "Nro PP externo (sistema legado)",
@@ -537,17 +559,34 @@ def _render_importar_proforma(pp_id: int):
         f"Marcas: {', '.join(sorted(df_p['brand'].unique()))}"
     )
 
-    if not puede_guardar or not proforma:
-        if not proforma:
-            st.warning("Ingresá el Nro de Proforma antes de guardar.")
-        return
-
+    # ── Checklist visible: que se vea SIEMPRE qué falta para habilitar guardar
     st.divider()
-    _, col_ok = st.columns([3, 1])
+    st.markdown("#### 4 · Confirmar carga")
+
+    faltantes: list[str] = []
+    if not proforma:
+        faltantes.append("**Nro Proforma** (bloque 1)")
+    if not puede_guardar:
+        faltantes.append("**Reducir pares** al límite autorizado")
+
+    col_info, col_ok = st.columns([3, 1])
+    with col_info:
+        if faltantes:
+            st.warning(
+                "⚠ No se puede cargar la proforma todavía. Falta completar:\n\n- "
+                + "\n- ".join(faltantes)
+            )
+        else:
+            st.success(
+                f"✅ Todo listo para guardar **{total_p:,} pares** "
+                f"({len(df_p)} SKUs) en `pedido_proveedor_detalle`."
+            )
+
     if col_ok.button(
         "🔒 CARGAR PROFORMA",
         type="primary",
         use_container_width=True,
+        disabled=bool(faltantes),
         key=f"_pf_ok_{pp_id}",
     ):
         articulos  = df_p.to_dict("records")
@@ -612,6 +651,7 @@ def _render_detalle_pp(id_pp: int):
     # ── Botón volver ─────────────────────────────────────────────────────────
     if st.button("← Volver a la lista", key="pp_volver"):
         st.session_state.pop("pp_selected_id", None)
+        st.session_state.pop(f"_pp_tab_{id_pp}", None)
         st.rerun()
 
     # ── Título ────────────────────────────────────────────────────────────────
@@ -658,23 +698,69 @@ def _render_detalle_pp(id_pp: int):
 
     st.divider()
 
-    # ── 3 HIJOS ───────────────────────────────────────────────────────────────
+    # ── 3 HIJOS — tabs manuales controlados por session_state ────────────────
     tiene_stock = header["total_articulos"] > 0
     label_menor = "🧾 Facturas Internas" if tiene_stock else "🔒 Facturas Internas"
 
-    tab_adoptado, tab_mayor, tab_menor = st.tabs([
-        "📋 ICs Asignadas",
-        "📦 Importación / Stock",
-        label_menor,
-    ])
+    # Clave de pestaña activa para este PP específico
+    _key_tab = f"_pp_tab_{id_pp}"
 
-    with tab_adoptado:
+    # Si viene un acceso directo desde la lista, lo aplicamos y limpiamos
+    _nav = st.session_state.pop("tab_activa", None)
+    if _nav is not None:
+        st.session_state[_key_tab] = _nav
+
+    # Valor actual (default: hijo_adoptado)
+    _activa = st.session_state.get(_key_tab, "hijo_adoptado")
+
+    # ── Barra de pestañas manual ──────────────────────────────────────────────
+    _TABS = [
+        ("hijo_adoptado", "📋 ICs Asignadas"),
+        ("hijo_mayor",    "📦 Importación / Stock"),
+        ("hijo_menor",    label_menor),
+    ]
+
+    _tab_cols = st.columns(len(_TABS))
+    for _col, (_key, _label) in zip(_tab_cols, _TABS):
+        _es_activa = (_activa == _key)
+        if _es_activa:
+            # Tab activa: HTML estilizado, no es un botón (ya estás aquí)
+            _col.markdown(
+                f"<div style='"
+                f"background:#1E3A5F;"
+                f"color:#D4AF37;"
+                f"border:1px solid #D4AF37;"
+                f"border-radius:6px;"
+                f"padding:6px 12px;"
+                f"font-weight:700;"
+                f"font-size:.88rem;"
+                f"text-align:center;"
+                f"cursor:default;"
+                f"'>{_label}</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            # Tab inactiva: botón clickeable normal
+            if _col.button(
+                _label,
+                key=f"_tab_btn_{id_pp}_{_key}",
+                use_container_width=True,
+            ):
+                st.session_state[_key_tab] = _key
+                st.rerun()
+
+    st.markdown(
+        "<div style='border-bottom:1px solid #334155;margin:4px 0 16px 0;'></div>",
+        unsafe_allow_html=True,
+    )
+
+
+    # ── Contenido de la pestaña activa ────────────────────────────────────────
+    if _activa == "hijo_adoptado":
         _render_hijo_adoptado(id_pp)
-
-    with tab_mayor:
+    elif _activa == "hijo_mayor":
         _render_hijo_mayor(id_pp, header)
-
-    with tab_menor:
+    else:
         _render_hijo_menor(id_pp, tiene_stock, header)
 
 
@@ -1063,7 +1149,7 @@ def _render_facturas_internas(pp_id: int, header: dict):
         _render_nueva_fi(pp_id, header)
         return
 
-    # ── Lista de FIs existentes ───────────────────────────────────────────────
+    # ── Lista de FIs existentes (formato canónico — core/fi_card) ─────────────
     if df_fi is None or df_fi.empty:
         st.info("Sin facturas internas aún para este PP.")
         return
@@ -1071,19 +1157,20 @@ def _render_facturas_internas(pp_id: int, header: dict):
     total_pares = int(df_fi["total_pares"].sum())
     total_neto  = float(df_fi["total_neto"].sum())
     st.caption(f"{len(df_fi)} factura(s) · {total_pares:,} pares · ${total_neto:,.0f}")
+    st.markdown("---")
 
     for _, fi in df_fi.iterrows():
-        col_nro, col_cli, col_pares, col_neto, col_est = st.columns([2, 3, 1.2, 1.5, 1])
-        col_nro.markdown(f"**{fi['nro_factura']}**")
-        col_cli.write(str(fi.get("cliente") or "—"))
-        col_pares.write(f"{int(fi['total_pares']):,}")
-        col_neto.write(f"${float(fi['total_neto']):,.0f}")
-        color_est = "#22C55E" if fi["estado"] == "CONFIRMADA" else "#EF4444"
-        col_est.markdown(
-            f"<span style='color:{color_est};font-size:.78rem;font-weight:600;'>"
-            f"{fi['estado']}</span>",
-            unsafe_allow_html=True,
+        fi_dict = fi.to_dict()
+        detalles = get_fi_detalles_canonico(int(fi_dict["id"]))
+        render_fi_card(
+            fi_dict,
+            detalles=detalles,
+            mostrar_detalle=True,
+            detalle_colapsado=True,
+            key_prefix=f"pp_{pp_id}_fi",
+            mostrar_descuentos=True,
         )
+        st.markdown("---")
 
 
 def _render_nueva_fi(pp_id: int, header: dict):
@@ -1498,7 +1585,7 @@ def _render_ala_norte(id_pp: int):
     avail = set(df.columns)
     ordered_raw = [c for c in
                    ["marca", "linea", "referencia", "style_code",
-                    "material", "color", "grada",
+                    "material_code", "material", "color_code", "color", "grada",
                     "cantidad_cajas", "cantidad_inicial", "vendido", "saldo"]
                    if c in avail]
 
@@ -1509,7 +1596,9 @@ def _render_ala_norte(id_pp: int):
         "linea":            "Línea",
         "referencia":       "Ref.",
         "style_code":       "Código",
+        "material_code":    "Cód.Mat",
         "material":         "Material",
+        "color_code":       "Cód.Col",
         "color":            "Color",
         "grada":            "Tallas",
         "cantidad_cajas":   "_cajas",   # auxiliar, se usa para calcular x Caja
@@ -1536,7 +1625,8 @@ def _render_ala_norte(id_pp: int):
                 ).get(_g, 0) if raw and raw not in ("", "nan", "null", "None") else 0
             )
         info_cols = [c for c in ["Marca", "Línea", "Ref.", "Código",
-                                  "Material", "Color", "Tallas", "x Caja"]
+                                  "Cód.Mat", "Material", "Cód.Col", "Color",
+                                  "Tallas", "x Caja"]
                      if c in display.columns]
         tot_cols  = ["Inicial", "Vendido", "Saldo"]
         display   = display[info_cols + all_grades + tot_cols]
@@ -1546,8 +1636,10 @@ def _render_ala_norte(id_pp: int):
         "Marca":    st.column_config.TextColumn(width=90),
         "Línea":    st.column_config.TextColumn(width=55),
         "Ref.":     st.column_config.TextColumn(width=45),
-        "Código":   st.column_config.TextColumn(width=75),
+        "Código":   st.column_config.TextColumn(width=70),
+        "Cód.Mat":  st.column_config.TextColumn(width=70),
         "Material": st.column_config.TextColumn(width=155),
+        "Cód.Col":  st.column_config.TextColumn(width=65),
         "Color":    st.column_config.TextColumn(width=110),
         "Tallas":   st.column_config.TextColumn(width=55),
         "x Caja":   st.column_config.NumberColumn(format="%d", width=55),

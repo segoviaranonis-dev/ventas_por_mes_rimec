@@ -392,7 +392,8 @@ def get_pp_header(id_pp: int) -> dict:
 def get_pp_ala_norte(id_pp: int) -> pd.DataFrame:
     """
     Retorna los artículos de la proforma para un PP.
-    Columnas: id, marca, linea, referencia, material, color, grada,
+    Columnas: id, marca, linea, referencia, style_code,
+              material_code, material, color_code, color, grada,
               grades_json, cantidad_inicial, vendido, saldo
     """
     return get_dataframe("""
@@ -402,7 +403,9 @@ def get_pp_ala_norte(id_pp: int) -> pd.DataFrame:
             ppd.linea,
             ppd.referencia,
             ppd.style_code,
+            ppd.material_code,
             ppd.descp_material                                           AS material,
+            ppd.color_code,
             ppd.descp_color                                              AS color,
             ppd.grada,
             ppd.grades_json::text                                        AS grades_json,
@@ -416,7 +419,8 @@ def get_pp_ala_norte(id_pp: int) -> pd.DataFrame:
         WHERE ppd.pedido_proveedor_id = :id_pp
           AND ppd.referencia IS NOT NULL
         GROUP BY ppd.id, mv.descp_marca, ppd.linea, ppd.referencia,
-                 ppd.style_code, ppd.descp_material, ppd.descp_color, ppd.grada,
+                 ppd.style_code, ppd.material_code, ppd.descp_material,
+                 ppd.color_code, ppd.descp_color, ppd.grada,
                  ppd.grades_json, ppd.cantidad_cajas, ppd.cantidad_pares
         ORDER BY ppd.id
     """, {"id_pp": id_pp})
@@ -2244,19 +2248,60 @@ def _get_next_nro_fi(pp_id: int) -> str:
 
 
 def get_facturas_interna_de_pp(pp_id: int) -> pd.DataFrame:
+    """Facturas internas asociadas a un PP — formato canónico (ver core/fi_card)."""
     return get_dataframe("""
         SELECT
             fi.id, fi.nro_factura, fi.estado, fi.created_at,
-            cv.descp_cliente  AS cliente,
-            vv.descp_vendedor AS vendedor,
-            fi.total_pares, fi.total_monto AS total_neto,
-            fi.lista_precio_id
+            fi.pp_id,
+            pp.numero_registro        AS nro_pp,
+            fi.marca, fi.marca_id,
+            fi.caso,  fi.caso_id,
+            cv.descp_cliente          AS cliente,
+            cv.descp_cliente          AS cliente_nombre,
+            vv.descp_vendedor         AS vendedor,
+            vv.descp_vendedor         AS vendedor_nombre,
+            fi.total_pares,
+            fi.total_monto            AS total_neto,
+            fi.total_monto,
+            fi.lista_precio_id,
+            fi.descuento_1, fi.descuento_2, fi.descuento_3, fi.descuento_4
         FROM factura_interna fi
+        LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
         LEFT JOIN cliente_v2  cv ON cv.id_cliente  = fi.cliente_id
         LEFT JOIN vendedor_v2 vv ON vv.id_vendedor = fi.vendedor_id
         WHERE fi.pp_id = :pp_id
-        ORDER BY fi.created_at DESC
+        ORDER BY fi.created_at DESC, fi.nro_factura
     """, {"pp_id": pp_id})
+
+
+def get_fi_detalles_canonico(fi_id: int) -> list[dict]:
+    """Detalle de items de una FI con `linea_snapshot` parseado a dict.
+    Formato esperado por core/fi_card.render_fi_card()."""
+    import ast as _ast
+    import json as _json
+    df = get_dataframe("""
+        SELECT fid.id, fid.pares, fid.cajas, fid.precio_unit,
+               fid.subtotal, fid.precio_neto, fid.linea_snapshot
+        FROM factura_interna_detalle fid
+        WHERE fid.factura_id = :fi_id
+        ORDER BY fid.id
+    """, {"fi_id": fi_id})
+    if df is None or df.empty:
+        return []
+    rows = df.to_dict("records")
+    for r in rows:
+        snap = r.get("linea_snapshot")
+        if isinstance(snap, str):
+            try:
+                r["linea_snapshot"] = _json.loads(snap)
+            except Exception:
+                try:
+                    r["linea_snapshot"] = _ast.literal_eval(snap)
+                except Exception:
+                    r["linea_snapshot"] = {}
+        elif not isinstance(snap, dict):
+            r["linea_snapshot"] = {}
+    return rows
 
 
 def get_skus_con_precio_para_fi(pp_id: int, evento_id: int) -> pd.DataFrame:

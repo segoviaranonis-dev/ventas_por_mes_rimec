@@ -76,18 +76,21 @@ def _resolve_combinacion_id(
     """
     Lookup: (linea.codigo, referencia.codigo, material.descripcion, color.nombre, talla.codigo)
             → combinacion.id
+    OT-2026-023: Si no existe, la CREA automáticamente (activo_web=false, sin proveedor_id).
+    OT-2026-027: Combinaciones de stock interno no requieren proveedor_web.
     Usa descripción en vez de ID porque ppd.id_material/id_color son IDs del F9
     (espacio distinto al de las tablas material/color internas).
-    Retorna None si no existe en la BD.
+    Retorna combinacion_id (existente o recién creado), o None si faltan entidades base.
     """
+    # OT-2026-020: Usar nombres correctos post-migración 004
     row = conn.execute(sqlt("""
         SELECT c.id
         FROM combinacion c
-        JOIN linea      l   ON l.id  = c.linea_id      AND l.codigo       = :linea
-        JOIN referencia r   ON r.id  = c.referencia_id AND r.codigo       = :ref
-        JOIN talla      tl  ON tl.id = c.talla_id      AND tl.codigo      = :talla
-        JOIN material   mat ON mat.id = c.material_id  AND mat.descripcion = :mat
-        JOIN color      col ON col.id = c.color_id     AND col.nombre      = :col
+        JOIN linea      l   ON l.id  = c.linea_id      AND l.codigo_proveedor = :linea
+        JOIN referencia r   ON r.id  = c.referencia_id AND r.codigo_proveedor = :ref
+        JOIN talla      tl  ON tl.id = c.talla_id      AND tl.talla_etiqueta  = :talla
+        JOIN material   mat ON mat.id = c.material_id  AND mat.descripcion    = :mat
+        JOIN color      col ON col.id = c.color_id     AND col.nombre         = :col
         LIMIT 1
     """), {
         "linea": str(linea_cod).strip(),
@@ -96,7 +99,61 @@ def _resolve_combinacion_id(
         "mat":   str(descp_material).strip(),
         "col":   str(descp_color).strip(),
     }).fetchone()
-    return int(row[0]) if row else None
+
+    if row:
+        return int(row[0])
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # OT-2026-023: CREAR COMBINACIÓN AUTOMÁTICAMENTE si no existe
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    # 1. Buscar IDs de las entidades base
+    # OT-2026-027: NO incluir proveedor_id - combinacion.proveedor_id es FK a proveedor_web
+    #              (distinto de linea.proveedor_id que es FK a proveedor_importacion)
+    ids_row = conn.execute(sqlt("""
+        SELECT l.id, r.id, mat.id, col.id, tl.id
+        FROM linea l
+        CROSS JOIN referencia r
+        CROSS JOIN material mat
+        CROSS JOIN color col
+        CROSS JOIN talla tl
+        WHERE l.codigo_proveedor = :linea
+          AND r.codigo_proveedor = :ref
+          AND mat.descripcion    = :mat
+          AND col.nombre         = :col
+          AND tl.talla_etiqueta  = :talla
+        LIMIT 1
+    """), {
+        "linea": str(linea_cod).strip(),
+        "ref":   str(ref_cod).strip(),
+        "mat":   str(descp_material).strip(),
+        "col":   str(descp_color).strip(),
+        "talla": str(talla_cod).strip(),
+    }).fetchone()
+
+    if not ids_row:
+        # Entidades base no existen → no se puede crear combinación
+        return None
+
+    linea_id, ref_id, mat_id, col_id, talla_id = ids_row
+
+    # 2. Crear combinación SIN proveedor_id (para stock interno, no catálogo web)
+    # OT-2026-027: proveedor_id requiere FK a proveedor_web (distinto de proveedor_importacion)
+    #              Las combinaciones de stock interno no necesitan proveedor_id
+    #              Solo las combinaciones activo_web=true necesitan proveedor_web válido
+    new_row = conn.execute(sqlt("""
+        INSERT INTO combinacion (linea_id, referencia_id, material_id, color_id, talla_id, activo_web)
+        VALUES (:linea_id, :ref_id, :mat_id, :col_id, :talla_id, false)
+        RETURNING id
+    """), {
+        "linea_id": linea_id,
+        "ref_id":   ref_id,
+        "mat_id":   mat_id,
+        "col_id":   col_id,
+        "talla_id": talla_id,
+    }).fetchone()
+
+    return int(new_row[0]) if new_row else None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -113,11 +170,14 @@ def crear_traspaso_por_factura(
 ) -> int:
     """
     Crea un registro traspaso (BORRADOR) y sus líneas de detalle.
-    Usa snapshot_json como fallback para artículos sin combinacion_id.
+    OT-2026-023: Crea automáticamente combinaciones faltantes.
+    Usa snapshot_json como fallback si entidades base no existen.
     Retorna el id del traspaso creado.
     """
     anio  = date.today().year
     trp_n = _get_next_traspaso_num_conn(conn, anio)
+
+    # OT-2026-026: proveedor_id se obtiene de linea en _resolve_combinacion_id(), no de PP
 
     snapshot = {
         "numero_factura": numero_factura,
@@ -147,11 +207,11 @@ def crear_traspaso_por_factura(
 
     # Insertar traspaso_detalle para cada (artículo, talla) con qty > 0
     for rec in items_tallas:
-        for t in range(33, 41):
-            col = f"t{t}"
-            qty = int(rec.get("tallas", {}).get(col, 0) or 0)
+        for col, qty_val in rec.get("tallas", {}).items():
+            qty = int(qty_val or 0)
             if qty <= 0:
                 continue
+            t = col.replace("t", "")
             comb_id = _resolve_combinacion_id(
                 conn,
                 rec.get("linea", ""),
@@ -159,9 +219,10 @@ def crear_traspaso_por_factura(
                 rec.get("material", ""),
                 rec.get("color", ""),
                 str(t),
+                # OT-2026-026: proveedor_id se obtiene internamente de linea
             )
             if comb_id is None:
-                continue  # artículo aún sin combinacion registrada → snapshot como fallback
+                continue  # OT-2026-023: entidades base no existen (linea/ref/mat/col/talla) → snapshot como fallback
             conn.execute(sqlt("""
                 INSERT INTO traspaso_detalle (traspaso_id, combinacion_id, cantidad)
                 VALUES (:trp_id, :comb_id, :qty)
@@ -180,9 +241,15 @@ def _crear_traspasos_para_pp(conn, id_pp: int, cl_id: int) -> int:
       1. Crea traspasos (BORRADOR) para cada FAC-INT que aún no tenga traspaso.
       2. Vincula todos los traspasos del PP a la Compra Legal (cl_id).
     Retorna la cantidad de traspasos nuevos creados.
+
+    OT-2026-017: Ahora procesa AMBAS tablas: venta_transito (legacy) y factura_interna (nuevo flujo).
     """
-    # FAC-INTs del PP sin traspaso todavía
-    facturas = conn.execute(sqlt("""
+    creados = 0
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # BLOQUE 1: FAC-INTs de venta_transito (legacy) sin traspaso
+    # ═══════════════════════════════════════════════════════════════════════════
+    facturas_legacy = conn.execute(sqlt("""
         SELECT DISTINCT vt.numero_factura_interna
         FROM venta_transito vt
         WHERE vt.pedido_proveedor_id = :id_pp
@@ -191,8 +258,7 @@ def _crear_traspasos_para_pp(conn, id_pp: int, cl_id: int) -> int:
           )
     """), {"id_pp": id_pp}).fetchall()
 
-    creados = 0
-    for (factura,) in facturas:
+    for (factura,) in facturas_legacy:
         # Extraer id_marca del nombre: FAC-INT-{id_pp}-{id_marca}-NNNN
         partes = factura.split("-")
         try:
@@ -240,16 +306,138 @@ def _crear_traspasos_para_pp(conn, id_pp: int, cl_id: int) -> int:
         """), {"cl_id": cl_id, "trp_id": trp_id})
         creados += 1
 
-    # Vincular traspasos preexistentes del PP que no tengan compra aún
+    # ═══════════════════════════════════════════════════════════════════════════
+    # BLOQUE 2: FAC-INTs de factura_interna (nuevo flujo) sin traspaso
+    # OT-2026-017: Agrega soporte para tabla factura_interna
+    # ═══════════════════════════════════════════════════════════════════════════
+    facturas_nuevas = conn.execute(sqlt("""
+        SELECT DISTINCT fi.id, fi.nro_factura AS numero_factura,
+               COALESCE(MIN(ppd.id_marca), 0) AS id_marca
+        FROM factura_interna fi
+        JOIN factura_interna_detalle fid ON fid.factura_id = fi.id
+        JOIN pedido_proveedor_detalle ppd ON ppd.id = fid.ppd_id
+        WHERE fi.pp_id = :id_pp
+          AND fi.estado IN ('CONFIRMADA', 'RESERVADA')
+          AND NOT EXISTS (
+              SELECT 1 FROM traspaso t WHERE t.documento_ref = fi.nro_factura
+          )
+        GROUP BY fi.id, fi.nro_factura
+    """), {"id_pp": id_pp}).fetchall()
+
+    for (fi_id, nro_factura, id_marca) in facturas_nuevas:
+
+        # Leer detalles de FI con grades_json + fallback linea_snapshot
+        # OT-2026-019: Agregar fallbacks para tallas
+        # OT-2026-025: fid.pares debe contener el saldo correcto (lo facturado)
+        #              El problema estaría upstream si contiene cantidad_pares (total F9)
+        rows = conn.execute(sqlt("""
+            SELECT
+                ppd.linea, ppd.referencia,
+                ppd.id_material, ppd.id_color,
+                ppd.descp_material, ppd.descp_color,
+                ppd.grades_json,
+                fid.linea_snapshot,
+                fid.pares
+            FROM factura_interna_detalle fid
+            JOIN pedido_proveedor_detalle ppd ON ppd.id = fid.ppd_id
+            WHERE fid.factura_id = :fi_id
+        """), {"fi_id": fi_id}).fetchall()
+
+        items_tallas = []
+        for r in rows:
+            linea, ref, id_mat, id_col, mat, col, grades_json, linea_snapshot, pares = r
+
+            tallas = {}
+
+            # ══════════════════════════════════════════════════════════════
+            # INTENTO 1: Parsear grades_json (desde ppd)
+            # ══════════════════════════════════════════════════════════════
+            if grades_json:
+                try:
+                    grades = json.loads(grades_json) if isinstance(grades_json, str) else grades_json
+                    for talla_str, qty in (grades or {}).items():
+                        talla_num = int(talla_str)
+                        tallas[f"t{talla_num}"] = int(qty)
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    pass
+
+            # ══════════════════════════════════════════════════════════════
+            # INTENTO 2 (fallback): Parsear gradas_fmt desde linea_snapshot
+            # OT-2026-019: Agregar fallback para casos donde grades_json es null
+            # ══════════════════════════════════════════════════════════════
+            if not tallas and linea_snapshot:
+                try:
+                    try:
+                        snapshot = json.loads(linea_snapshot) if isinstance(linea_snapshot, str) else linea_snapshot
+                    except json.JSONDecodeError:
+                        import ast
+                        snapshot = ast.literal_eval(linea_snapshot) if isinstance(linea_snapshot, str) else linea_snapshot
+                    gradas_fmt = snapshot.get("gradas_fmt", "") if snapshot else ""
+
+                    # Parsear formato "17(1-1-2-2-2-1-1)25" → {t17:1, t18:1, t19:2, ...}
+                    if gradas_fmt and "(" in gradas_fmt and ")" in gradas_fmt:
+                        inicio_str, resto = gradas_fmt.split("(", 1)
+                        cantidades_str, fin_str = resto.split(")", 1)
+
+                        talla_inicio = int(inicio_str.strip())
+                        cantidades = [int(x.strip()) for x in cantidades_str.split("-") if x.strip()]
+
+                        for idx, qty in enumerate(cantidades):
+                            talla_num = talla_inicio + idx
+                            if qty > 0:
+                                tallas[f"t{talla_num}"] = qty
+                except (json.JSONDecodeError, ValueError, TypeError, AttributeError):
+                    pass
+
+            # ══════════════════════════════════════════════════════════════
+            # INTENTO 3 (último fallback): Distribuir pares uniformemente
+            # OT-2026-019: En lugar de fallar, distribuir en talla 37 (genérica)
+            # ══════════════════════════════════════════════════════════════
+            if not tallas and pares and pares > 0:
+                tallas["t37"] = int(pares)  # Talla genérica 37
+
+            # Si después de todos los intentos no hay tallas, skip este item
+            if not tallas:
+                continue
+
+            items_tallas.append({
+                "linea":       linea or "",
+                "referencia":  ref or "",
+                "id_material": int(id_mat or 0),
+                "id_color":    int(id_col or 0),
+                "material":    mat or "",
+                "color":       col or "",
+                "tallas":      tallas,
+            })
+
+        if not items_tallas:
+            continue  # Sin distribución de tallas válida, pasar a siguiente FI
+
+        trp_id = crear_traspaso_por_factura(conn, id_pp, id_marca, nro_factura, items_tallas)
+        conn.execute(sqlt("""
+            UPDATE traspaso SET compra_legal_id = :cl_id WHERE id = :trp_id
+        """), {"cl_id": cl_id, "trp_id": trp_id})
+        creados += 1
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # VINCULAR traspasos preexistentes de AMBAS tablas
+    # ═══════════════════════════════════════════════════════════════════════════
     conn.execute(sqlt("""
         UPDATE traspaso
         SET compra_legal_id = :cl_id
-        WHERE documento_ref IN (
-            SELECT DISTINCT vt.numero_factura_interna
-            FROM venta_transito vt
-            WHERE vt.pedido_proveedor_id = :id_pp
-        )
-        AND compra_legal_id IS NULL
+        WHERE compra_legal_id IS NULL
+          AND (
+              documento_ref IN (
+                  SELECT DISTINCT vt.numero_factura_interna
+                  FROM venta_transito vt
+                  WHERE vt.pedido_proveedor_id = :id_pp
+              )
+              OR documento_ref IN (
+                  SELECT fi.nro_factura
+                  FROM factura_interna fi
+                  WHERE fi.pp_id = :id_pp
+              )
+          )
     """), {"cl_id": cl_id, "id_pp": id_pp})
 
     return creados
@@ -502,6 +690,17 @@ def get_compra_header(id_cl: int) -> dict:
                      WHERE compra_legal_id = cl.id
                  )),
                 0
+            ) +
+            COALESCE(
+                (SELECT SUM(fid.pares)
+                 FROM factura_interna fi
+                 JOIN factura_interna_detalle fid ON fid.factura_id = fi.id
+                 WHERE fi.pp_id IN (
+                     SELECT pedido_proveedor_id FROM compra_legal_pedido
+                     WHERE compra_legal_id = cl.id
+                 )
+                 AND fi.estado IN ('CONFIRMADA', 'RESERVADA')),
+                0
             ) AS pares_facturados
         FROM compra_legal cl
         WHERE cl.id = :id_cl
@@ -560,8 +759,52 @@ def get_compra_hija_facturacion(id_cl: int) -> pd.DataFrame:
     Hija Facturación: ventas internas (FAC-INT) de los PPs de esta compra.
     Columnas: marca, factura, fecha, cliente, linea, referencia, material, color,
               grada, t33-t40, pares, traspaso_estado
+
+    MODIFICADO (OT-2026-011/OT-2026-015): Busca en factura_interna (RIMEC) y venta_transito (legacy).
     """
     return get_dataframe("""
+        -- Nueva tabla factura_interna (flujo RIMEC)
+        SELECT
+            COALESCE(fi.marca, '—')                     AS marca,
+            fi.nro_factura                              AS factura,
+            fi.created_at::date                         AS fecha,
+            COALESCE(cv.descp_cliente, fi.cliente_id::text) AS cliente,
+            (fid.linea_snapshot->>'linea_codigo')       AS linea,
+            (fid.linea_snapshot->>'ref_codigo')         AS referencia,
+            COALESCE(
+                (fid.linea_snapshot->>'material_nombre'),
+                ppd.descp_material,
+                '—'
+            )                                           AS material,
+            (fid.linea_snapshot->>'color_nombre')       AS color,
+            (fid.linea_snapshot->>'gradas_fmt')         AS grada,
+            0 AS t33, 0 AS t34, 0 AS t35, 0 AS t36,
+            0 AS t37, 0 AS t38, 0 AS t39, 0 AS t40,
+            SUM(fid.pares)                              AS pares,
+            COALESCE(
+                (SELECT t.estado FROM traspaso t
+                 WHERE t.documento_ref = fi.nro_factura
+                 LIMIT 1),
+                'SIN_TRASPASO'
+            )                                           AS traspaso_estado
+        FROM factura_interna fi
+        JOIN factura_interna_detalle fid ON fid.factura_id = fi.id
+        LEFT JOIN cliente_v2 cv ON cv.id_cliente = fi.cliente_id
+        LEFT JOIN pedido_proveedor_detalle ppd
+            ON ppd.pedido_proveedor_id = fi.pp_id
+            AND ppd.linea = (fid.linea_snapshot->>'linea_codigo')
+            AND ppd.referencia = (fid.linea_snapshot->>'ref_codigo')
+        WHERE fi.pp_id IN (
+            SELECT pedido_proveedor_id FROM compra_legal_pedido
+            WHERE compra_legal_id = :id_cl
+        )
+        AND fi.estado IN ('CONFIRMADA', 'RESERVADA')
+        GROUP BY fi.marca, fi.nro_factura, fi.created_at, cv.descp_cliente,
+                 fi.cliente_id, fid.linea_snapshot, ppd.descp_material
+
+        UNION ALL
+
+        -- Legacy tabla venta_transito
         SELECT
             COALESCE(mv.descp_marca, '—')               AS marca,
             vt.numero_factura_interna                   AS factura,
@@ -594,7 +837,8 @@ def get_compra_hija_facturacion(id_cl: int) -> pd.DataFrame:
         GROUP BY mv.descp_marca, vt.numero_factura_interna, vt.codigo_cliente,
                  cv.descp_cliente, ppd.linea, ppd.referencia,
                  ppd.descp_material, ppd.descp_color, ppd.grada
-        ORDER BY mv.descp_marca, vt.numero_factura_interna, ppd.linea
+
+        ORDER BY marca, factura, linea
     """, {"id_cl": id_cl})
 
 
@@ -665,9 +909,12 @@ def enviar_compra_a_web(id_cl: int) -> tuple[bool, str]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_traspasos(estado: str | None = None) -> pd.DataFrame:
-    """Lista de traspasos para el panel Bazar."""
-    where = "WHERE 1=1"
-    params: dict = {}
+    """Lista de traspasos para el panel Bazar.
+    OT-2026-029: Filtrar por almacen_destino_id=1 (ALM_WEB_01) para Compra Web.
+    """
+    where = "WHERE t.almacen_destino_id = :alm"
+    params: dict = {"alm": ALM_WEB_BAZAR}  # = 1
+
     if estado:
         where += " AND t.estado = :estado"
         params["estado"] = estado
@@ -691,7 +938,7 @@ def get_traspasos(estado: str | None = None) -> pd.DataFrame:
         LEFT JOIN compra_legal cl ON cl.id = t.compra_legal_id
         {where}
         ORDER BY t.fecha_traspaso DESC, t.id DESC
-    """, params or None)
+    """, params)
 
 
 def get_traspaso_detail(id_trp: int) -> dict:
@@ -720,17 +967,24 @@ def get_traspaso_detail(id_trp: int) -> dict:
 
 
 def get_traspaso_detalle_lines(id_trp: int) -> pd.DataFrame:
-    """Líneas resueltas vía combinacion_id."""
-    return get_dataframe("""
+    """
+    Líneas del traspaso con 5 pilares + talla + precio + caso.
+    OT-2026-021: Si traspaso_detalle está vacío, lee desde snapshot_json como fallback.
+    """
+    print(f"DEBUG get_traspaso_detalle_lines id_trp={id_trp}")
+
+    # Intentar leer líneas resueltas desde traspaso_detalle
+    df = get_dataframe("""
         SELECT
             td.id,
             td.combinacion_id,
-            l.codigo             AS linea,
-            r.codigo             AS referencia,
+            l.codigo_proveedor   AS linea,
+            r.codigo_proveedor   AS referencia,
             mat.descripcion      AS material,
             col.nombre           AS color,
-            tl.codigo            AS talla,
-            td.cantidad
+            tl.talla_etiqueta    AS talla,
+            td.cantidad,
+            COALESCE(pl.nombre_caso_aplicado, '—') AS caso_nombre
         FROM traspaso_detalle td
         JOIN combinacion c  ON c.id  = td.combinacion_id
         JOIN linea       l  ON l.id  = c.linea_id
@@ -738,9 +992,78 @@ def get_traspaso_detalle_lines(id_trp: int) -> pd.DataFrame:
         LEFT JOIN material   mat ON mat.id = c.material_id
         LEFT JOIN color      col ON col.id = c.color_id
         JOIN talla       tl ON tl.id = c.talla_id
+        LEFT JOIN traspaso t ON t.id = td.traspaso_id
+        LEFT JOIN factura_interna fi ON fi.nro_factura = t.documento_ref
+        LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
+        LEFT JOIN intencion_compra_pedido icp ON icp.pedido_proveedor_id = pp.id
+        LEFT JOIN precio_lista pl ON pl.evento_id = icp.precio_evento_id
+            AND pl.linea_codigo = l.codigo_proveedor::text
+            AND pl.referencia_codigo = r.codigo_proveedor::text
         WHERE td.traspaso_id = :id_trp
-        ORDER BY l.codigo, r.codigo, tl.codigo
+        ORDER BY l.codigo_proveedor, r.codigo_proveedor, tl.talla_etiqueta
     """, {"id_trp": id_trp})
+
+    print(f"DEBUG df.shape={df.shape} df.empty={df.empty}")
+
+    # OT-2026-021: FALLBACK - Si está vacío, leer desde snapshot_json
+    if df.empty:
+        snap_df = get_dataframe("""
+            SELECT
+                t.snapshot_json,
+                MAX(pl.nombre_caso_aplicado) AS caso_nombre
+            FROM traspaso t
+            LEFT JOIN factura_interna fi ON fi.nro_factura = t.documento_ref
+            LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
+            LEFT JOIN intencion_compra_pedido icp ON icp.pedido_proveedor_id = pp.id
+            LEFT JOIN precio_lista pl ON pl.evento_id = icp.precio_evento_id
+            WHERE t.id = :id_trp
+            GROUP BY t.id, t.snapshot_json
+        """, {"id_trp": id_trp})
+
+        if not snap_df.empty and snap_df["snapshot_json"].iloc[0]:
+            try:
+                import json
+                import ast
+                snapshot = snap_df["snapshot_json"].iloc[0]
+                if isinstance(snapshot, str):
+                    try:
+                        snapshot = json.loads(snapshot)
+                    except json.JSONDecodeError:
+                        snapshot = ast.literal_eval(snapshot)
+
+                caso_nombre = snap_df["caso_nombre"].iloc[0] or "—"
+                items = snapshot.get("items", [])
+
+                # Expandir tallas de cada item
+                rows = []
+                for item in items:
+                    linea = item.get("linea", "")
+                    ref = item.get("referencia", "")
+                    mat = item.get("material", "")
+                    col = item.get("color", "")
+                    tallas = item.get("tallas", {})
+
+                    for talla_key, qty in tallas.items():
+                        if qty > 0:
+                            talla_num = talla_key.replace("t", "")
+                            rows.append({
+                                "id": None,
+                                "combinacion_id": None,
+                                "linea": linea,
+                                "referencia": ref,
+                                "material": mat,
+                                "color": col,
+                                "talla": talla_num,
+                                "cantidad": qty,
+                                "caso_nombre": caso_nombre
+                            })
+
+                if rows:
+                    df = pd.DataFrame(rows)
+            except (json.JSONDecodeError, KeyError, AttributeError):
+                pass
+
+    return df
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -14,10 +14,13 @@ from modules.aprobacion_pedidos.logic import (
     get_pedidos_pendientes, get_pedidos_autorizados, get_pedidos_rechazados,
     rechazar_pedido, crear_preventa_desde_celula, get_linea_caso_map,
     get_preventa_de_celula, get_fi_detalles,
+    # Lectura de FIs ya creadas por el RPC 028
+    get_fis_de_pedido, get_fi_detalles_lite,
     # Flujo Reserva → Liberación
     get_fi_reservadas, get_fi_confirmadas, get_fi_anuladas,
     confirmar_fi, anular_fi,
 )
+from core.fi_card import render_fi_card
 
 
 def _parse_payload(raw) -> dict:
@@ -55,7 +58,16 @@ def _descuentos_label(p: dict) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def construir_celulas(lotes: list) -> list:
-    """Reagrupa items por PP+Marca+Caso (caso desde pilar linea_caso)."""
+    """Reagrupa items por PP+Marca+Caso. Soporta DOS formatos de payload:
+
+      · NUEVO (rimec-web post-fix A):  lote.facturas[].items[]
+        Cada factura ya viene con marca/caso → se respeta tal cual.
+
+      · VIEJO (pre-028):  lote.marcas[].items[]
+        Marca viene del nivel 2; caso se infiere desde el pilar `linea`.
+
+    Fallback solo se usa cuando un pedido no tiene FIs creadas (caso raro).
+    """
     pp_ids = list({int(l["pp_id"]) for l in lotes if l.get("pp_id")})
     linea_caso_map = get_linea_caso_map(pp_ids)
 
@@ -63,6 +75,27 @@ def construir_celulas(lotes: list) -> list:
     for lote in lotes:
         pp_id  = lote.get("pp_id")
         pp_nro = lote.get("pp_nro", str(pp_id))
+
+        # ── Formato NUEVO: lote.facturas[] ──────────────────────────────
+        facturas_block = lote.get("facturas")
+        if isinstance(facturas_block, list) and facturas_block:
+            for f in facturas_block:
+                marca = f.get("marca") or "SIN_MARCA"
+                caso  = f.get("caso")  or "SIN_CASO"
+                clave = f"{pp_id}|{marca}|{caso}"
+                if clave not in grupos:
+                    grupos[clave] = {
+                        "pp_id": pp_id, "pp_nro": pp_nro,
+                        "marca": marca, "caso": caso,
+                        "items": [], "total_pares": 0, "total_neto": 0,
+                    }
+                for item in f.get("items", []):
+                    grupos[clave]["items"].append(item)
+                    grupos[clave]["total_pares"] += item.get("pares", 0)
+                    grupos[clave]["total_neto"]  += item.get("subtotal", 0)
+            continue
+
+        # ── Formato VIEJO: lote.marcas[] ────────────────────────────────
         for marca_data in lote.get("marcas", []):
             marca = marca_data.get("marca", "SIN_MARCA")
             for item in marca_data.get("items", []):
@@ -71,13 +104,9 @@ def construir_celulas(lotes: list) -> list:
                 clave = f"{pp_id}|{marca}|{caso}"
                 if clave not in grupos:
                     grupos[clave] = {
-                        "pp_id":       pp_id,
-                        "pp_nro":      pp_nro,
-                        "marca":       marca,
-                        "caso":        caso,
-                        "items":       [],
-                        "total_pares": 0,
-                        "total_neto":  0,
+                        "pp_id": pp_id, "pp_nro": pp_nro,
+                        "marca": marca, "caso": caso,
+                        "items": [], "total_pares": 0, "total_neto": 0,
                     }
                 grupos[clave]["items"].append(item)
                 grupos[clave]["total_pares"] += item.get("pares", 0)
@@ -117,7 +146,88 @@ def rechazar_celula(pedido_id: int, celula: dict, motivo: str):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# RENDER DE UNA CÉLULA (dentro de un pedido pendiente)
+# RENDER DE UNA CÉLULA = UNA FI YA CREADA por el RPC 028 (camino limpio)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _confirmar_fi_action(fi: dict):
+    """Acción 'Confirmar' delegada por render_fi_card."""
+    fi_id = int(fi["id"])
+    ok, msg = confirmar_fi(fi_id)
+    if ok:
+        st.success(msg)
+        import time; time.sleep(0.5)
+        st.rerun()
+    else:
+        st.error(msg)
+
+
+def _anular_fi_action(fi: dict):
+    """Acción 'Anular' — abre el diálogo de motivo en session_state."""
+    fi_id = int(fi["id"])
+    st.session_state[f"anular_fi_{fi_id}"] = True
+    st.rerun()
+
+
+def _render_dialogo_anulacion(fi_id: int, key_suffix: str = ""):
+    """Diálogo modal-like para capturar el motivo de anulación."""
+    flag_key = f"anular_fi_{fi_id}"
+    if not st.session_state.get(flag_key):
+        return
+    motivo = st.text_input(
+        "Motivo de anulación",
+        key=f"motivo_anul_{fi_id}{key_suffix}",
+        placeholder="Ingresá el motivo…",
+    )
+    col_ok, col_cancel = st.columns([1, 3])
+    with col_ok:
+        if st.button("Confirmar anulación",
+                     key=f"anul_ok_{fi_id}{key_suffix}", type="primary"):
+            if not motivo.strip():
+                st.warning("Ingresá un motivo para anular.")
+            else:
+                ok, msg = anular_fi(fi_id, motivo)
+                if ok:
+                    st.session_state.pop(flag_key, None)
+                    st.success(msg)
+                    import time; time.sleep(0.5)
+                    st.rerun()
+                else:
+                    st.error(msg)
+    with col_cancel:
+        if st.button("Cancelar", key=f"anul_cancel_{fi_id}{key_suffix}"):
+            st.session_state.pop(flag_key, None)
+            st.rerun()
+
+
+_FI_ACTIONS_RESERVADA = [
+    {
+        "label": "✅ Confirmar", "key": "conf", "type": "primary",
+        "on_click": _confirmar_fi_action, "show_if": "RESERVADA",
+    },
+    {
+        "label": "❌ Anular", "key": "anul",
+        "on_click": _anular_fi_action,    "show_if": "RESERVADA",
+    },
+]
+
+
+def _render_celula_fi(pedido_id: int, fi: dict):
+    """Render canónico (core/fi_card) + acciones específicas del módulo Aprobación."""
+    fi_id = int(fi["id"])
+    detalles = get_fi_detalles_lite(fi_id)
+    render_fi_card(
+        fi,
+        detalles=detalles,
+        actions=_FI_ACTIONS_RESERVADA,
+        key_prefix=f"aprob_pvr_{pedido_id}",
+        mostrar_descuentos=False,
+    )
+    _render_dialogo_anulacion(fi_id, key_suffix=f"_pvr{pedido_id}")
+    st.markdown("---")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RENDER DE UNA CÉLULA (LEGADO: armada desde payload, pre-028)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _render_celula(pedido_id: int, celula: dict):
@@ -129,7 +239,7 @@ def _render_celula(pedido_id: int, celula: dict):
     )
 
     with st.container():
-        col_header, col_estado = st.columns([5, 1])
+        col_header, col_estado, col_confirm = st.columns([4, 1, 1])
         with col_header:
             st.markdown(
                 f"📦 **PP-{celula['pp_nro']}** · "
@@ -140,7 +250,21 @@ def _render_celula(pedido_id: int, celula: dict):
             )
         with col_estado:
             if preventa:
-                st.success(f"✅ {preventa['nro_factura']}")
+                estado = preventa.get('estado', 'RESERVADA')
+                if estado == 'CONFIRMADA':
+                    st.success(f"✅ {preventa['nro_factura']}")
+                elif estado == 'RESERVADA':
+                    st.warning(f"⏳ {preventa['nro_factura']}")
+        with col_confirm:
+            if preventa and preventa.get('estado') == 'RESERVADA':
+                if st.button("✅ Confirmar", key=f"conf_{key_safe}_{pedido_id}", type="primary"):
+                    ok, msg = confirmar_fi(preventa['id'])
+                    if ok:
+                        st.success(msg)
+                        import time; time.sleep(0.5)
+                        st.rerun()
+                    else:
+                        st.error(msg)
 
         # Detalle de items
         for item in celula["items"]:
@@ -213,18 +337,35 @@ def _render_tarjeta_pendiente(p: dict):
 
         st.divider()
         st.markdown("### Células de Aprobación")
-        st.caption("Cada célula se aprueba por separado. El pedido pasa a AUTORIZADO cuando todas estén aprobadas.")
+        st.caption(
+            "Cada célula = una factura interna (PP × Marca × Caso). "
+            "El pedido pasa a AUTORIZADO cuando todas las FIs estén CONFIRMADAS."
+        )
 
-        payload = _parse_payload(p.get("payload_json"))
-        lotes   = payload.get("lotes", [])
-        celulas = construir_celulas(lotes)
-
-        if not celulas:
-            st.warning("⚠️ No se encontraron ítems en este pedido.")
-            return
-
-        for celula in celulas:
-            _render_celula(p["id"], celula)
+        # ── Camino limpio: las FIs ya fueron creadas por el RPC 028 ─────
+        fis = get_fis_de_pedido(p["id"])
+        if fis:
+            for fi in fis:
+                _render_celula_fi(p["id"], fi)
+        else:
+            # ── Fallback: pedido viejo (pre-028) que no tiene FIs ──────
+            payload = _parse_payload(p.get("payload_json"))
+            lotes   = payload.get("lotes", [])
+            celulas = construir_celulas(lotes)
+            if not celulas:
+                st.warning(
+                    "⚠️ Este pedido no tiene facturas internas creadas y "
+                    "tampoco se pudieron armar células desde el payload. "
+                    "Revisar manualmente."
+                )
+                return
+            st.info(
+                "🔧 Modo legado: armando células desde payload_json "
+                "(este pedido es anterior al RPC 028).",
+                icon="ℹ️",
+            )
+            for celula in celulas:
+                _render_celula(p["id"], celula)
 
         # Rechazo total del pedido
         st.divider()
@@ -254,10 +395,11 @@ def _render_tarjeta_pendiente(p: dict):
 
 def render_aprobacion():
     st.markdown("## ✅ Aprobación de Pedidos RIMEC")
-    st.caption("Cada célula (PP+Marca+Caso) se aprueba individualmente. El pedido cierra cuando todas estén confirmadas.")
+    st.caption("Flujo: Aprobar célula → FI RESERVADA → Confirmar individualmente → FI CONFIRMADA")
 
-    tab_pend, tab_conf, tab_anul = st.tabs([
+    tab_pend, tab_res, tab_conf, tab_anul = st.tabs([
         "📋 Pendientes",
+        "⏳ Reservadas",
         "✅ Confirmadas",
         "❌ Anuladas",
     ])
@@ -272,84 +414,62 @@ def render_aprobacion():
             for p in pedidos:
                 _render_tarjeta_pendiente(p)
 
-    # ── Tab Confirmadas: FIs aprobadas con detalle completo ──────────────
+    # ── Tab Reservadas: FIs esperando confirmación (formato canónico) ────
+    with tab_res:
+        fis_reservadas = get_fi_reservadas()
+        if not fis_reservadas:
+            st.info("No hay facturas reservadas esperando confirmación.", icon="⏳")
+        else:
+            st.caption(f"{len(fis_reservadas)} factura(s) esperando confirmación individual")
+            st.markdown("---")
+            for fi in fis_reservadas:
+                fi_id = int(fi["id"])
+                detalles = get_fi_detalles_lite(fi_id)
+                render_fi_card(
+                    fi,
+                    detalles=detalles,
+                    actions=_FI_ACTIONS_RESERVADA,
+                    key_prefix="aprob_res",
+                    detalle_colapsado=True,
+                    mostrar_descuentos=True,
+                )
+                _render_dialogo_anulacion(fi_id, key_suffix="_res")
+                st.markdown("---")
+
+    # ── Tab Confirmadas: historial de FIs aprobadas (formato canónico) ───
     with tab_conf:
         fis = get_fi_confirmadas()
         if not fis:
             st.info("No hay facturas confirmadas aún.")
         else:
             st.caption(f"Últimas {len(fis)} facturas confirmadas")
+            st.markdown("---")
             for fi in fis:
-                nro = fi.get("nro_factura", "")
-                cli = fi.get("cliente_nombre", "—")
-                marca = fi.get("marca", "—")
-                caso = fi.get("caso", "—")
-                pares = fi.get("total_pares", 0)
-                monto = fi.get("total_monto", 0)
-                nro_pp = fi.get("nro_pp", "—")
-                vendedor = fi.get("vendedor_nombre", "—")
+                detalles = get_fi_detalles(int(fi["id"]))
+                render_fi_card(
+                    fi,
+                    detalles=detalles,
+                    key_prefix="aprob_conf",
+                    detalle_colapsado=True,
+                    mostrar_descuentos=True,
+                )
+                st.markdown("---")
 
-                with st.expander(
-                    f"✅ **{nro}** · {cli} · {marca} · {pares:,} pares · {_fmt_gs(monto)}",
-                    expanded=True,
-                ):
-                    # Cabecera
-                    c0, c1, c2, c3, c4 = st.columns([2, 1, 1, 1, 1])
-                    c0.markdown(f"### `{nro}`")
-                    c0.caption(f"PP {nro_pp} · Caso: {caso}")
-                    c1.metric("Cliente", cli)
-                    c2.metric("Marca", marca)
-                    c3.metric("Pares", f"{pares:,}")
-                    c4.metric("Monto", _fmt_gs(monto))
-                    st.caption(
-                        f"Vendedor: {vendedor} · "
-                        f"Descuentos: {_descuentos_label(fi)}"
-                    )
-
-                    # Productos con miniatura
-                    detalles = get_fi_detalles(fi["id"])
-                    if detalles:
-                        st.markdown("---")
-                        for det in detalles:
-                            snap = det.get("linea_snapshot", {})
-                            ci, cd, cn = st.columns([1, 4, 2])
-                            with ci:
-                                img = snap.get("imagen_url", "")
-                                if img:
-                                    try:
-                                        st.image(img, width=55)
-                                    except Exception:
-                                        st.write("📦")
-                                else:
-                                    st.write("📦")
-                            with cd:
-                                linea = snap.get("linea_codigo", "?")
-                                ref = snap.get("ref_codigo", "?")
-                                color = snap.get("color_nombre", "")
-                                st.markdown(
-                                    f"**L{linea} · R{ref}** "
-                                    f"<span style='color:#64748B;font-size:0.8em'>{color}</span>",
-                                    unsafe_allow_html=True,
-                                )
-                                gradas = snap.get("gradas_fmt", "")
-                                if gradas:
-                                    st.caption(gradas)
-                            with cn:
-                                st.write(f"{det.get('cajas', 0)} caj · {det.get('pares', 0)} p")
-                                st.caption(f"Neto: {_fmt_gs(det.get('precio_neto', 0))}")
-                                st.caption(f"Sub: {_fmt_gs(det.get('subtotal', 0))}")
-
-    # ── Tab Anuladas: Historial de FIs rechazadas ────────────────────────
+    # ── Tab Anuladas: historial de FIs rechazadas (formato canónico) ─────
     with tab_anul:
         fis = get_fi_anuladas()
         if not fis:
             st.info("No hay facturas anuladas.")
         else:
             st.caption(f"Últimas {len(fis)} facturas anuladas")
+            st.markdown("---")
             for fi in fis:
-                st.markdown(
-                    f"❌ **{fi.get('nro_factura','')}** · "
-                    f"{fi.get('cliente_nombre','—')} · "
-                    f"PP-{fi.get('nro_pp','—')} — "
-                    f"_{fi.get('notas','sin motivo')}_"
+                render_fi_card(
+                    fi,
+                    detalles=None,
+                    mostrar_detalle=False,
+                    key_prefix="aprob_anul",
                 )
+                if fi.get("notas"):
+                    st.caption(f"📝 Motivo: _{fi['notas']}_")
+                st.markdown("---")

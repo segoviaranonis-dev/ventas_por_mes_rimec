@@ -43,7 +43,7 @@ def _si(val) -> int | None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LOOKUP: código de línea → nombre de caso (desde pilar linea_caso)
+# LOOKUP: código de línea → nombre de caso (desde pilar `linea` + biblioteca)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def validar_saldo_pp(pp_id: int, pares_requeridos: int) -> tuple[bool, int]:
@@ -98,29 +98,29 @@ def get_saldo_detallado_pp(pp_id: int) -> dict:
 
 def get_linea_caso_map(pp_ids: list[int] | None = None) -> dict[str, str]:
     """
-    Retorna {codigo_proveedor_linea: caso_nombre} desde linea_caso.
+    Retorna {codigo_proveedor_linea: caso_nombre} desde la tabla `linea`
+    (fuente única de verdad) JOIN `caso_precio_biblioteca`.
     Si se pasan pp_ids, filtra por el proveedor de esos PPs.
     Sin pp_ids, devuelve el mapa completo (todos los proveedores).
     """
+    base = """
+        SELECT DISTINCT l.codigo_proveedor::text AS linea_cod,
+                        cpb.nombre_caso          AS caso_nombre
+        FROM linea l
+        JOIN caso_precio_biblioteca cpb ON cpb.id = l.caso_id
+        WHERE l.activo = true
+          AND l.caso_id IS NOT NULL
+    """
     if pp_ids:
-        df = get_dataframe("""
-            SELECT DISTINCT l.codigo_proveedor::text AS linea_cod, lc.caso_nombre
-            FROM linea_caso lc
-            JOIN linea l ON l.id = lc.linea_id
-            WHERE lc.proveedor_id IN (
-                SELECT DISTINCT pp.proveedor_importacion_id
-                FROM pedido_proveedor pp
-                WHERE pp.id = ANY(:ids)
-            )
-            AND lc.caso_nombre IS NOT NULL
+        df = get_dataframe(base + """
+              AND l.proveedor_id IN (
+                  SELECT DISTINCT pp.proveedor_importacion_id
+                  FROM pedido_proveedor pp
+                  WHERE pp.id = ANY(:ids)
+              )
         """, {"ids": pp_ids})
     else:
-        df = get_dataframe("""
-            SELECT DISTINCT l.codigo_proveedor::text AS linea_cod, lc.caso_nombre
-            FROM linea_caso lc
-            JOIN linea l ON l.id = lc.linea_id
-            WHERE lc.caso_nombre IS NOT NULL
-        """)
+        df = get_dataframe(base)
     if df is None or df.empty:
         return {}
     # Si hay duplicados (mismo código en varios proveedores), el primero gana
@@ -135,6 +135,67 @@ def get_linea_caso_map(pp_ids: list[int] | None = None) -> dict[str, str]:
 # ─────────────────────────────────────────────────────────────────────────────
 # QUERIES
 # ─────────────────────────────────────────────────────────────────────────────
+
+def get_fis_de_pedido(pedido_id: int) -> list[dict]:
+    """
+    Trae las facturas internas asociadas a un pedido_venta_rimec.
+
+    Estrategia híbrida:
+      1. Si `factura_interna.pedido_id` (FK formal, mig 029) está poblada → la usa.
+      2. Si no, cae a matching por timestamp (±10s) — para FIs creadas por el
+         RPC 028 antes de aplicar la 029, o para entornos pre-029.
+
+    Devuelve cada FI con sus totales y el numero_registro del PP origen.
+    """
+    df = get_dataframe("""
+        SELECT
+          fi.id, fi.nro_factura,
+          fi.pp_id, fi.pedido_id,
+          fi.marca, fi.marca_id, fi.caso, fi.caso_id,
+          fi.total_pares, fi.total_monto, fi.estado,
+          fi.created_at,
+          pp.numero_registro AS nro_pp
+        FROM public.factura_interna fi
+        LEFT JOIN public.pedido_proveedor pp ON pp.id = fi.pp_id
+        WHERE
+              fi.pedido_id = :pid
+           OR (
+                fi.pedido_id IS NULL
+                AND ABS(EXTRACT(EPOCH FROM (
+                  fi.created_at -
+                  (SELECT created_at FROM public.pedido_venta_rimec WHERE id = :pid)
+                ))) < 10
+              )
+        ORDER BY fi.pp_id, fi.marca, fi.caso
+    """, {"pid": pedido_id})
+    return df.to_dict("records") if df is not None and not df.empty else []
+
+
+def get_fi_detalles_lite(fi_id: int) -> list[dict]:
+    """Variante simplificada para mostrar items dentro de la tarjeta de pedido pendiente."""
+    df = get_dataframe("""
+        SELECT pares, cajas, precio_neto, subtotal, linea_snapshot
+        FROM public.factura_interna_detalle
+        WHERE factura_id = :fi
+        ORDER BY id
+    """, {"fi": fi_id})
+    if df is None or df.empty:
+        return []
+    rows = df.to_dict("records")
+    for r in rows:
+        snap = r.get("linea_snapshot")
+        if isinstance(snap, str):
+            try:
+                r["linea_snapshot"] = json.loads(snap)
+            except Exception:
+                try:
+                    r["linea_snapshot"] = ast.literal_eval(snap)
+                except Exception:
+                    r["linea_snapshot"] = {}
+        elif not isinstance(snap, dict):
+            r["linea_snapshot"] = {}
+    return rows
+
 
 def get_pedidos_pendientes() -> list[dict]:
     df = get_dataframe("""
@@ -268,7 +329,7 @@ def _generar_nros_pv_por_pp(grupos: dict) -> dict[str, str]:
 def get_preventa_de_celula(pp_id: int, marca: str, caso: str) -> dict | None:
     """Retorna la factura_interna de una célula si ya fue aprobada, o None."""
     df = get_dataframe("""
-        SELECT id, nro_factura, total_pares, total_monto
+        SELECT id, nro_factura, total_pares, total_monto, estado
         FROM factura_interna
         WHERE pp_id = :pp_id AND marca = :marca AND caso = :caso
         LIMIT 1
@@ -277,7 +338,8 @@ def get_preventa_de_celula(pp_id: int, marca: str, caso: str) -> dict | None:
         return None
     row = df.iloc[0]
     return {"id": row["id"], "nro_factura": row["nro_factura"],
-            "total_pares": row["total_pares"], "total_monto": row["total_monto"]}
+            "total_pares": row["total_pares"], "total_monto": row["total_monto"],
+            "estado": row["estado"]}
 
 
 def _cerrar_pedido_si_completo(pedido_id: int) -> bool:
@@ -361,7 +423,7 @@ def autorizar_pedido(pedido_id: int) -> tuple[bool, str, list[str]]:
                 payload = {}
     lotes = payload.get("lotes", [])
 
-    # Cargar mapa linea_codigo → caso_nombre desde pilar linea_caso
+    # Cargar mapa linea_codigo → caso_nombre desde pilar `linea` + caso_precio_biblioteca
     pp_ids_lotes = list({int(l["pp_id"]) for l in lotes if l.get("pp_id")})
     linea_caso_map = get_linea_caso_map(pp_ids_lotes)
 
@@ -473,6 +535,7 @@ def autorizar_pedido(pedido_id: int) -> tuple[bool, str, list[str]]:
                         "snap":  _safe_json({
                             "linea_codigo": item.get("linea_codigo"),
                             "ref_codigo":   item.get("ref_codigo"),
+                            "material_nombre": item.get("material_nombre") or item.get("descp_material") or item.get("material", ""),  # OT-2026-031: fallback
                             "color_nombre": item.get("color_nombre"),
                             "gradas_fmt":   item.get("gradas_fmt"),
                             "imagen_url":   item.get("imagen_url"),
@@ -617,7 +680,7 @@ def crear_preventa_desde_celula(pedido_id: int, celula: dict) -> tuple[bool, str
                     (:nro, :pp_id, :marca, :caso,
                      :cli, :vend, :plazo, :lista,
                      :d1, :d2, :d3, :d4,
-                     :tp, :tn, 'CONFIRMADA')
+                     :tp, :tn, 'RESERVADA')
                 RETURNING id
             """), {
                 "nro":   nro_pv,
@@ -656,6 +719,7 @@ def crear_preventa_desde_celula(pedido_id: int, celula: dict) -> tuple[bool, str
                     "snap":  _safe_json({
                         "linea_codigo": item.get("linea_codigo"),
                         "ref_codigo":   item.get("ref_codigo"),
+                        "material_nombre": item.get("material_nombre") or item.get("descp_material") or item.get("material", ""),  # OT-2026-031: fallback
                         "color_nombre": item.get("color_nombre"),
                         "gradas_fmt":   item.get("gradas_fmt"),
                         "imagen_url":   item.get("imagen_url"),
@@ -805,6 +869,7 @@ def get_fi_anuladas() -> list[dict]:
 def confirmar_fi(fi_id: int) -> tuple[bool, str]:
     """APROBAR: RESERVADA → CONFIRMADA.
     El descuento de stock ya fue hecho en el soft-discount al crear la FI."""
+    fi_id = int(fi_id)
     try:
         with engine.begin() as conn:
             result = conn.execute(sqlt("""
@@ -830,6 +895,7 @@ def confirmar_fi(fi_id: int) -> tuple[bool, str]:
 def anular_fi(fi_id: int, motivo: str = "") -> tuple[bool, str]:
     """RECHAZAR: RESERVADA → ANULADA + reversión automática de stock.
     Llama a revertir_stock_fi() en BD para restaurar pares_vendidos."""
+    fi_id = int(fi_id)
     try:
         with engine.begin() as conn:
             # Revertir stock primero

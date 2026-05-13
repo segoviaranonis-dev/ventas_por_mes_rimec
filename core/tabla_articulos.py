@@ -29,6 +29,8 @@ def render_tabla_5pilares(df, extra_izq: list[str] | None = None) -> None:
     rename_map = {
         "marca":      "Marca",
         "pedido":     "PP",
+        "fecha":      "Fecha",
+        "precio":     "Precio",
         "linea":      "Línea",
         "referencia": "Ref.",
         "material":   "Material",
@@ -41,6 +43,8 @@ def render_tabla_5pilares(df, extra_izq: list[str] | None = None) -> None:
     col_cfg = {
         "Marca":    st.column_config.TextColumn(width=100),
         "PP":       st.column_config.TextColumn(width=100),
+        "Fecha":    st.column_config.DateColumn(width=90),
+        "Precio":   st.column_config.NumberColumn(format="Gs. %,.0f", width=95),
         "Línea":    st.column_config.TextColumn(width=75),
         "Ref.":     st.column_config.TextColumn(width=75),
         "Material": st.column_config.TextColumn(width=130),

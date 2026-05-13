@@ -14,12 +14,15 @@
 #  Formato número de registro: IC-YYYY-XXXX  (ej: IC-2026-0001)
 # =============================================================================
 
+import logging
 import streamlit as st
 import pandas as pd
 from datetime import date
 from sqlalchemy import text
 from core.database import get_dataframe, commit_query, engine
 from core.auditoria import log_flujo, A
+
+_log = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -187,7 +190,7 @@ def _snap_ic(conn, ic_id: int) -> dict:
         "pares":           row.cantidad_total_pares,
         "monto_neto":      float(row.monto_neto) if row.monto_neto else None,
         "eta":             str(row.fecha_llegada) if row.fecha_llegada else None,
-        "evento_precio":   row.nombre_evento,
+        "evento_precio":   row.evento_precio,
         "nota_pedido":     row.nota_pedido,
     }
 
@@ -559,8 +562,17 @@ def save_intencion(data: dict) -> tuple[bool, str]:
             },
         )
         return True, numero
-    except Exception:
-        return False, "Error en INSERT. Verificar BD."
+    except Exception as e:
+        # Loggeo completo para que el operador vea la causa en consola/Streamlit
+        msg = f"INSERT intencion_compra falló: {type(e).__name__}: {e}"
+        _log.exception(msg)
+        try:
+            import streamlit as _st
+            _st.error(msg)
+            _st.expander("📋 Parámetros enviados").write(params)
+        except Exception:
+            pass
+        return False, f"Error en INSERT: {type(e).__name__}: {e}"[:280]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -581,42 +593,83 @@ _CASO_SQL_FILTER = {
 
 
 def get_lineas_con_caso(proveedor_id: int | None = None) -> pd.DataFrame:
-    """Lista de líneas con sus datos de linea_caso. Para pantalla admin y selectores."""
-    where = "WHERE l.activo = true"
+    """
+    Lista de lineas (Pilar 1) con sus 3 FKs canonicas:
+      - marca_id  (FK marca_v2)
+      - genero_id (FK genero)
+      - caso_id   (FK caso_precio_biblioteca)
+    + sus descripciones para visualizacion. Estilo/Tipo viven en linea_referencia.
+    """
+    where = ["l.activo = true"]
     params: dict = {}
     if proveedor_id:
-        where += " AND lc.proveedor_id = :pid"
+        where.append("l.proveedor_id = :pid")
         params["pid"] = proveedor_id
     return get_dataframe(f"""
         SELECT l.id, l.codigo_proveedor, l.descripcion,
-               lc.id AS linea_caso_id,
-               lc.marca, lc.caso_nombre,
-               lc.genero, lc.estilo,
-               lc.tipo_1, lc.tipo_2, lc.tipo_3, lc.tipo_4
+               l.marca_id,
+               COALESCE(mv.descp_marca, '')   AS marca,
+               l.genero_id,
+               COALESCE(g.descripcion, '')    AS descp_genero,
+               l.caso_id,
+               COALESCE(cpb.nombre_caso, '')  AS caso_nombre
         FROM linea l
-        JOIN linea_caso lc ON lc.linea_id = l.id
-        {where}
+        LEFT JOIN marca_v2 mv               ON mv.id_marca = l.marca_id
+        LEFT JOIN genero   g                ON g.id        = l.genero_id
+        LEFT JOIN caso_precio_biblioteca cpb ON cpb.id     = l.caso_id
+        WHERE {' AND '.join(where)}
         ORDER BY l.codigo_proveedor
     """, params or None)
 
 
-def update_linea_caso_detalle(linea_caso_id: int, genero: str | None, *args) -> bool:
-    """Actualiza género en linea_caso. (estilo/tipos viven en linea_referencia)"""
-    return commit_query(
-        "UPDATE linea_caso SET genero = :gen WHERE id = :id",
-        {"gen": genero or None, "id": linea_caso_id},
-    )
+def update_linea_clasificacion(linea_id: int, *,
+                                marca_id: int | None = None,
+                                genero_id: int | None = None,
+                                caso_id: int | None = None,
+                                _campos: set | None = None) -> bool:
+    """
+    Actualiza las 3 FKs canonicas de UNA linea (Pilar 1).
+    Solo escribe los campos pasados en `_campos` (set de nombres).
+    Si _campos es None, escribe todos los campos no-None.
+    """
+    permitidos = {"marca_id", "genero_id", "caso_id"}
+    valores = {"marca_id": marca_id, "genero_id": genero_id, "caso_id": caso_id}
+    if _campos is None:
+        _campos = {k for k, v in valores.items() if v is not None}
+    campos = _campos & permitidos
+    if not campos:
+        return False
+    sets = ", ".join(f"{c} = :{c}" for c in campos)
+    params = {c: valores[c] for c in campos}
+    params["id"] = linea_id
+    return commit_query(f"UPDATE linea SET {sets} WHERE id = :id", params)
+
+
+def update_linea_caso_detalle(linea_id: int, genero: str | None, *_args) -> bool:
+    """DEPRECATED. Wrapper compatible. Traduce genero (texto) a genero_id y delega."""
+    if genero is None or str(genero).strip() == "":
+        gid = None
+    else:
+        df = get_dataframe(
+            "SELECT id FROM genero WHERE descripcion = :g OR codigo = :g LIMIT 1",
+            {"g": str(genero).strip()},
+        )
+        gid = int(df["id"].iloc[0]) if df is not None and not df.empty else None
+    return update_linea_clasificacion(linea_id, genero_id=gid, _campos={"genero_id"})
 
 
 def get_caso_por_linea(linea_id: int) -> str | None:
-    """Retorna el caso_nombre canónico de una línea desde linea_caso, o None."""
+    """Retorna el nombre del caso asignado a la linea, o None."""
     df = get_dataframe(
-        "SELECT caso_nombre FROM linea_caso WHERE linea_id = :id AND activo = true",
-        {"id": linea_id}
+        """SELECT cpb.nombre_caso
+           FROM linea l
+           JOIN caso_precio_biblioteca cpb ON cpb.id = l.caso_id
+           WHERE l.id = :id AND l.activo = true""",
+        {"id": linea_id},
     )
     if df is None or df.empty:
         return None
-    v = df["caso_nombre"].iloc[0]
+    v = df["nombre_caso"].iloc[0]
     return str(v) if v and str(v) not in ("None", "nan", "") else None
 
 
@@ -658,58 +711,91 @@ def get_comisiones() -> pd.DataFrame:
 def get_lineas_filtradas(proveedor_id: int, marca: str | None = None,
                           caso: str | None = None, genero: str | None = None,
                           **_kwargs) -> pd.DataFrame:
-    """Lista de linea_caso con filtros opcionales. Para Admin Líneas."""
-    where = ["l.activo = true", "lc.proveedor_id = :pid"]
+    """
+    Lista de TODAS las lineas activas del proveedor con filtros opcionales.
+    Para Admin Lineas. Fuente unica: tabla linea.
+    """
+    where = ["l.activo = true", "l.proveedor_id = :pid"]
     params: dict = {"pid": proveedor_id}
 
     if marca and marca != "Todas":
-        where.append("lc.marca = :marca")
+        where.append("mv.descp_marca = :marca")
         params["marca"] = marca
-    if caso and caso != "Todos":
-        where.append("lc.caso_nombre = :caso")
+    if caso == "— Sin caso —":
+        where.append("l.caso_id IS NULL")
+    elif caso and caso != "Todos":
+        where.append("cpb.nombre_caso = :caso")
         params["caso"] = caso
     if genero == "— Vacío —":
-        where.append("lc.genero IS NULL")
+        where.append("l.genero_id IS NULL")
     elif genero and genero != "Todos":
-        where.append("lc.genero = :genero")
+        where.append("g.descripcion = :genero")
         params["genero"] = genero
 
     return get_dataframe(f"""
         SELECT l.id, l.codigo_proveedor, l.descripcion,
-               lc.id AS linea_caso_id,
-               lc.marca, lc.caso_nombre, lc.genero
+               l.marca_id,
+               COALESCE(mv.descp_marca, '')  AS marca,
+               l.genero_id,
+               COALESCE(g.descripcion, '')   AS descp_genero,
+               l.caso_id,
+               COALESCE(cpb.nombre_caso, '') AS caso_nombre
         FROM linea l
-        JOIN linea_caso lc ON lc.linea_id = l.id
+        LEFT JOIN marca_v2 mv                ON mv.id_marca = l.marca_id
+        LEFT JOIN genero   g                 ON g.id        = l.genero_id
+        LEFT JOIN caso_precio_biblioteca cpb ON cpb.id      = l.caso_id
         WHERE {' AND '.join(where)}
         ORDER BY l.codigo_proveedor
     """, params)
 
 
 def get_valores_filtro_lineas(proveedor_id: int, campo: str) -> list:
-    """Valores distintos no-nulos de un campo en linea_caso. Para dropdowns de filtro."""
-    _PERMITIDOS = {"marca", "caso_nombre", "genero"}
-    if campo not in _PERMITIDOS:
+    """
+    Valores distintos no-nulos de un campo conceptual desde la tabla linea.
+    Campos permitidos: 'marca', 'caso_nombre', 'descp_genero'.
+    """
+    _MAPA = {
+        "marca": "SELECT DISTINCT mv.descp_marca AS v FROM linea l "
+                 "JOIN marca_v2 mv ON mv.id_marca = l.marca_id "
+                 "WHERE l.proveedor_id = :pid AND l.activo = true "
+                 "AND mv.descp_marca IS NOT NULL ORDER BY v",
+        "caso_nombre": "SELECT DISTINCT cpb.nombre_caso AS v FROM linea l "
+                       "JOIN caso_precio_biblioteca cpb ON cpb.id = l.caso_id "
+                       "WHERE l.proveedor_id = :pid AND l.activo = true "
+                       "AND cpb.nombre_caso IS NOT NULL ORDER BY v",
+        "descp_genero": "SELECT DISTINCT g.descripcion AS v FROM linea l "
+                        "JOIN genero g ON g.id = l.genero_id "
+                        "WHERE l.proveedor_id = :pid AND l.activo = true "
+                        "AND g.descripcion IS NOT NULL ORDER BY v",
+    }
+    sql = _MAPA.get(campo)
+    if sql is None:
         return []
-    df = get_dataframe(
-        f"SELECT DISTINCT {campo} FROM linea_caso"
-        f" WHERE proveedor_id = :pid AND {campo} IS NOT NULL ORDER BY {campo}",
-        {"pid": proveedor_id}
-    )
-    return [] if df is None or df.empty else df[campo].tolist()
+    df = get_dataframe(sql, {"pid": proveedor_id})
+    return [] if df is None or df.empty else df["v"].tolist()
 
 
-def actualizar_lineas_por_lote(linea_caso_ids: list, campo: str,
-                                valor: str | None) -> tuple[bool, int]:
-    """Actualiza un campo en múltiples linea_caso. Retorna (ok, n_actualizadas)."""
-    _PERMITIDOS = {"genero"}
-    if campo not in _PERMITIDOS or not linea_caso_ids:
+def actualizar_lineas_por_lote(linea_ids: list, campo: str,
+                                valor) -> tuple[bool, int]:
+    """
+    Actualiza un campo escalar en multiples lineas (tabla linea).
+    Campos permitidos (todos FK numericas): marca_id, genero_id, caso_id.
+    """
+    _PERMITIDOS = {"marca_id", "genero_id", "caso_id"}
+    if campo not in _PERMITIDOS or not linea_ids:
         return False, 0
-    ids_str = ", ".join(str(int(i)) for i in linea_caso_ids)
+    ids_str = ", ".join(str(int(i)) for i in linea_ids)
+    val = None
+    if valor is not None and str(valor) != "":
+        try:
+            val = int(valor)
+        except (ValueError, TypeError):
+            return False, 0
     ok = commit_query(
-        f"UPDATE linea_caso SET {campo} = :val WHERE id IN ({ids_str})",
-        {"val": valor or None}
+        f"UPDATE linea SET {campo} = :val WHERE id IN ({ids_str})",
+        {"val": val},
     )
-    return ok, len(linea_caso_ids) if ok else 0
+    return ok, len(linea_ids) if ok else 0
 
 
 def guardar_negociacion_ic(ic_id: int, listado_precio_id: int | None,

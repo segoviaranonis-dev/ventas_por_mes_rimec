@@ -146,4 +146,9 @@ class AuthManager:
                 if key in st.session_state:
                     del st.session_state[key]
 
+            # Módulo Balance tiendas: índice de imágenes locales (solo sesión)
+            for key in list(st.session_state.keys()):
+                if isinstance(key, str) and key.startswith("retail_"):
+                    del st.session_state[key]
+
             st.rerun()
