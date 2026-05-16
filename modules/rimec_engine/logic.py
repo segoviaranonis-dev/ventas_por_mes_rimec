@@ -4,6 +4,7 @@ Motor de cálculo de precios. Lee Excel del proveedor, ejecuta fórmulas,
 persiste en Supabase. Sin lógica de UI.
 """
 
+import ast
 import math
 import zipfile
 from io import BytesIO
@@ -88,50 +89,23 @@ def leer_excel_proveedor(archivo_bytes, nombre_archivo: str) -> dict:
         for hoja in hojas:
             df_raw = xl.parse(hoja, header=None)
 
-            # Buscar fila de encabezado
-            header_row = None
-            for i, row in df_raw.iterrows():
-                row_str = " ".join(str(v).upper() for v in row if pd.notna(v))
-                if any(k in row_str for k in ["FOB", "PRECIO", "COSTO", "REFERENCIA", "REF"]):
-                    header_row = i
-                    break
-
-            if header_row is None:
-                razon = f"Hoja '{hoja}': No se encontró fila de encabezados (FOB, PRECIO, REFERENCIA)."
-                DBInspector.log(f"[ENGINE] {razon}", "AVISO")
-                razones.append(razon)
-                continue
-
-            df_raw.columns = df_raw.iloc[header_row]
-            df_raw = df_raw.iloc[header_row + 1:].reset_index(drop=True)
-            df_raw.columns = [str(c).strip().upper() for c in df_raw.columns]
-
-            col_map = _mapear_columnas(df_raw.columns.tolist())
-            if not col_map:
-                razon = f"Hoja '{hoja}': No se pudieron mapear las columnas obligatorias. Detectadas: {df_raw.columns.tolist()}"
-                DBInspector.log(f"[ENGINE] {razon}", "AVISO")
-                razones.append(razon)
-                continue
-            DBInspector.log(f"[ENGINE] Hoja '{hoja}' mapeada: {col_map}", "SUCCESS")
-
-            df_clean = pd.DataFrame({
-                "marca":        hoja,
-                "linea":        df_raw[col_map["linea"]].astype(str).str.strip() if col_map.get("linea") else "—",
-                "referencia":   df_raw[col_map["referencia"]].astype(str).str.strip(),
-                "material":     df_raw[col_map["material"]].astype(str).str.strip() if col_map.get("material") else "—",
-                "descripcion":  df_raw[col_map["descripcion"]].astype(str).str.strip() if col_map.get("descripcion") else "",
-                "fob_fabrica":  pd.to_numeric(df_raw[col_map["fob"]], errors="coerce"),
-            })
-            total_antes = len(df_clean)
-            df_clean = df_clean.dropna(subset=["fob_fabrica", "referencia"])
-            df_clean = df_clean[df_clean["fob_fabrica"] > 0]
-            df_clean = df_clean[df_clean["referencia"].str.len() > 0]
-            
-            if df_clean.empty:
-                razon = f"Hoja '{hoja}': Sin datos tras limpiar valores nulos o FOB=0 (de {total_antes} filas)."
-                razones.append(razon)
-            else:
+            # Layout Bacera (prioridad): A=línea B=ref C=mat D=desc E=FOB; F+ ignoradas
+            df_clean = _extraer_hoja_layout_bacera(df_raw, hoja)
+            if df_clean is not None and not df_clean.empty:
+                DBInspector.log(
+                    f"[ENGINE] Hoja '{hoja}' leída por posición A–E ({len(df_clean)} SKUs)",
+                    "SUCCESS",
+                )
                 frames.append(df_clean)
+                continue
+
+            # Fallback: encabezados por nombre (otros formatos de proveedor)
+            df_legacy, razon_legacy = _extraer_hoja_por_nombres(df_raw, hoja)
+            if df_legacy is not None and not df_legacy.empty:
+                DBInspector.log(f"[ENGINE] Hoja '{hoja}' leída por nombres de columna", "SUCCESS")
+                frames.append(df_legacy)
+            elif razon_legacy:
+                razones.append(razon_legacy)
 
         if not frames:
             mensaje_error = "No se encontraron hojas con datos válidos.\n\nDetalles:\n" + "\n".join(f"- {r}" for r in razones)
@@ -146,22 +120,128 @@ def leer_excel_proveedor(archivo_bytes, nombre_archivo: str) -> dict:
         return {"marcas": [], "skus": pd.DataFrame(), "error": str(e)}
 
 
+def _parse_fob(val) -> float | None:
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return None
+    s = str(val).strip().replace(",", ".")
+    if s in ("", "nan", "None", "-"):
+        return None
+    try:
+        n = float(s)
+        return n if n > 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _extraer_hoja_layout_bacera(df_raw: pd.DataFrame, marca: str) -> pd.DataFrame | None:
+    """
+    Formato Bacera / listado proveedor por POSICIÓN (nombres de columna irrelevantes):
+      A (0)=línea, B (1)=referencia, C (2)=código material, D (3)=descripción, E (4)=FOB USD.
+      Columna F en adelante se ignora.
+    """
+    if df_raw is None or df_raw.empty or df_raw.shape[1] < 5:
+        return None
+
+    sub = df_raw.iloc[:, :5].copy()
+    sub.columns = ["linea", "referencia", "material", "descripcion", "fob_fabrica"]
+
+    _skip_hdr = {
+        "STYLE", "REF", "REFERENCIA", "MATERIAL", "MATERIAL CODE", "MAT",
+        "UNIT", "USD", "FOB", "PRECIO", "LINEA", "LÍNEA", "DESCRIPCION", "DESCRIPCIÓN",
+    }
+    filas: list[dict] = []
+    for _, row in sub.iterrows():
+        fob = _parse_fob(row["fob_fabrica"])
+        if fob is None:
+            continue
+        ref = str(row["referencia"]).strip()
+        if not ref or ref.lower() in ("nan", "none", "—", "-"):
+            continue
+        if ref.upper() in _skip_hdr:
+            continue
+        lin = str(row["linea"]).strip()
+        if not lin or lin.lower() in ("nan", "none", "—", "-"):
+            continue
+        if lin.upper() in _skip_hdr:
+            continue
+        mat = str(row["material"]).strip()
+        if mat.lower() in ("nan", "none"):
+            mat = "—"
+        desc = str(row["descripcion"]).strip()
+        if desc.lower() in ("nan", "none"):
+            desc = ""
+        filas.append({
+            "marca":       marca,
+            "linea":       lin,
+            "referencia":  ref,
+            "material":    mat,
+            "descripcion": desc,
+            "fob_fabrica": fob,
+        })
+
+    if not filas:
+        return None
+    return pd.DataFrame(filas)
+
+
+def _extraer_hoja_por_nombres(df_raw: pd.DataFrame, hoja: str) -> tuple[pd.DataFrame | None, str | None]:
+    """Lectura legacy por fila de encabezados y nombres de columna."""
+    header_row = None
+    for i, row in df_raw.iterrows():
+        row_str = " ".join(str(v).upper() for v in row if pd.notna(v))
+        if any(k in row_str for k in ["FOB", "PRECIO", "COSTO", "REFERENCIA", "REF", "UNIT", "USD"]):
+            header_row = i
+            break
+
+    if header_row is None:
+        return None, f"Hoja '{hoja}': sin encabezados reconocibles ni datos en columnas A–E."
+
+    df = df_raw.iloc[header_row + 1:].copy()
+    df.columns = [str(c).strip().upper() for c in df_raw.iloc[header_row]]
+    df = df.reset_index(drop=True)
+
+    col_map = _mapear_columnas(df.columns.tolist())
+    if not col_map:
+        return None, (
+            f"Hoja '{hoja}': no se mapearon columnas por nombre. "
+            f"Detectadas: {df.columns.tolist()}. Se espera layout A–E."
+        )
+
+    df_clean = pd.DataFrame({
+        "marca":        hoja,
+        "linea":        df[col_map["linea"]].astype(str).str.strip() if col_map.get("linea") else "—",
+        "referencia":   df[col_map["referencia"]].astype(str).str.strip(),
+        "material":     df[col_map["material"]].astype(str).str.strip() if col_map.get("material") else "—",
+        "descripcion":  df[col_map["descripcion"]].astype(str).str.strip() if col_map.get("descripcion") else "",
+        "fob_fabrica":  pd.to_numeric(df[col_map["fob"]], errors="coerce"),
+    })
+    total_antes = len(df_clean)
+    df_clean = df_clean.dropna(subset=["fob_fabrica", "referencia"])
+    df_clean = df_clean[df_clean["fob_fabrica"] > 0]
+    df_clean = df_clean[df_clean["referencia"].str.len() > 0]
+
+    if df_clean.empty:
+        return None, f"Hoja '{hoja}': sin datos tras limpiar (de {total_antes} filas)."
+    return df_clean, None
+
+
 def _mapear_columnas(cols: list) -> dict:
     mapping = {}
     for c in cols:
         cu = c.upper().strip()
-        if any(k in cu for k in ["FOB", "PRECIO", "COSTO", "PRICE"]) and "fob" not in mapping:
+        if any(k in cu for k in ["FOB", "PRECIO", "COSTO", "PRICE", "UNIT", "USD"]) and "fob" not in mapping:
             mapping["fob"] = c
         if any(k in cu for k in ["REF", "MODELO", "ARTICULO", "ARTÍCULO", "SKU"]) and "referencia" not in mapping:
             mapping["referencia"] = c
-        if any(k in cu for k in ["LINEA", "LÍNEA", "LINHA", "LINE", "LIN.", "GRUPO", "GRP"]) and "linea" not in mapping:
+        if any(k in cu for k in ["STYLE", "LINEA", "LÍNEA", "LINHA", "LINE", "LIN.", "GRUPO", "GRP"]) and "linea" not in mapping:
             mapping["linea"] = c
-        # Descripción textual del material (ej. "DESC. CAB." → "NAPA TURIM")
         if any(k in cu for k in ["DESC"]) and "descripcion" not in mapping:
             mapping["descripcion"] = c
-        # Código numérico del material/cabedal (ej. "CAB." → 9569)
-        if any(k in cu for k in ["MATERIAL", "MATER", "MAT", "ACAB", "CABEDAL", "CAB.", "UPPER"]) and "material" not in mapping:
-            mapping["material"] = c
+        if any(k in cu for k in ["MATERIAL", "MATER", "MAT", "ACAB", "CABEDAL", "CAB.", "UPPER", "CODE"]) and "material" not in mapping:
+            if "CODE" in cu and "MATERIAL" not in cu and "material" in mapping:
+                continue
+            if "material" not in mapping:
+                mapping["material"] = c
     if "fob" not in mapping or "referencia" not in mapping:
         return {}
     return mapping
@@ -396,20 +476,200 @@ def get_lineas_por_evento(evento_id: int) -> dict:
     return result
 
 
-def guardar_lineas_excepcion(caso_id: int, linea_codigos: list, proveedor_id: int):
-    """Guarda excepciones por código de línea del proveedor."""
+def parse_marcas_array(marcas_raw) -> list[str]:
+    """Convierte marcas PostgreSQL / Python a lista limpia."""
+    if marcas_raw is None or (isinstance(marcas_raw, float) and pd.isna(marcas_raw)):
+        return []
+    if isinstance(marcas_raw, (list, tuple)):
+        return [str(m).strip() for m in marcas_raw if m]
+    if isinstance(marcas_raw, str):
+        s = marcas_raw.strip()
+        if s in ("", "None", "nan"):
+            return []
+        if s.startswith("["):
+            try:
+                parsed = ast.literal_eval(s)
+                return [str(m).strip() for m in parsed if m]
+            except Exception:
+                pass
+        return [m.strip().strip("'\"") for m in s.strip("{}").split(",") if m.strip()]
+    return []
+
+
+def parse_lineas_array(lineas_raw) -> list[str]:
+    """Convierte columna lineas de biblioteca a códigos proveedor (str enteros)."""
+    if lineas_raw is None or (isinstance(lineas_raw, float) and pd.isna(lineas_raw)):
+        return []
+    if isinstance(lineas_raw, (list, tuple)):
+        raw = lineas_raw
+    elif isinstance(lineas_raw, str):
+        s = lineas_raw.strip()
+        if s in ("", "None", "nan", "[]"):
+            return []
+        if s.startswith("["):
+            try:
+                raw = ast.literal_eval(s)
+            except Exception:
+                raw = [p.strip() for p in s.strip("{}").split(",") if p.strip()]
+        else:
+            raw = [p.strip() for p in s.split(",") if p.strip()]
+    else:
+        return []
+    out: list[str] = []
+    for c in raw:
+        try:
+            out.append(str(int(float(str(c).strip()))))
+        except (ValueError, TypeError):
+            continue
+    return out
+
+
+def normalizar_caso_evento(rec: dict) -> dict:
+    """Normaliza un caso de la matriz del listado (session / plantilla de evento)."""
+    lineas = parse_lineas_array(rec.get("lineas"))
+    marcas = parse_marcas_array(rec.get("marcas"))
+    if lineas:
+        alcance = "lineas"
+    elif marcas:
+        alcance = "marcas"
+    else:
+        at = str(rec.get("alcance_tipo") or "marcas").strip().lower()
+        alcance = "lineas" if at.startswith("line") else "marcas"
+
+    def _f(key: str, default: float | None = None):
+        v = rec.get(key)
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return default
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "nombre_caso":        str(rec.get("nombre_caso", "")).replace("*", "").strip(),
+        "dolar_politica":     _f("dolar_politica", 8000.0),
+        "factor_conversion":  _f("factor_conversion", 180.0),
+        "descuento_1":        _f("descuento_1"),
+        "descuento_2":        _f("descuento_2"),
+        "descuento_3":        _f("descuento_3"),
+        "descuento_4":        _f("descuento_4"),
+        "genera_lpc03_lpc04": bool(rec.get("genera_lpc03_lpc04", True)),
+        "regla_redondeo":     str(rec.get("regla_redondeo") or "centena"),
+        "marcas":             marcas if marcas else None,
+        "lineas":             lineas,
+        "referencias":        [],
+        "alcance_tipo":       alcance,
+    }
+
+
+def casos_evento_to_dataframe(casos: list[dict]) -> pd.DataFrame:
+    """DataFrame de casos del listado actual (misma forma que biblioteca para resolver)."""
+    if not casos:
+        return pd.DataFrame()
+    return pd.DataFrame([normalizar_caso_evento(c) for c in casos])
+
+
+def build_mapa_caso_desde_biblioteca(
+    df_bib: pd.DataFrame,
+) -> tuple[dict[str, str], dict[str, str], list[dict]]:
+    """
+    Mapas de alcance comercial desde plantillas de biblioteca (sin leer linea.caso_id).
+    Retorna (linea_codigo -> nombre_caso, MARCA_UPPER -> nombre_caso, conflictos_detalle).
+
+    Cada conflicto: {tipo, codigo, caso_a, caso_b, mensaje}.
+    """
+    linea_map: dict[str, str] = {}
+    marca_map: dict[str, str] = {}
+    conflictos: list[dict] = []
+    if df_bib is None or df_bib.empty:
+        return linea_map, marca_map, conflictos
+
+    def _add_conf(tipo: str, codigo: str, caso_a: str, caso_b: str) -> None:
+        conflictos.append({
+            "tipo":    tipo,
+            "codigo":  codigo,
+            "caso_a":  caso_a,
+            "caso_b":  caso_b,
+            "mensaje": f"{tipo} {codigo}: asignada a «{caso_a}» y «{caso_b}»",
+        })
+
+    for _, row in df_bib.iterrows():
+        nombre = str(row.get("nombre_caso", "")).replace("*", "").strip()
+        if not nombre:
+            continue
+        for cod in parse_lineas_array(row.get("lineas")):
+            prev = linea_map.get(cod)
+            if prev and prev != nombre:
+                _add_conf("Línea", cod, prev, nombre)
+            linea_map[cod] = nombre
+        for m in parse_marcas_array(row.get("marcas")):
+            key = m.strip().upper()
+            if not key:
+                continue
+            prev = marca_map.get(key)
+            if prev and prev != nombre:
+                _add_conf("Marca", m, prev, nombre)
+            marca_map[key] = nombre
+    return linea_map, marca_map, conflictos
+
+
+def _mapa_excepciones_evento(evento_id: int) -> dict[str, str]:
+    """linea_codigo -> nombre_caso desde precio_evento_linea_excepcion del evento."""
+    df = get_dataframe(
+        """SELECT l.codigo_proveedor::text AS linea, pec.nombre_caso
+           FROM precio_evento_linea_excepcion pele
+           JOIN linea l ON l.id = pele.linea_id
+           JOIN precio_evento_caso pec ON pec.id = pele.caso_id
+           WHERE pec.evento_id = :eid""",
+        {"eid": evento_id},
+    )
+    out: dict[str, str] = {}
+    if df is None or df.empty:
+        return out
+    for _, row in df.iterrows():
+        try:
+            cod = str(int(float(str(row["linea"]).strip())))
+        except (ValueError, TypeError):
+            continue
+        out[cod] = str(row["nombre_caso"]).replace("*", "").strip()
+    return out
+
+
+def guardar_lineas_excepcion(caso_id: int, linea_codigos: list, proveedor_id: int) -> int:
+    """Inserta excepciones línea→caso del evento (sin duplicar filas existentes)."""
+    n = 0
     for cod in linea_codigos:
         try:
             cod_int = int(cod)
         except (ValueError, TypeError):
             continue
-        commit_query(
+        ok = commit_query(
             """INSERT INTO precio_evento_linea_excepcion (caso_id, linea_id)
                SELECT :cid, id FROM linea
-               WHERE proveedor_id = :pid AND codigo_proveedor = :cod LIMIT 1""",
+               WHERE proveedor_id = :pid AND codigo_proveedor = :cod
+                 AND NOT EXISTS (
+                     SELECT 1 FROM precio_evento_linea_excepcion x
+                     WHERE x.caso_id = :cid AND x.linea_id = linea.id
+                 )
+               LIMIT 1""",
             {"cid": caso_id, "pid": proveedor_id, "cod": cod_int},
-            show_error=False
+            show_error=False,
         )
+        if ok:
+            n += 1
+    return n
+
+
+def reemplazar_lineas_excepcion(
+    caso_id: int, linea_codigos: list, proveedor_id: int
+) -> int:
+    """Reemplaza el alcance por líneas de un caso dentro del evento."""
+    commit_query(
+        "DELETE FROM precio_evento_linea_excepcion WHERE caso_id = :cid",
+        {"cid": caso_id},
+        show_error=False,
+    )
+    return guardar_lineas_excepcion(caso_id, linea_codigos, proveedor_id)
 
 
 def _cargar_lookups_maestros(proveedor_id: int, conn) -> tuple[dict, dict, dict]:
@@ -516,62 +776,13 @@ def avanzar_estado_evento(evento_id: int, estado: str):
 
 def generar_maestro_lineas_desde_evento(evento_id: int):
     """
-    Al cerrar un evento, actualiza linea.caso_id para las lineas que aparecieron
-    en el evento. El "caso conceptual" se busca en caso_precio_biblioteca por
-    (proveedor_id, nombre_caso). Si no hay match en biblioteca, se omite la
-    actualizacion para esa linea (no se inventa un caso).
-
-    Tabla linea es la unica fuente de verdad - ya no se usa linea_caso.
+    DEPRECATED (arquitectura 2026-05): el caso comercial no se escribe en linea.caso_id.
+    La trazabilidad vive en precio_evento + precio_evento_linea_excepcion + precio_lista.
     """
-    if _evento_esta_cerrado(evento_id):
-        DBInspector.log(
-            f"[ENGINE] generar_maestro bloqueado - evento {evento_id} ya CERRADO",
-            "WARNING",
-        )
-        return
-    df = get_dataframe("""
-        SELECT DISTINCT
-            l.id           AS linea_id,
-            l.proveedor_id,
-            pec.nombre_caso
-        FROM precio_lista pl
-        JOIN precio_evento_caso pec ON pec.id = pl.caso_id
-        JOIN linea l ON l.id = pl.linea_id
-        WHERE pl.evento_id = :eid
-          AND pl.linea_id IS NOT NULL
-    """, {"eid": evento_id})
-
-    if df is None or df.empty:
-        DBInspector.log(f"[ENGINE] generar_maestro_lineas: sin datos para evento {evento_id}", "AVISO")
-        return
-
-    df_dedup = df.drop_duplicates(subset=["linea_id"])
-
-    ok_count = 0
-    skipped = 0
-    for _, row in df_dedup.iterrows():
-        ok = commit_query("""
-            UPDATE linea
-            SET caso_id = cpb.id
-            FROM caso_precio_biblioteca cpb
-            WHERE linea.id = :lid
-              AND cpb.proveedor_id = :pid
-              AND cpb.nombre_caso  = :caso
-              AND cpb.activo = true
-        """, {
-            "lid":  int(row["linea_id"]),
-            "pid":  int(row["proveedor_id"]),
-            "caso": str(row["nombre_caso"]).strip(),
-        })
-        if ok:
-            ok_count += 1
-        else:
-            skipped += 1
-
     DBInspector.log(
-        f"[ENGINE] linea.caso_id actualizado: {ok_count}/{len(df_dedup)} lineas "
-        f"({skipped} sin match en biblioteca)",
-        "SUCCESS",
+        f"[ENGINE] generar_maestro_lineas omitido (caso desacoplado del pilar) "
+        f"evento={evento_id}",
+        "INFO",
     )
 
 
@@ -598,8 +809,6 @@ def cerrar_evento_y_activar(evento_id: int, fecha_hasta: str):
         "UPDATE precio_evento SET estado = 'cerrado' WHERE id = :eid",
         {"eid": evento_id}
     )
-    # Generar maestro de líneas automáticamente al cerrar
-    generar_maestro_lineas_desde_evento(evento_id)
 
 
 def registrar_auditoria(evento_id: int, tabla: str, campo: str,
@@ -673,76 +882,76 @@ def get_preview_skus(skus_caso: pd.DataFrame, caso: dict, n: int = 5) -> pd.Data
     return pd.DataFrame(resultados)
 
 
-def resolver_casos_skus(skus_df: pd.DataFrame, proveedor_id: int, df_bib: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
+def resolver_casos_skus(
+    skus_df: pd.DataFrame,
+    proveedor_id: int,
+    df_bib: pd.DataFrame,
+    evento_id: int | None = None,
+) -> tuple[pd.DataFrame, bool, list[dict]]:
     """
-    Cruza el DataFrame de SKUs con la asignacion linea.caso_id -> caso_precio_biblioteca.
-    Retorna el DataFrame enriquecido con 'caso_asignado' y 'estado_validacion',
-    y un booleano indicando si esta listo para calcular (sin errores).
+    Asigna caso por SKU usando alcance de biblioteca (líneas / marcas) y, si existe,
+    excepciones del evento (precio_evento_linea_excepcion). No lee linea.caso_id.
+
+    Retorna (df enriquecido, listo_para_calcular, conflictos_detalle).
     """
-    nombres_bib = set(df_bib["nombre_caso"].tolist()) if not df_bib.empty else set()
+    _ = proveedor_id  # reservado para validaciones futuras por proveedor
+    nombres_bib = {
+        str(n).replace("*", "").strip()
+        for n in df_bib["nombre_caso"].tolist()
+    } if not df_bib.empty else set()
 
-    # Mapeo: codigo_linea -> nombre_caso (desde linea.caso_id)
-    df_maestro = get_dataframe("""
-        SELECT l.codigo_proveedor::text AS linea, cpb.nombre_caso AS caso_nombre
-        FROM linea l
-        JOIN caso_precio_biblioteca cpb ON cpb.id = l.caso_id
-        WHERE l.proveedor_id = :pid AND l.activo = true
-          AND cpb.nombre_caso IS NOT NULL
-    """, {"pid": proveedor_id})
-    
-    maestro_map = {}
-    if df_maestro is not None and not df_maestro.empty:
-        maestro_map = dict(zip(df_maestro["linea"], df_maestro["caso_nombre"]))
+    linea_map, marca_map, conflictos = build_mapa_caso_desde_biblioteca(df_bib)
+    if evento_id:
+        linea_map.update(_mapa_excepciones_evento(evento_id))
 
-    casos_asignados = []
-    estados = []
-    hay_error = False
+    casos_asignados: list[str] = []
+    estados: list[str] = []
+    hay_error = bool(conflictos)
 
     for _, row in skus_df.iterrows():
         try:
             linea_val = str(int(float(str(row.get("linea", 0)).strip() or 0)))
         except (ValueError, TypeError):
             linea_val = ""
-            
+
         marca = str(row.get("marca", "")).strip().upper()
-        
+
         if not linea_val or linea_val == "0":
             casos_asignados.append("—")
             estados.append("❌ ERROR (Sin Línea)")
             hay_error = True
             continue
 
-        caso_maestro = maestro_map.get(linea_val)
-        
-        if caso_maestro:
-            if caso_maestro in nombres_bib:
-                casos_asignados.append(caso_maestro)
-                estados.append("✅ OK")
-            else:
-                casos_asignados.append(caso_maestro)
-                estados.append(f"❌ ERROR (Falta '{caso_maestro}' en Biblioteca)")
-                hay_error = True
-        else:
-            # Fallback
-            if marca in ["BR SPORT", "ACTVITTA"]:
-                fallback = "NORMAL BR-S ACT"
-            else:
-                fallback = "NORMAL BR-VZ-ML-MD-MKA/O"
-                
-            if fallback in nombres_bib:
-                casos_asignados.append(fallback)
-                estados.append("⚠️ NUEVA (Usando Default)")
-            else:
-                casos_asignados.append(fallback)
-                estados.append(f"❌ ERROR (Falta fallback '{fallback}' en Biblioteca)")
-                hay_error = True
+        caso = linea_map.get(linea_val) or marca_map.get(marca)
 
-    # Para evitar warnings de copias encadenadas
+        if caso:
+            if caso in nombres_bib:
+                origen = "línea" if linea_val in linea_map else "marca"
+                casos_asignados.append(caso)
+                estados.append(f"✅ OK ({origen})")
+            else:
+                casos_asignados.append(caso)
+                estados.append(f"❌ ERROR (Falta '{caso}' en matriz del listado)")
+                hay_error = True
+            continue
+
+        if marca in ["BR SPORT", "ACTVITTA"]:
+            fallback = "NORMAL BR-S ACT"
+        else:
+            fallback = "NORMAL BR-VZ-ML-MD-MKA/O"
+
+        if fallback in nombres_bib:
+            casos_asignados.append(fallback)
+            estados.append("⚠️ DEFAULT (sin alcance en biblioteca)")
+        else:
+            casos_asignados.append(fallback)
+            estados.append(f"❌ ERROR (Falta fallback '{fallback}' en matriz)")
+            hay_error = True
+
     skus_df = skus_df.copy()
     skus_df["caso_asignado"] = casos_asignados
     skus_df["estado_validacion"] = estados
-    
-    return skus_df, not hay_error
+    return skus_df, not hay_error, conflictos
 
 
 def contar_skus_procesados(evento_id: int) -> int:
@@ -871,26 +1080,44 @@ def save_caso_biblioteca(proveedor_id: int, caso: dict) -> bool:
 # ELIMINACIÓN DE EVENTOS (solo no-cerrados y no-en_uso)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def eliminar_evento(evento_id: int) -> bool:
-    """Elimina evento y sus datos. Rechaza eventos cerrados o en uso por otros módulos."""
+def eliminar_evento(evento_id: int) -> tuple[bool, str]:
+    """
+    Elimina un listado de precios (evento) y todo lo calculado.
+    Desvincula IC/ICP automáticamente. Pilares intactos.
+    Retorna (ok, mensaje para UI).
+    """
     try:
-        # Verificar que no sea cerrado
         with engine.connect() as conn:
             row = conn.execute(
-                text("SELECT estado FROM precio_evento WHERE id = :eid"),
-                {"eid": evento_id}
+                text("SELECT id, nombre_evento, estado FROM precio_evento WHERE id = :eid"),
+                {"eid": evento_id},
             ).fetchone()
-        if not row or row[0] == "cerrado":
-            DBInspector.log(f"[ENGINE] Intento de eliminar evento cerrado {evento_id} — rechazado", "AVISO")
-            return False
+        if not row:
+            return False, "El listado no existe o ya fue eliminado."
 
-        # Verificar que no esté en uso por módulos internos
+        nombre = str(row[1])
+
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE intencion_compra SET precio_evento_id = NULL "
+                    "WHERE precio_evento_id = :eid"
+                ),
+                {"eid": evento_id},
+            )
+            conn.execute(
+                text(
+                    "UPDATE intencion_compra_pedido SET precio_evento_id = NULL "
+                    "WHERE precio_evento_id = :eid"
+                ),
+                {"eid": evento_id},
+            )
+
         uso = evento_esta_en_uso(evento_id)
         if uso["en_uso"]:
-            DBInspector.log(f"[ENGINE] Evento {evento_id} en uso — rechazado: {uso['detalle']}", "AVISO")
-            return False
+            det = "; ".join(uso["modulos"])
+            return False, f"No se puede eliminar: sigue referenciado. {det}"
 
-        # Borrar en orden (hijos antes que padres)
         with engine.begin() as conn:
             conn.execute(text("DELETE FROM precio_auditoria WHERE evento_id = :eid"), {"eid": evento_id})
             conn.execute(text(
@@ -901,11 +1128,11 @@ def eliminar_evento(evento_id: int) -> bool:
             conn.execute(text("DELETE FROM precio_evento_caso WHERE evento_id = :eid"), {"eid": evento_id})
             conn.execute(text("DELETE FROM precio_evento WHERE id = :eid"), {"eid": evento_id})
 
-        DBInspector.log(f"[ENGINE] Evento {evento_id} eliminado", "SUCCESS")
-        return True
+        DBInspector.log(f"[ENGINE] Listado {evento_id} ({nombre}) eliminado", "SUCCESS")
+        return True, f"Listado «{nombre}» eliminado. Podés cargar uno nuevo desde Nuevo Evento."
     except Exception as e:
         DBInspector.log(f"[ENGINE] Error eliminando evento {evento_id}: {e}", "ERROR")
-        return False
+        return False, str(e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1064,20 +1291,23 @@ def get_lineas_proveedor(proveedor_id: int) -> list[tuple[str, int]]:
     return [(str(row["codigo_proveedor"]), int(row["id"])) for _, row in df.iterrows()]
 
 
+def actualizar_lineas_en_biblioteca(caso_id: int, codigos_proveedor: list[str]) -> tuple[bool, int]:
+    """Persiste alcance por línea en caso_precio_biblioteca.lineas (no toca linea.caso_id)."""
+    codigos = parse_lineas_array(codigos_proveedor)
+    ok = commit_query(
+        "UPDATE caso_precio_biblioteca SET lineas = :lineas WHERE id = :id",
+        {"lineas": codigos, "id": caso_id},
+    )
+    return ok, len(codigos)
+
+
 def sincronizar_lineas_caso(proveedor_id: int, caso_nombre: str, codigos_proveedor: list[str]) -> tuple[bool, int]:
-    """
-    Sincroniza que lineas (codigos_proveedor) estan asignadas al caso `caso_nombre`
-    de la biblioteca del proveedor. Funciona en dos pasos atomicos:
-      1) Des-asigna (caso_id -> NULL) las lineas del proveedor que hoy tienen ese caso
-         pero NO estan en la lista nueva.
-      2) Asigna ese caso a las lineas de la lista nueva (UPDATE linea.caso_id).
-    """
+    """Actualiza plantilla biblioteca.lineas; el caso operativo vive en el evento de precios."""
     from core.database import engine
     from sqlalchemy import text
 
     if not caso_nombre.strip():
         return False, 0
-
     try:
         with engine.begin() as conn:
             row = conn.execute(
@@ -1086,48 +1316,13 @@ def sincronizar_lineas_caso(proveedor_id: int, caso_nombre: str, codigos_proveed
                        LIMIT 1"""),
                 {"pid": proveedor_id, "cn": caso_nombre.strip()},
             ).fetchone()
-            if not row:
-                DBInspector.log(
-                    f"[ENGINE] sincronizar_lineas_caso: caso '{caso_nombre}' no existe "
-                    f"en biblioteca del proveedor {proveedor_id}",
-                    "WARNING",
-                )
-                return False, 0
-            caso_id = int(row[0])
-
-            codigos_int = []
-            for cod in codigos_proveedor:
-                try:
-                    codigos_int.append(int(cod))
-                except (ValueError, TypeError):
-                    continue
-
-            if codigos_int:
-                conn.execute(
-                    text("""UPDATE linea SET caso_id = NULL
-                            WHERE proveedor_id = :pid
-                              AND caso_id = :cid
-                              AND codigo_proveedor::bigint <> ALL(:codigos)"""),
-                    {"pid": proveedor_id, "cid": caso_id, "codigos": codigos_int},
-                )
-            else:
-                conn.execute(
-                    text("""UPDATE linea SET caso_id = NULL
-                            WHERE proveedor_id = :pid AND caso_id = :cid"""),
-                    {"pid": proveedor_id, "cid": caso_id},
-                )
-
-            n_actualizadas = 0
-            if codigos_int:
-                result = conn.execute(
-                    text("""UPDATE linea SET caso_id = :cid
-                            WHERE proveedor_id = :pid
-                              AND codigo_proveedor::bigint = ANY(:codigos)"""),
-                    {"pid": proveedor_id, "cid": caso_id, "codigos": codigos_int},
-                )
-                n_actualizadas = result.rowcount
-
-            return True, n_actualizadas
+        if not row:
+            DBInspector.log(
+                f"[ENGINE] sincronizar_lineas_caso: caso '{caso_nombre}' no en biblioteca",
+                "WARNING",
+            )
+            return False, 0
+        return actualizar_lineas_en_biblioteca(int(row[0]), codigos_proveedor)
     except Exception as e:
         DBInspector.log(f"[ENGINE] sincronizar_lineas_caso error: {e}", "ERROR")
         return False, 0
@@ -1145,41 +1340,20 @@ def actualizar_lineas_por_rango(
     genero: str | None,
 ) -> tuple[bool, int]:
     """
-    UPDATE linea (tabla pilar) para todas las lineas del proveedor cuyo
-    codigo_proveedor este en el rango [cod_desde, cod_hasta] (ambos inclusive).
-
-      - caso_nombre: nombre del caso en caso_precio_biblioteca -> linea.caso_id
-      - genero: descripcion del genero en tabla genero -> linea.genero_id
-
-    None = no tocar ese campo. Retorna (ok, n_filas_afectadas).
+    UPDATE linea (pilar) por rango de codigo_proveedor.
+    Solo permite genero_id; caso_nombre se ignora (caso = por evento de precios).
     """
-    if not caso_nombre and genero is None:
+    if caso_nombre:
+        DBInspector.log(
+            "[ENGINE] actualizar_lineas_por_rango: caso_nombre ignorado "
+            "(alcance comercial en precio_evento, no en linea)",
+            "WARNING",
+        )
+    if genero is None:
         return False, 0
 
     sets = []
     params: dict = {"pid": proveedor_id, "desde": cod_desde, "hasta": cod_hasta}
-
-    if caso_nombre:
-        try:
-            with engine.begin() as conn:
-                row = conn.execute(
-                    text("""SELECT id FROM caso_precio_biblioteca
-                            WHERE proveedor_id = :pid AND nombre_caso = :cn AND activo = true
-                            LIMIT 1"""),
-                    {"pid": proveedor_id, "cn": caso_nombre.strip()},
-                ).fetchone()
-            if not row:
-                DBInspector.log(
-                    f"[ENGINE] actualizar_lineas_por_rango: caso '{caso_nombre}' no "
-                    f"encontrado en biblioteca del proveedor {proveedor_id}",
-                    "WARNING",
-                )
-                return False, 0
-            sets.append("caso_id = :caso_id")
-            params["caso_id"] = int(row[0])
-        except Exception as e:
-            DBInspector.log(f"[ENGINE] resolver caso_id error: {e}", "ERROR")
-            return False, 0
 
     if genero is not None:
         g = (genero or "").strip()
@@ -1221,27 +1395,66 @@ def actualizar_lineas_por_rango(
 
 def purgar_todas_las_listas() -> tuple[bool, dict]:
     """
-    Elimina TODOS los eventos de precio, sus casos y su precio_lista.
-    Preserva intactos: linea (con su caso_id), referencia, material, color, linea_referencia.
-    Retorna (ok, {"eventos": n, "casos": n, "skus": n}).
-    """
+    Elimina TODOS los eventos de precio y reinicia contadores (RESTART IDENTITY).
+    Desvincula intencion_compra / intencion_compra_pedido antes de borrar (FK).
+    Conserva: pilares, listado_precio (catálogo LPN/LPC). Vacía caso_precio_biblioteca (legacy).
+  """
     try:
         with engine.begin() as conn:
             n_skus    = conn.execute(text("SELECT COUNT(*) FROM precio_lista")).fetchone()[0]
             n_casos   = conn.execute(text("SELECT COUNT(*) FROM precio_evento_caso")).fetchone()[0]
             n_eventos = conn.execute(text("SELECT COUNT(*) FROM precio_evento")).fetchone()[0]
+            n_bib     = conn.execute(
+                text("SELECT COUNT(*) FROM caso_precio_biblioteca")
+            ).fetchone()[0]
 
-            conn.execute(text("DELETE FROM precio_auditoria"))
-            conn.execute(text("DELETE FROM precio_evento_linea_excepcion"))
-            conn.execute(text("DELETE FROM precio_lista"))
-            conn.execute(text("DELETE FROM precio_evento_caso"))
-            conn.execute(text("DELETE FROM precio_evento"))
+            conn.execute(text(
+                "UPDATE intencion_compra SET precio_evento_id = NULL "
+                "WHERE precio_evento_id IS NOT NULL"
+            ))
+            conn.execute(text(
+                "UPDATE intencion_compra_pedido SET precio_evento_id = NULL "
+                "WHERE precio_evento_id IS NOT NULL"
+            ))
+
+            for tbl in (
+                "precio_auditoria",
+                "precio_evento_linea_excepcion",
+                "precio_lista",
+                "precio_evento_caso",
+                "precio_evento",
+            ):
+                reg = conn.execute(
+                    text("SELECT to_regclass(:r)"), {"r": f"public.{tbl}"}
+                ).scalar()
+                if reg:
+                    conn.execute(text(f"TRUNCATE TABLE public.{tbl} RESTART IDENTITY CASCADE"))
+
+            # NUNCA TRUNCATE CASCADE en biblioteca: linea.caso_id → caso_precio_biblioteca
+            # y PostgreSQL borraría linea, referencia, linea_referencia en cascada.
+            reg_bib = conn.execute(
+                text("SELECT to_regclass('public.caso_precio_biblioteca')")
+            ).scalar()
+            if reg_bib:
+                conn.execute(text("DELETE FROM public.caso_precio_biblioteca"))
+                conn.execute(
+                    text(
+                        "SELECT setval(pg_get_serial_sequence("
+                        "'public.caso_precio_biblioteca', 'id'), 1, false)"
+                    )
+                )
 
         DBInspector.log(
-            f"[ENGINE] PURGA TOTAL: {n_eventos} eventos, {n_casos} casos, {n_skus} SKUs eliminados",
-            "WARNING"
+            f"[ENGINE] PURGA TOTAL: {n_eventos} eventos, {n_casos} casos evento, "
+            f"{n_skus} SKUs, {n_bib} plantillas biblioteca; IDs reiniciados",
+            "WARNING",
         )
-        return True, {"eventos": int(n_eventos), "casos": int(n_casos), "skus": int(n_skus)}
+        return True, {
+            "eventos": int(n_eventos),
+            "casos": int(n_casos),
+            "skus": int(n_skus),
+            "biblioteca": int(n_bib),
+        }
     except Exception as e:
         DBInspector.log(f"[ENGINE] purgar_todas_las_listas error: {e}", "ERROR")
         return False, {}
