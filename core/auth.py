@@ -42,7 +42,7 @@ class AuthManager:
         st.session_state["_auth_intentos"] = intentos
         if intentos >= _MAX_INTENTOS:
             st.session_state["_auth_bloqueo_hasta"] = time.time() + _BLOQUEO_SEG
-            print(f"🚨 [AUTH-SEC] Bloqueo activado tras {intentos} intentos fallidos.")
+            print(f"[ALERT] [AUTH-SEC] Bloqueo activado tras {intentos} intentos fallidos.")
 
     @staticmethod
     def _resetear_intentos():
@@ -56,13 +56,13 @@ class AuthManager:
         bloqueado, segundos = AuthManager._check_rate_limit()
         if bloqueado:
             minutos = segundos // 60
-            print(f"🚫 [AUTH-SEC] Login bloqueado. Tiempo restante: {segundos}s")
+            print(f"[BLOCKED] [AUTH-SEC] Login bloqueado. Tiempo restante: {segundos}s")
             return "blocked", minutos
 
         user_clean = str(username_input).strip()
 
-        print(f"\n🔑 [AUTH-MIC] >>> INICIANDO PROTOCOLO DE ACCESO")
-        print(f"🔎 [AUTH-MIC] Evaluando analista: '{user_clean}'")
+        print(f"\n[KEY] [AUTH-MIC] >>> INICIANDO PROTOCOLO DE ACCESO")
+        print(f"[SEARCH] [AUTH-MIC] Evaluando analista: '{user_clean}'")
 
         # QUERY ACTUALIZADA: Apuntando a la estructura real de Supabase (usuario_v2)
         query = """
@@ -79,7 +79,7 @@ class AuthManager:
             df = get_dataframe(query, params=params)
 
             if df is None or df.empty:
-                print(f"⚠️ [AUTH-MIC] RECHAZO: Credenciales inválidas para '{user_clean}'.")
+                print(f"[WARN] [AUTH-MIC] RECHAZO: Credenciales inválidas para '{user_clean}'.")
                 AuthManager._registrar_fallo()
                 return False
 
@@ -108,12 +108,12 @@ class AuthManager:
             }
 
             AuthManager._resetear_intentos()
-            print(f"✅ [AUTH-MIC] ¡ACCESO CONCEDIDO! Rango: {final_role}")
-            print(f"🔐 [AUTH-MIC] Sesión inyectada para {user_data['descp_usuario']}.")
+            print(f"[OK] [AUTH-MIC] ¡ACCESO CONCEDIDO! Rango: {final_role}")
+            print(f"[LOCK] [AUTH-MIC] Sesión inyectada para {user_data['descp_usuario']}.")
             return True
 
         except Exception as e:
-            print(f"🚨 [AUTH-MIC] FALLO TÉCNICO EN LOGIN: {str(e)}")
+            print(f"[ALERT] [AUTH-MIC] FALLO TÉCNICO EN LOGIN: {str(e)}")
             AuthManager._registrar_fallo()
             return False
 
@@ -134,7 +134,7 @@ class AuthManager:
         """Cierre de sesión con purga selectiva de memoria."""
         if 'user' in st.session_state:
             u_name = st.session_state.user.get('name', 'Desconocido')
-            print(f"\n👋 [AUTH-MIC] EVACUANDO SISTEMA: Usuario {u_name}")
+            print(f"\n[BYE] [AUTH-MIC] EVACUANDO SISTEMA: Usuario {u_name}")
 
             # Limpiamos datos del usuario, pero NO el engine de la DB
             keys_to_clear = [

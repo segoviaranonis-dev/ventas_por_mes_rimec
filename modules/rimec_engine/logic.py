@@ -256,40 +256,182 @@ def get_proveedores() -> pd.DataFrame:
     return df if df is not None else pd.DataFrame()
 
 
-def build_pillar_cache(proveedor_id: int) -> dict:
+def _parse_codigo_pilar(val) -> int:
+    try:
+        return int(float(str(val).strip() or 0))
+    except (ValueError, TypeError):
+        return 0
+
+
+def _pillar_codes_from_skus(skus_df: pd.DataFrame) -> tuple[set[int], set[int], set[int]]:
+    """Códigos únicos de línea, referencia y material presentes en el listado."""
+    lineas: set[int] = set()
+    refs: set[int] = set()
+    mats: set[int] = set()
+    if skus_df is None or skus_df.empty:
+        return lineas, refs, mats
+    for _, row in skus_df.iterrows():
+        ln = _parse_codigo_pilar(row.get("linea"))
+        rn = _parse_codigo_pilar(row.get("referencia"))
+        md = _parse_codigo_pilar(row.get("material"))
+        if ln:
+            lineas.add(ln)
+        if rn:
+            refs.add(rn)
+        if md:
+            mats.add(md)
+    return lineas, refs, mats
+
+
+def build_pillar_cache(proveedor_id: int, skus_df: pd.DataFrame | None = None) -> dict:
     """
-    Carga linea, referencia y material en memoria con 3 queries.
-    Elimina los N×3 round-trips por SKU — usar una vez antes del loop.
+    Carga linea, referencia y material en memoria (3 queries).
+    Si skus_df está definido, solo trae códigos del listado (evita escanear todo el catálogo).
     Returns: {"linea": {cod: id}, "referencia": {(linea_id, cod): id}, "material": {cod: id}}
     """
+    linea_codes, ref_codes, mat_codes = _pillar_codes_from_skus(skus_df) if skus_df is not None else (set(), set(), set())
+    scoped = bool(linea_codes or ref_codes or mat_codes)
     try:
         with engine.connect() as conn:
-            lineas = conn.execute(
-                text("SELECT codigo_proveedor, id FROM linea WHERE proveedor_id = :pid"),
-                {"pid": proveedor_id}
-            ).fetchall()
-            refs = conn.execute(
-                text("SELECT linea_id, codigo_proveedor, id FROM referencia WHERE proveedor_id = :pid"),
-                {"pid": proveedor_id}
-            ).fetchall()
-            mats = conn.execute(
-                text("SELECT codigo_proveedor, id FROM material WHERE proveedor_id = :pid"),
-                {"pid": proveedor_id}
-            ).fetchall()
+            if scoped:
+                lineas = conn.execute(
+                    text(
+                        """
+                        SELECT codigo_proveedor, id FROM linea
+                        WHERE proveedor_id = :pid
+                          AND codigo_proveedor = ANY(:codes)
+                        """
+                    ),
+                    {"pid": proveedor_id, "codes": list(linea_codes) or [-1]},
+                ).fetchall()
+                linea_ids = [int(r[1]) for r in lineas]
+                if linea_ids and ref_codes:
+                    refs = conn.execute(
+                        text(
+                            """
+                            SELECT linea_id, codigo_proveedor, id FROM referencia
+                            WHERE proveedor_id = :pid
+                              AND linea_id = ANY(:lids)
+                              AND codigo_proveedor = ANY(:rcodes)
+                            """
+                        ),
+                        {
+                            "pid": proveedor_id,
+                            "lids": linea_ids,
+                            "rcodes": list(ref_codes),
+                        },
+                    ).fetchall()
+                else:
+                    refs = []
+                if mat_codes:
+                    mats = conn.execute(
+                        text(
+                            """
+                            SELECT codigo_proveedor, id FROM material
+                            WHERE proveedor_id = :pid
+                              AND codigo_proveedor = ANY(:codes)
+                            """
+                        ),
+                        {"pid": proveedor_id, "codes": list(mat_codes)},
+                    ).fetchall()
+                else:
+                    mats = []
+            else:
+                lineas = conn.execute(
+                    text("SELECT codigo_proveedor, id FROM linea WHERE proveedor_id = :pid"),
+                    {"pid": proveedor_id},
+                ).fetchall()
+                refs = conn.execute(
+                    text(
+                        "SELECT linea_id, codigo_proveedor, id FROM referencia WHERE proveedor_id = :pid"
+                    ),
+                    {"pid": proveedor_id},
+                ).fetchall()
+                mats = conn.execute(
+                    text("SELECT codigo_proveedor, id FROM material WHERE proveedor_id = :pid"),
+                    {"pid": proveedor_id},
+                ).fetchall()
         cache = {
-            "linea":      {int(r[0]): int(r[1]) for r in lineas},
+            "linea": {int(r[0]): int(r[1]) for r in lineas},
             "referencia": {(int(r[0]), int(r[1])): int(r[2]) for r in refs},
-            "material":   {int(r[0]): int(r[1]) for r in mats},
+            "material": {int(r[0]): int(r[1]) for r in mats},
         }
+        modo = "listado" if scoped else "catálogo completo"
         DBInspector.log(
-            f"[ENGINE] Cache pilares: {len(cache['linea'])} lineas, "
+            f"[ENGINE] Cache pilares ({modo}): {len(cache['linea'])} lineas, "
             f"{len(cache['referencia'])} refs, {len(cache['material'])} materiales",
-            "SUCCESS"
+            "SUCCESS",
         )
         return cache
     except Exception as e:
         DBInspector.log(f"[ENGINE] build_pillar_cache falló: {e}", "ERROR")
         return {"linea": {}, "referencia": {}, "material": {}}
+
+
+def prefetch_materiales_para_listado(
+    cache: dict, proveedor_id: int, skus_df: pd.DataFrame
+) -> int:
+    """
+    Alta en lote de materiales faltantes (un viaje a BD por código nuevo).
+    Evita 1 round-trip por SKU en get_or_create_material_cached.
+    """
+    if skus_df is None or skus_df.empty:
+        return 0
+    pending: dict[int, str] = {}
+    for _, row in skus_df.iterrows():
+        cod = _parse_codigo_pilar(row.get("material"))
+        if not cod or cod in cache["material"]:
+            continue
+        desc = str(row.get("descripcion", "")).strip()
+        if cod not in pending or (desc and not pending[cod]):
+            pending[cod] = desc
+    if not pending:
+        return 0
+    creados = 0
+    try:
+        with engine.begin() as conn:
+            for cod, desc in pending.items():
+                row = conn.execute(
+                    text(
+                        """
+                        SELECT id, descripcion FROM material
+                        WHERE proveedor_id = :pid AND codigo_proveedor = :cod
+                        LIMIT 1
+                        """
+                    ),
+                    {"pid": proveedor_id, "cod": cod},
+                ).fetchone()
+                if row:
+                    mat_id = int(row[0])
+                    cache["material"][cod] = mat_id
+                    if desc and (row[1] is None or str(row[1]).strip() == ""):
+                        conn.execute(
+                            text("UPDATE material SET descripcion = :desc WHERE id = :mid"),
+                            {"desc": desc, "mid": mat_id},
+                        )
+                    continue
+                row = conn.execute(
+                    text(
+                        """
+                        INSERT INTO material (proveedor_id, codigo_proveedor, descripcion)
+                        VALUES (:pid, :cod, :desc) RETURNING id
+                        """
+                    ),
+                    {"pid": proveedor_id, "cod": cod, "desc": desc or None},
+                ).fetchone()
+                if row:
+                    cache["material"][cod] = int(row[0])
+                    creados += 1
+        if creados:
+            DBInspector.log(
+                f"[ENGINE] Materiales prefetch: {creados} alta(s), "
+                f"{len(cache['material'])} en caché",
+                "SUCCESS",
+            )
+        return creados
+    except Exception as e:
+        DBInspector.log(f"[ENGINE] prefetch_materiales falló: {e}", "ERROR")
+        return 0
 
 
 def get_or_create_linea_cached(cache: dict, proveedor_id: int, codigo_proveedor: int) -> int | None:
@@ -1354,6 +1496,106 @@ def limpiar_staging_precio_lista(evento_id: int = None):
             DBInspector.log("[ENGINE-SQL] Staging limpiado completamente", "SUCCESS")
     except Exception as e:
         DBInspector.log(f"[ENGINE-SQL] Limpieza staging falló: {e}", "ERROR")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RESOLUCION FK PILARES SQL MASIVO (OT-524 / FINAL-001)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def resolver_pilares_evento_sql(proveedor_id: int, skus_df: pd.DataFrame) -> dict:
+    """
+    Resolución FK pilares set-based SQL (migración 054).
+    Reemplaza build_pillar_cache + loops get_or_create.
+
+    Returns: {"linea": {cod: id}, "referencia": {(linea_id, cod): id}, "material": {cod: id}}
+    """
+    if skus_df is None or skus_df.empty:
+        return {"linea": {}, "referencia": {}, "material": {}}
+
+    # Extraer códigos únicos del DataFrame
+    linea_codes = set()
+    ref_codes = set()
+    ref_linea_map = {}  # {cod_ref: cod_linea}
+    mat_codes = set()
+    mat_descs = {}  # {cod_mat: descripcion}
+
+    for _, row in skus_df.iterrows():
+        try:
+            cod_linea = int(float(str(row.get("linea", 0)).strip() or 0))
+            cod_ref = int(float(str(row.get("referencia", "0")).strip() or 0))
+            cod_mat = int(float(str(row.get("material", 0)).strip() or 0))
+            desc_mat = str(row.get("descripcion", "")).strip()
+
+            if cod_linea > 0:
+                linea_codes.add(cod_linea)
+            if cod_ref > 0:
+                ref_codes.add(cod_ref)
+                ref_linea_map[cod_ref] = cod_linea
+            if cod_mat > 0:
+                mat_codes.add(cod_mat)
+                if desc_mat and cod_mat not in mat_descs:
+                    mat_descs[cod_mat] = desc_mat
+        except (ValueError, TypeError):
+            continue
+
+    if not (linea_codes or ref_codes or mat_codes):
+        return {"linea": {}, "referencia": {}, "material": {}}
+
+    # Preparar arrays para SQL
+    linea_arr = list(linea_codes) if linea_codes else [0]
+    ref_arr = list(ref_codes) if ref_codes else [0]
+    ref_linea_arr = [ref_linea_map.get(r, 0) for r in ref_arr] if ref_codes else [0]
+    mat_arr = list(mat_codes) if mat_codes else [0]
+    mat_desc_arr = [mat_descs.get(m, "") for m in mat_arr] if mat_codes else [""]
+
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(
+                text("""
+                    SELECT tipo, codigo_proveedor, pilar_id, linea_id_ref
+                    FROM resolver_pilares_sql(
+                        :prov_id,
+                        :linea_codes::int[],
+                        :ref_codes::int[],
+                        :ref_linea_codes::int[],
+                        :mat_codes::int[],
+                        :mat_descs::text[]
+                    )
+                """),
+                {
+                    "prov_id": proveedor_id,
+                    "linea_codes": linea_arr,
+                    "ref_codes": ref_arr,
+                    "ref_linea_codes": ref_linea_arr,
+                    "mat_codes": mat_arr,
+                    "mat_descs": mat_desc_arr
+                }
+            )
+
+            cache = {"linea": {}, "referencia": {}, "material": {}}
+
+            for row in result:
+                tipo, codigo, pilar_id, linea_id_ref = row
+
+                if tipo == "linea":
+                    cache["linea"][int(codigo)] = int(pilar_id)
+                elif tipo == "referencia":
+                    cache["referencia"][(int(linea_id_ref), int(codigo))] = int(pilar_id)
+                elif tipo == "material":
+                    cache["material"][int(codigo)] = int(pilar_id)
+
+            DBInspector.log(
+                f"[ENGINE-SQL] Pilares FK resueltos: {len(cache['linea'])} lineas, "
+                f"{len(cache['referencia'])} refs, {len(cache['material'])} mats",
+                "SUCCESS"
+            )
+
+            return cache
+
+    except Exception as e:
+        DBInspector.log(f"[ENGINE-SQL] resolver_pilares_evento_sql falló: {e}", "ERROR")
+        # Fallback a None para que ui.py use método tradicional
+        return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

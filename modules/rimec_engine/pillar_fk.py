@@ -585,10 +585,19 @@ def asegurar_pilares_para_listado(
                 lineas_excel.add(str(ln))
     faltantes: list[str] = []
     if lineas_excel:
+        codes_int = [int(c) for c in lineas_excel]
         with engine.connect() as conn:
-            for cod in lineas_excel:
-                if _get_linea_id(conn, proveedor_id, int(cod)) is None:
-                    faltantes.append(cod)
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT codigo_proveedor::text FROM linea
+                    WHERE proveedor_id = :pid AND codigo_proveedor = ANY(:codes)
+                    """
+                ),
+                {"pid": proveedor_id, "codes": codes_int},
+            ).fetchall()
+        existentes = {str(r[0]) for r in rows}
+        faltantes = [c for c in lineas_excel if c not in existentes]
     if faltantes:
         ok, errs = provisionar_lineas_faltantes_en_pilar(
             proveedor_id, faltantes, evento_id=evento_id

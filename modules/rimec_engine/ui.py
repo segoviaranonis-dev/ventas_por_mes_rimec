@@ -35,6 +35,8 @@ from modules.rimec_engine.logic import (
     get_preview_skus,
     get_proveedores,
     build_pillar_cache,
+    resolver_pilares_evento_sql,
+    prefetch_materiales_para_listado,
     get_or_create_linea_cached,
     get_or_create_referencia_cached,
     get_or_create_material_cached,
@@ -1070,15 +1072,51 @@ def _paso_3_preview():
 
     st.markdown(f"Se procesarán **{len(skus_resueltos)}** SKUs de forma automatizada.")
 
+    # OT-FINAL-001 Fase D: Insignia motor + UX
+    if USE_CALCULO_SQL:
+        st.info("⚡ **MOTOR ULTRA-RÁPIDO** (SQL en Postgres) — Rendimiento optimizado")
+    else:
+        st.warning("🐢 **MOTOR TRADICIONAL** (Python) — Considerar actualizar a SQL")
+
+    # Warning anti-recarga
+    st.warning("⚠️ **IMPORTANTE**: No recargar la pestaña durante el cálculo (puede causar inconsistencias en Cloud)")
+
+    # Verificar si ya hay precios calculados
+    n_bd = 0
+    try:
+        from core.database import get_dataframe
+        df_count = get_dataframe(
+            "SELECT COUNT(*) as n FROM precio_lista WHERE evento_id = :eid",
+            {"eid": evento_id}
+        )
+        if df_count is not None and not df_count.empty:
+            n_bd = int(df_count.iloc[0]["n"])
+    except:
+        pass
+
     calc_ok = False
     total_guardados = 0
-    if st.button("✅ Iniciar Cálculo de todos los SKUs", type="primary"):
-        total_skus_btn = len(skus_resueltos)
-        with proceso_largo(
+
+    # Si ya hay precios, destacar Paso 4
+    if n_bd > 0:
+        st.success(f"✓ Ya existen **{n_bd}** precios calculados para este evento")
+        st.markdown("### 👉 Continuar al Paso 4")
+        with st.expander("⚙️ Recalcular (sobrescribirá precios existentes)", expanded=False):
+            if st.button("🔄 Recalcular todos los SKUs", type="secondary"):
+                pass  # El código del cálculo va aquí abajo
+            else:
+                return
+    else:
+        if not st.button("✅ Iniciar Cálculo de todos los SKUs", type="primary"):
+            return
+
+    # Bloque de cálculo (ejecuta siempre si llegó aquí)
+    total_skus_btn = len(skus_resueltos)
+    with proceso_largo(
             "Cálculo de precios",
             f"Procesando **{total_skus_btn}** SKUs (pilares + precio_lista).",
             aviso_espera=(
-                "Cada SKU puede requerir consultas a Supabase. "
+                "Pilares y caché van por códigos del listado (no todo el catálogo). "
                 "Verás el avance **1/N, 2/N…** abajo. No recargues la pestaña."
             ),
         ) as avanzar:
@@ -1091,18 +1129,19 @@ def _paso_3_preview():
             from modules.rimec_engine.lr_schema import mensaje_si_falta_migracion_042
             from modules.rimec_engine.pillar_fk import asegurar_pilares_para_listado
 
-            avanzar(0.02, "Verificando conexión a Supabase…")
+            # Fase 1: Validación políticas
+            avanzar(0.02, "Fase 1/5: Validación de políticas comerciales…")
             t_db = time.perf_counter()
             try:
                 with engine.connect() as conn:
                     conn.execute(text("SELECT 1"))
                 ms_db = int((time.perf_counter() - t_db) * 1000)
-                avanzar(0.05, f"DB conectada ({ms_db} ms)")
+                avanzar(0.05, f"Fase 1/5: Conexión servidor validada ({ms_db} ms)")
             except Exception as exc:
                 st.error(f"No se pudo conectar a Supabase: {exc}")
                 return
 
-            avanzar(0.08, "Preparando pilares y reglas…")
+            avanzar(0.08, "Fase 1/5: Preparando estructura de precios…")
             mig42 = mensaje_si_falta_migracion_042()
             if mig42:
                 st.warning(mig42 + " El listado puede continuar; los códigos denormalizados en linea_referencia quedarán pendientes.")
@@ -1166,8 +1205,26 @@ def _paso_3_preview():
                 )
                 return
 
-            avanzar(0.12, "Cargando caché de pilares en memoria…")
-            cache = build_pillar_cache(proveedor_id)
+            # Fase 2: Sincronización catálogo
+            # OT-FINAL-001: Resolver pilares SQL si está activo y disponible
+            if USE_CALCULO_SQL:
+                avanzar(0.12, f"Fase 2/5: Sincronización de catálogo ({total_skus_btn} SKUs)…")
+                cache = resolver_pilares_evento_sql(proveedor_id, skus_resueltos)
+
+                if cache is None:
+                    # Fallback a método tradicional si SQL falla
+                    st.warning("[WARN] SQL pilares no disponible, usando método tradicional")
+                    avanzar(0.12, f"Fase 2/5: Sincronización catálogo (modo tradicional)…")
+                    cache = build_pillar_cache(proveedor_id, skus_resueltos)
+                    avanzar(0.14, "Fase 2/5: Verificación de materiales…")
+                    prefetch_materiales_para_listado(cache, proveedor_id, skus_resueltos)
+            else:
+                # Método tradicional (hotfix 522)
+                avanzar(0.12, f"Fase 2/5: Sincronización catálogo ({total_skus_btn} SKUs)…")
+                cache = build_pillar_cache(proveedor_id, skus_resueltos)
+                avanzar(0.14, "Fase 2/5: Verificación de materiales…")
+                prefetch_materiales_para_listado(cache, proveedor_id, skus_resueltos)
+
             grupos = skus_resueltos.groupby("caso_asignado")
 
             casos_procesados = []
@@ -1179,7 +1236,12 @@ def _paso_3_preview():
             pct_base = 0.15
             pct_span = 0.80
 
+            n_grupos = max(len(grupos), 1)
             for i, (nombre_caso, skus_grupo) in enumerate(grupos):
+                avanzar(
+                    0.15 + (i / n_grupos) * 0.02,
+                    f"Fase 3/5: Configurando caso «{nombre_caso}» ({len(skus_grupo)} SKUs)…",
+                )
                 print(f"[ENGINE] Iniciando cálculo de caso: '{nombre_caso}' ({len(skus_grupo)} SKUs)")
                 if nombre_caso not in casos_bib:
                     st.error(f"Error crítico: Caso '{nombre_caso}' no está en la matriz del listado.")
@@ -1239,7 +1301,7 @@ def _paso_3_preview():
                     pct = pct_base + (skus_procesados / total_skus) * pct_span
                     avanzar(
                         pct,
-                        f"SKU {skus_procesados}/{total_skus} — caso {nombre_caso}",
+                        f"Fase 3/5: Cálculo SKU {skus_procesados}/{total_skus} — caso {nombre_caso}",
                     )
 
                     fob  = float(row["fob_fabrica"])
@@ -1306,14 +1368,14 @@ def _paso_3_preview():
                     # OT-520: Cálculo SQL masivo
                     avanzar(
                         min(0.98, pct_base + (skus_procesados / total_skus) * pct_span + 0.01),
-                        f"Cargando {len(filas)} SKUs a staging — caso {nombre_caso}",
+                        f"Fase 4/5: Resguardo servidor — cargando {len(filas)} SKUs (caso {nombre_caso})",
                     )
                     cargar_staging_precio_lista(filas)
                 else:
                     # Python: INSERT tradicional
                     avanzar(
                         min(0.98, pct_base + (skus_procesados / total_skus) * pct_span + 0.01),
-                        f"Guardando {len(filas)} filas en precio_lista — caso {nombre_caso}",
+                        f"Fase 4/5: Resguardo servidor — guardando {len(filas)} precios (caso {nombre_caso})",
                     )
                     guardar_precio_lista(filas)
                 skus_omitidos_total += skus_omitidos
@@ -1327,7 +1389,7 @@ def _paso_3_preview():
             if USE_CALCULO_SQL:
                 total_staging = sum(confirmados.values()) if confirmados else 0
                 if total_staging > 0:
-                    avanzar(0.98, f"Ejecutando cálculo SQL masivo ({total_staging} SKUs)…")
+                    avanzar(0.98, f"Fase 4/5: Ejecución cálculo masivo en servidor ({total_staging} SKUs)…")
                     resultado_sql = calcular_precio_lista_sql(evento_id)
 
                     if resultado_sql.get("error"):
@@ -1363,6 +1425,7 @@ def _paso_3_preview():
                 st.warning(f"⚠️ {skus_omitidos_total} SKU(s) omitidos por pilares nulos. Revisar Excel.")
 
         if calc_ok:
+            avanzar(0.99, f"Fase 5/5: Consolidación — finalizando {total_guardados:,} precios calculados…")
             st.session_state["re_casos"] = casos_procesados
             st.session_state["re_skus_por_caso"] = confirmados
             avanzar_estado_evento(evento_id, "validado")

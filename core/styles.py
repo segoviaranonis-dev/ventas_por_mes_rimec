@@ -90,7 +90,7 @@ class GlowDynamics:
 
 def apply_ui_theme():
     """Inyección de CSS: El blindaje Obsidian v70.5.0 — anti light-mode."""
-    print(f"🎨 [STYLES] Sincronizando Armadura Obsidian v{settings.VERSION}")
+    print(f"[STYLES] Sincronizando Armadura Obsidian v{settings.VERSION}")
 
     st.markdown(f"""
         <style>
@@ -355,7 +355,7 @@ def apply_ui_theme():
         </style>
     """, unsafe_allow_html=True)
 
-    print(f"✅ {settings.LOG_PREFIX} >>> ARMADURA OBSIDIAN v70.5.0 DESPLEGADA.")
+    print(f"[OK] {settings.LOG_PREFIX} >>> ARMADURA OBSIDIAN v70.5.0 DESPLEGADA.")
 
 def header_section(title, subtitle=None):
     """Encabezado Premium con subrayado en Oro."""
