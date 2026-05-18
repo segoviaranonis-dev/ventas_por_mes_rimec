@@ -91,8 +91,8 @@ BEGIN
         SELECT
             p_proveedor_id,
             m.codigo,
-            COALESCE(m.desc, '')
-        FROM UNNEST(p_mat_codes, p_mat_descs) AS m(codigo, desc)
+            COALESCE(m.descripcion, '')
+        FROM UNNEST(p_mat_codes, p_mat_descs) AS m(codigo, descripcion)
         ON CONFLICT (proveedor_id, codigo_proveedor)
         DO UPDATE SET descripcion = EXCLUDED.descripcion
                   WHERE material.descripcion IS NULL OR material.descripcion = '';
