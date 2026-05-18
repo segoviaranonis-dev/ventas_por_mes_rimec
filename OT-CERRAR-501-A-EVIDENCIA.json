@@ -1,0 +1,112 @@
+{
+  "ot_id": "OT-CERRAR-501-A",
+  "status": "OK",
+  "timestamp": "2026-05-17T13:19:45.102464",
+  "server_url": "http://localhost:3001",
+  "checks": [
+    {
+      "id": "W1",
+      "linea": "7320",
+      "referencia": "239",
+      "colores_unicos": 2,
+      "total_cajas": 8,
+      "filas": 3,
+      "detalles": [
+        {
+          "color": "AVELA 1248",
+          "cantidad_cajas": 4,
+          "cajas_disponibles": 4,
+          "det_id": 308
+        },
+        {
+          "color": "NEGRO 01",
+          "cantidad_cajas": 2,
+          "cajas_disponibles": 2,
+          "det_id": 312
+        },
+        {
+          "color": "NEGRO 01",
+          "cantidad_cajas": 2,
+          "cajas_disponibles": 2,
+          "det_id": 313
+        }
+      ],
+      "pass": true,
+      "actual": "2 colores (AVELA + NEGRO)"
+    },
+    {
+      "id": "W2",
+      "expected": "7320/239 AVELA cajas 4 (consolidadas)",
+      "linea": "7320",
+      "referencia": "239",
+      "color": "AVELA",
+      "actual": "4 cajas, 4 disponibles (det_id=308)",
+      "cantidad_cajas": 4,
+      "cajas_disponibles": 4,
+      "det_id": 308,
+      "pass": true
+    },
+    {
+      "id": "W3",
+      "linea": "1214",
+      "referencia": "1073",
+      "colores_unicos": 2,
+      "total_cajas": 11,
+      "filas": 4,
+      "detalles": [
+        {
+          "color": "BLANCO 99",
+          "cantidad_cajas": 6,
+          "cajas_disponibles": 6,
+          "det_id": 2
+        },
+        {
+          "color": "BLANCO 99",
+          "cantidad_cajas": 1,
+          "cajas_disponibles": 1,
+          "det_id": 10
+        },
+        {
+          "color": "BLANCO OFF 526",
+          "cantidad_cajas": 3,
+          "cajas_disponibles": 3,
+          "det_id": 6
+        },
+        {
+          "color": "BLANCO OFF 526",
+          "cantidad_cajas": 1,
+          "cajas_disponibles": 1,
+          "det_id": 9
+        }
+      ],
+      "pass": true,
+      "actual": "4 moleculas (antes: 5)"
+    },
+    {
+      "id": "W4",
+      "expected": "5287/210 sin moleculas duplicadas (cada fila = molecula unica)",
+      "linea": "5287",
+      "referencia": "210",
+      "total_moleculas": 14,
+      "duplicados_encontrados": 0,
+      "pass": true,
+      "actual": "14 moleculas unicas, 0 duplicadas"
+    },
+    {
+      "id": "W5",
+      "expected": "v_stock_rimec sin duplicate det_id (key duplicada)",
+      "actual": "Sin duplicados",
+      "pass": true,
+      "duplicate_det_ids": []
+    }
+  ],
+  "summary": {
+    "total_checks": 5,
+    "passed": 5,
+    "failed": 0
+  },
+  "artifacts": [
+    "v_stock_rimec verificado via SQL",
+    "No browser screenshots (automated verification)"
+  ]
+}

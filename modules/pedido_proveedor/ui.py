@@ -13,6 +13,7 @@ import streamlit as st
 import pandas as pd
 
 from core.constants import MES_NOMBRES
+from core.ux_celebrate import celebrate_import_done, celebrate_save, celebrate_step
 from core.tabla_articulos import render_tabla_5pilares
 from modules.pedido_proveedor.logic import (
     get_intenciones_con_saldo,
@@ -31,6 +32,7 @@ from modules.pedido_proveedor.logic import (
     save_factura_manual,
     get_datos_ics_de_pp,
     get_evento_precio_pp,
+    get_evento_precio_pp_detalle,
     get_precios_stock_pp,
     actualizar_eta_pp,
     desasignar_ic_de_pp,
@@ -38,7 +40,9 @@ from modules.pedido_proveedor.logic import (
     get_lista_precios_completa,
     parse_proforma,
     populate_pp_from_proforma,
-    guardar_configuracion_pp,
+    pp_listado_precio_editable,
+    vincular_listado_precio_a_pp,
+    recalcular_facturas_internas_pp,
     get_facturas_interna_de_pp,
     get_fi_detalles_canonico,
     get_skus_con_precio_para_fi,
@@ -319,8 +323,10 @@ def _render_lista_pp():
 
 def _mostrar_exito_importacion(resultado: dict, pp_id: int) -> None:
     """Pantalla de éxito post-importación — imposible de ignorar."""
-    st.balloons()
-    st.success("✅ ¡Importación completada con éxito!")
+    celebrate_import_done(
+        f"¡Importación completada! PP {resultado.get('pp_nro', pp_id)}",
+        modulo="Pedido Proveedor",
+    )
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Artículos importados", resultado["total_articulos"])
@@ -819,7 +825,12 @@ def _render_hijo_adoptado(pp_id: int):
                 if col_si.button("Sí", key=f"_desasig_si_{pp_id}_{ic_id}", type="primary"):
                     if desasignar_ic_de_pp(ic_id, pp_id):
                         st.session_state.pop(key_confirm, None)
-                        st.success(f"IC {ic.get('nro_ic')} devuelta al pool de Digitación.")
+                        celebrate_step(
+                            "IC desasignada",
+                            f"IC {ic.get('nro_ic')} devuelta al pool",
+                            modulo="Pedido Proveedor",
+                            handoff="Digitación",
+                        )
                         st.rerun()
                     else:
                         st.error("Error al desasignar. Revisar logs.")
@@ -842,7 +853,7 @@ def _render_hijo_mayor(pp_id: int, header: dict):
 
     if not tiene_stock:
         _render_importar_proforma(pp_id)
-        _render_explorador_precios(pp_id)
+        _render_listado_precio_pp(pp_id, header)
         return
 
     # Detalle de importación existente
@@ -857,6 +868,7 @@ def _render_hijo_mayor(pp_id: int, header: dict):
 
     # Precios LPN / LPC del evento vigente
     evento_id = get_evento_precio_pp(pp_id)
+    ev_det    = get_evento_precio_pp_detalle(pp_id) if evento_id else None
 
     def _fmt_p(v):
         if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
@@ -873,9 +885,13 @@ def _render_hijo_mayor(pp_id: int, header: dict):
                     f"⚠ {sin_precio} artículos sin precio en el evento {evento_id}. "
                     "Verificar que el listado de precios incluye estas líneas/materiales."
                 )
+            ev_nom = (ev_det or {}).get("nombre_evento") or f"ID {evento_id}"
+            ev_est = (ev_det or {}).get("estado") or "—"
+            bib    = (ev_det or {}).get("biblioteca_nombre")
+            bib_tx = f" · Biblioteca: **{bib}**" if bib else ""
             st.caption(
-                f"Evento de precio ID **{evento_id}** · heredado de las ICs asignadas. "
-                f"Columna **Caso** = fórmula exacta aplicada."
+                f"Listado vigente: **{ev_nom}** · [{ev_est}] · evento #{evento_id}{bib_tx}. "
+                f"Columna **Caso** = regla aplicada (biblioteca + Excel)."
             )
 
             headers = ["Línea", "Ref.", "Cód.Mat", "Material", "Disp.",
@@ -911,58 +927,161 @@ def _render_hijo_mayor(pp_id: int, header: dict):
                 c[11].caption(_fmt_p(row.get("indice_aplicado")))
 
     st.divider()
-    _render_explorador_precios(pp_id)
+    _render_listado_precio_pp(pp_id, header)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# EXPLORADOR DE LISTAS DE PRECIOS — mapa forense de eventos y casos
+# LISTADO RIMEC ↔ PP — vinculación flexible + explorador forense
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _render_explorador_precios(pp_id: int):
+def _render_listado_precio_pp(pp_id: int, header: dict):
     """
-    Desplegable para explorar cualquier lista de precios del sistema.
-    Muestra LPN / LPC02-04 + caso aplicado + índice + dólar para cada
-    referencia/material, permitiendo trazabilidad forense completa.
+    Panel del listado que acompaña la compra (Biblioteca + Excel = precio_evento).
+    Permite cambiar el evento y propagar precios a FI mientras el PP no esté ENVIADO.
     """
-    with st.expander("📊 Explorador de Listas de Precios", expanded=False):
-        df_eventos = get_todos_eventos_precio()
-        if df_eventos is None or df_eventos.empty:
-            st.info("No hay listas de precios registradas en el sistema.")
-            return
+    bloqueado = not pp_listado_precio_editable(pp_id)
+    ev_vig    = get_evento_precio_pp_detalle(pp_id)
+    ev_id     = (ev_vig or {}).get("id")
 
-        # Selector de evento
-        opts = {}
-        for _, ev in df_eventos.iterrows():
-            n_p    = int(ev.get("n_precios", 0) or 0)
-            estado = str(ev.get("estado", "")).upper()
-            badge  = "🟢" if estado == "CERRADO" else "🔵"
-            label  = (
-                f"{badge} {ev['nombre_evento']}"
-                f"  ·  {n_p:,} referencias"
-                f"  ·  [{estado}]"
-            )
-            opts[label] = int(ev["id"])
+    st.subheader("Listado de precios RIMEC")
+    st.caption(
+        "Biblioteca de casos + listado Excel = un evento. "
+        "Ese evento acompaña el PP y alimenta las facturas internas hasta pasar a compra."
+    )
 
-        col_sel, col_vincular = st.columns([4, 1])
-        sel_label = col_sel.selectbox(
-            "Seleccionar evento de precio",
-            list(opts.keys()),
-            key=f"_explorador_evento_{pp_id}",
+    if bloqueado:
+        st.markdown(
+            "<div style='background:#EF444422;border:1px solid #EF4444;"
+            "border-radius:8px;padding:10px 16px;color:#EF4444;font-weight:600;'>"
+            "🔒 PP en COMPRA (ENVIADO) — el listado vinculado queda congelado.</div>",
+            unsafe_allow_html=True,
         )
-        evento_sel_id = opts[sel_label]
 
-        if col_vincular.button(
+    if ev_vig:
+        ev_nom = ev_vig.get("nombre_evento") or f"Evento #{ev_id}"
+        ev_est = ev_vig.get("estado") or "—"
+        n_pr   = int(ev_vig.get("n_precios") or 0)
+        bib    = ev_vig.get("biblioteca_nombre")
+        lineas_banner = [
+            f"**Listado vigente en este PP:** {ev_nom}",
+            f"· **{n_pr:,}** precios",
+            f"· estado **{ev_est}**",
+            f"· evento **#{ev_id}**",
+        ]
+        if bib:
+            lineas_banner.append(f"· biblioteca **{bib}**")
+        st.success(" ".join(lineas_banner))
+    else:
+        st.warning(
+            "Este PP aún no tiene listado vinculado. "
+            "Elegí un evento abajo y pulsá **Vincular al PP**."
+        )
+
+    df_eventos = get_todos_eventos_precio()
+    if df_eventos is None or df_eventos.empty:
+        st.info("No hay listas de precios en el sistema. Creá un evento en Motor de Precios.")
+        return
+
+    opts: dict[str, int] = {}
+    for _, ev in df_eventos.iterrows():
+        n_p    = int(ev.get("n_precios", 0) or 0)
+        estado = str(ev.get("estado", "")).upper()
+        badge  = "🟢" if estado == "CERRADO" else "🔵"
+        marca_vig = " ★ VIGENTE" if ev_id and int(ev["id"]) == int(ev_id) else ""
+        label  = (
+            f"{badge} {ev['nombre_evento']}"
+            f"  ·  {n_p:,} referencias"
+            f"  ·  [{estado}]{marca_vig}"
+        )
+        opts[label] = int(ev["id"])
+
+    labels = list(opts.keys())
+    default_idx = 0
+    if ev_id:
+        for i, lbl in enumerate(labels):
+            if opts[lbl] == ev_id:
+                default_idx = i
+                break
+
+    col_sel, col_vinc = st.columns([4, 1])
+    sel_label = col_sel.selectbox(
+        "Explorar / cambiar evento de precio",
+        labels,
+        index=default_idx,
+        key=f"_listado_evento_{pp_id}",
+        disabled=bloqueado,
+    )
+    evento_sel_id = opts[sel_label]
+    es_mismo = ev_id and int(evento_sel_id) == int(ev_id)
+
+    recalc_fi = st.checkbox(
+        "Al vincular, recalcular facturas internas RESERVADA",
+        value=True,
+        key=f"_listado_recalc_{pp_id}",
+        disabled=bloqueado,
+        help="Actualiza LPN y totales en FI abiertas según el nuevo listado.",
+    )
+    incl_conf = st.checkbox(
+        "Incluir también FI CONFIRMADA (avanzado)",
+        value=False,
+        key=f"_listado_recalc_conf_{pp_id}",
+        disabled=bloqueado or not recalc_fi,
+    )
+
+    key_confirm = f"_listado_vinc_confirm_{pp_id}"
+    if not bloqueado:
+        if col_vinc.button(
             "🔗 Vincular al PP",
-            key=f"_vincular_ev_{pp_id}",
+            key=f"_listado_vinc_btn_{pp_id}",
             type="primary",
-            help="Asigna este evento de precios al PP y sus ICs",
+            disabled=es_mismo,
+            help="Asigna el evento al PP, ICs y opcionalmente recalcula FI",
         ):
-            if guardar_configuracion_pp(pp_id, None, evento_sel_id, None):
-                st.success("Evento vinculado. Los precios de venta quedan asignados a este PP.")
+            st.session_state[key_confirm] = evento_sel_id
+            st.rerun()
+
+        col_recalc, _ = st.columns([2, 3])
+        if ev_id and col_recalc.button(
+            "↻ Recalcular FI (sin cambiar listado)",
+            key=f"_listado_solo_recalc_{pp_id}",
+            use_container_width=True,
+            help="Refresca precios de FI abiertas con el listado ya vinculado",
+        ):
+            ok, msg, _stats = recalcular_facturas_internas_pp(
+                pp_id, int(ev_id), incluir_confirmadas=incl_conf,
+            )
+            if ok:
+                celebrate_step("Precios actualizados", msg, modulo="Pedido Proveedor")
                 st.rerun()
             else:
-                st.error("Error al vincular el evento. Revisar logs.")
+                st.error(msg)
 
+    if st.session_state.get(key_confirm) and not bloqueado:
+        ev_conf = int(st.session_state[key_confirm])
+        st.warning(
+            f"¿Vincular evento **#{ev_conf}** a este PP?"
+            + (" Se recalcularán las FI abiertas." if recalc_fi else "")
+        )
+        c_si, c_no = st.columns(2)
+        if c_si.button("Sí, vincular", key=f"_listado_vinc_si_{pp_id}", type="primary"):
+            ok, msg, _stats = vincular_listado_precio_a_pp(
+                pp_id,
+                ev_conf,
+                recalcular_fi=recalc_fi,
+                incluir_fi_confirmadas=incl_conf,
+            )
+            st.session_state.pop(key_confirm, None)
+            if ok:
+                celebrate_step("Listado vinculado", msg, modulo="Pedido Proveedor",
+                               handoff="Motor de Precios → PP")
+                st.rerun()
+            else:
+                st.error(msg)
+        if c_no.button("Cancelar", key=f"_listado_vinc_no_{pp_id}"):
+            st.session_state.pop(key_confirm, None)
+            st.rerun()
+
+    with st.expander("📊 Ver detalle del evento seleccionado", expanded=False):
         df_lista = get_lista_precios_completa(evento_sel_id)
         if df_lista is None or df_lista.empty:
             st.info("Este evento no tiene precios cargados.")
@@ -1120,7 +1239,12 @@ def _render_arribo(pp_id: int, header: dict):
         with st.spinner("Registrando arribo y generando stock_bazar..."):
             ok, msg = registrar_arribo(pp_id, fecha)
         if ok:
-            st.success(f"✅ {msg}")
+            celebrate_save(
+                msg,
+                modulo="Pedido Proveedor",
+                contexto="guardado",
+                balloons=True,
+            )
             st.session_state.pop(key_open, None)
             st.rerun()
         else:
@@ -1137,11 +1261,27 @@ def _render_arribo(pp_id: int, header: dict):
 
 def _render_facturas_internas(pp_id: int, header: dict):
     df_fi = get_facturas_interna_de_pp(pp_id)
+    bloqueado_pp = not pp_listado_precio_editable(pp_id)
+    ev_det = get_evento_precio_pp_detalle(pp_id)
+
+    if ev_det:
+        st.caption(
+            f"Precios desde listado **{ev_det.get('nombre_evento', '—')}** "
+            f"(evento #{ev_det.get('id')}). "
+            f"Cambiar listado en pestaña **Importación / Stock**."
+        )
+    elif not bloqueado_pp:
+        st.warning("Vinculá un listado de precios antes de emitir facturas internas.")
 
     # ── Botón nueva factura ───────────────────────────────────────────────────
     key_fi_open = f"_fi_open_{pp_id}"
     if not st.session_state.get(key_fi_open):
-        if st.button("＋ Nueva Factura Interna", key=f"_fi_btn_{pp_id}", type="primary"):
+        if st.button(
+            "＋ Nueva Factura Interna",
+            key=f"_fi_btn_{pp_id}",
+            type="primary",
+            disabled=bloqueado_pp or not ev_det,
+        ):
             st.session_state[key_fi_open] = True
             st.session_state.pop(f"_fi_fase_{pp_id}", None)
             st.rerun()
@@ -1332,7 +1472,12 @@ def _render_fi_fase_b(pp_id: int, header: dict):
             items=seleccion,
         )
         if ok:
-            st.success(f"✅ Factura **{result}** creada — {total_pares:,} pares · ${total_neto:,.0f}")
+            celebrate_save(
+                f"Factura **{result}** creada — {total_pares:,} pares · ${total_neto:,.0f}",
+                modulo="Pedido Proveedor",
+                contexto="factura_creada",
+                balloons=True,
+            )
             for k in (f"_fi_open_{pp_id}", f"_fi_fase_{pp_id}",
                       f"_fi_cab_{pp_id}", f"_fi_items_{pp_id}"):
                 st.session_state.pop(k, None)
@@ -1516,7 +1661,12 @@ def _render_enviar_a_compra(id_pp: int, numero_proforma: str):
             ok, result = add_pp_to_compra(cl_id, id_pp)
 
         if ok:
-            st.success(f"✓ {result}")
+            celebrate_step(
+                "Compra Legal",
+                result,
+                modulo="Pedido Proveedor",
+                handoff="Compra Legal",
+            )
             st.session_state.pop(key_open, None)
             st.rerun()
         else:
@@ -1954,7 +2104,12 @@ def _render_fac_fase_b(id_pp: int):
                 st.error(e)
 
             if creadas:
-                st.success(f"✓ {len(creadas)} factura(s) creada(s): {', '.join(creadas)}")
+                celebrate_save(
+                    f"{len(creadas)} factura(s) creada(s): {', '.join(creadas)}",
+                    modulo="Pedido Proveedor",
+                    contexto="factura_creada",
+                    balloons=True,
+                )
                 for k in (f"_pp_fac_open_{id_pp}", f"_pp_fac_fase_{id_pp}",
                           f"_pp_fac_data_{id_pp}", f"_pp_fac_skus_{id_pp}"):
                     st.session_state.pop(k, None)
@@ -2169,10 +2324,11 @@ def _render_form():
             detalle_rows=df_p.to_dict("records"),
         )
         if ok:
-            st.success(
-                f"✅ **{resultado}** registrado — "
-                f"{total_p:,} pares | {saldo_info['numero_registro']} | "
-                f"Proforma {numero_proforma}"
+            celebrate_step(
+                "PP registrado",
+                f"{resultado} — {total_p:,} pares | Proforma {numero_proforma}",
+                modulo="Pedido Proveedor",
+                handoff="Importación / Stock",
             )
             for k in ("pp_parsed_df", "pp_parsed_total", "pp_parsed_error", "_pp_last_ic"):
                 st.session_state.pop(k, None)

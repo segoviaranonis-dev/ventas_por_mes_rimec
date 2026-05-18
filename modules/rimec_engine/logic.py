@@ -323,16 +323,51 @@ def get_or_create_material_cached(cache: dict, proveedor_id: int, codigo_proveed
 
 def get_or_create_linea(proveedor_id: int, codigo_proveedor: int) -> int | None:
     try:
-        with engine.begin() as conn:
+        with engine.connect() as conn:
             row = conn.execute(
-                text("SELECT id FROM linea WHERE proveedor_id = :pid AND codigo_proveedor = :cod LIMIT 1"),
-                {"pid": proveedor_id, "cod": codigo_proveedor}
+                text(
+                    "SELECT id FROM linea WHERE proveedor_id = :pid "
+                    "AND codigo_proveedor = :cod LIMIT 1"
+                ),
+                {"pid": proveedor_id, "cod": codigo_proveedor},
             ).fetchone()
             if row:
                 return int(row[0])
+    except Exception as e:
+        DBInspector.log(f"[ENGINE] get_or_create_linea({codigo_proveedor}): {e}", "ERROR")
+        return None
+
+    from modules.rimec_engine.pillar_fk import provisionar_linea_pilar_clonando_inferior
+
+    ok, _, _ = provisionar_linea_pilar_clonando_inferior(
+        proveedor_id, codigo_proveedor, evento_id=None
+    )
+    if ok:
+        try:
+            with engine.connect() as conn:
+                row = conn.execute(
+                    text(
+                        "SELECT id FROM linea WHERE proveedor_id = :pid "
+                        "AND codigo_proveedor = :cod LIMIT 1"
+                    ),
+                    {"pid": proveedor_id, "cod": codigo_proveedor},
+                ).fetchone()
+                if row:
+                    return int(row[0])
+        except Exception as e:
+            DBInspector.log(
+                f"[ENGINE] get_or_create_linea post-provision({codigo_proveedor}): {e}",
+                "ERROR",
+            )
+
+    try:
+        with engine.begin() as conn:
             row = conn.execute(
-                text("INSERT INTO linea (proveedor_id, codigo_proveedor) VALUES (:pid, :cod) RETURNING id"),
-                {"pid": proveedor_id, "cod": codigo_proveedor}
+                text(
+                    "INSERT INTO linea (proveedor_id, codigo_proveedor) "
+                    "VALUES (:pid, :cod) RETURNING id"
+                ),
+                {"pid": proveedor_id, "cod": codigo_proveedor},
             ).fetchone()
             return int(row[0]) if row else None
     except Exception as e:
@@ -344,20 +379,65 @@ def get_or_create_referencia(proveedor_id: int, linea_id: int, codigo_proveedor:
     try:
         with engine.begin() as conn:
             row = conn.execute(
-                text("""SELECT id FROM referencia
-                        WHERE proveedor_id = :pid AND linea_id = :lid AND codigo_proveedor = :cod LIMIT 1"""),
-                {"pid": proveedor_id, "lid": linea_id, "cod": codigo_proveedor}
+                text(
+                    """SELECT id FROM referencia
+                       WHERE proveedor_id = :pid AND linea_id = :lid
+                         AND codigo_proveedor = :cod LIMIT 1"""
+                ),
+                {"pid": proveedor_id, "lid": linea_id, "cod": codigo_proveedor},
             ).fetchone()
             if row:
                 return int(row[0])
             row = conn.execute(
-                text("""INSERT INTO referencia (proveedor_id, linea_id, codigo_proveedor)
-                        VALUES (:pid, :lid, :cod) RETURNING id"""),
-                {"pid": proveedor_id, "lid": linea_id, "cod": codigo_proveedor}
+                text(
+                    """INSERT INTO referencia (proveedor_id, linea_id, codigo_proveedor)
+                       VALUES (:pid, :lid, :cod) RETURNING id"""
+                ),
+                {"pid": proveedor_id, "lid": linea_id, "cod": codigo_proveedor},
             ).fetchone()
-            return int(row[0]) if row else None
+            ref_id = int(row[0]) if row else None
+            if ref_id:
+                row_ln = conn.execute(
+                    text(
+                        "SELECT codigo_proveedor::bigint FROM linea WHERE id = :lid"
+                    ),
+                    {"lid": linea_id},
+                ).fetchone()
+                if row_ln and row_ln[0] is not None:
+                    from modules.rimec_engine.pillar_fk import (
+                        _inherit_lr_dims,
+                        _otros_grupo_estilo_id,
+                        _otros_tipo_1_id,
+                        _proveedor_codigo_negocio,
+                        _upsert_linea_referencia,
+                    )
+
+                    ln = int(row_ln[0])
+                    ge_line = conn.execute(
+                        text(
+                            "SELECT grupo_estilo_id FROM linea WHERE id = :lid"
+                        ),
+                        {"lid": linea_id},
+                    ).scalar()
+                    ge_lr, t1_lr = _inherit_lr_dims(
+                        conn, proveedor_id, linea_id, ln, int(codigo_proveedor), ge_line
+                    )
+                    _upsert_linea_referencia(
+                        conn,
+                        proveedor_id,
+                        linea_id,
+                        ref_id,
+                        ln,
+                        int(codigo_proveedor),
+                        _proveedor_codigo_negocio(conn, proveedor_id),
+                        ge_lr,
+                        t1_lr,
+                    )
+            return ref_id
     except Exception as e:
-        DBInspector.log(f"[ENGINE] get_or_create_referencia({codigo_proveedor}): {e}", "ERROR")
+        DBInspector.log(
+            f"[ENGINE] get_or_create_referencia({codigo_proveedor}): {e}", "ERROR"
+        )
         return None
 
 
@@ -427,6 +507,339 @@ def crear_caso(evento_id: int, caso: dict) -> int | None:
             "marcas": caso.get("marcas"),
         }
     )
+
+
+def _evento_id_de_caso(caso_id: int) -> int | None:
+    df = get_dataframe(
+        "SELECT evento_id FROM precio_evento_caso WHERE id = :cid",
+        {"cid": caso_id},
+    )
+    if df is None or df.empty:
+        return None
+    return int(df.iloc[0]["evento_id"])
+
+
+def actualizar_caso_evento(caso_id: int, caso: dict) -> bool:
+    """Actualiza parámetros matemáticos de un caso ya ligado al listado."""
+    return commit_query(
+        """UPDATE precio_evento_caso SET
+               nombre_caso        = :nc,
+               dolar_politica     = :dp,
+               factor_conversion  = :fc,
+               descuento_1        = :d1,
+               descuento_2        = :d2,
+               descuento_3        = :d3,
+               descuento_4        = :d4,
+               genera_lpc03_lpc04 = :glpc,
+               regla_redondeo     = :rr,
+               marcas             = :marcas
+           WHERE id = :cid""",
+        {
+            "cid":    caso_id,
+            "nc":     caso["nombre_caso"],
+            "dp":     caso["dolar_politica"],
+            "fc":     caso["factor_conversion"],
+            "d1":     caso.get("descuento_1"),
+            "d2":     caso.get("descuento_2"),
+            "d3":     caso.get("descuento_3"),
+            "d4":     caso.get("descuento_4"),
+            "glpc":   caso.get("genera_lpc03_lpc04", False),
+            "rr":     caso.get("regla_redondeo", "centena"),
+            "marcas": caso.get("marcas"),
+        },
+    )
+
+
+def _caso_dict_para_db(caso_norm: dict) -> dict:
+    return {
+        "nombre_caso":        caso_norm["nombre_caso"],
+        "dolar_politica":     caso_norm["dolar_politica"],
+        "factor_conversion":  caso_norm["factor_conversion"],
+        "descuento_1":        caso_norm.get("descuento_1"),
+        "descuento_2":        caso_norm.get("descuento_2"),
+        "descuento_3":        caso_norm.get("descuento_3"),
+        "descuento_4":        caso_norm.get("descuento_4"),
+        "genera_lpc03_lpc04": caso_norm.get("genera_lpc03_lpc04", True),
+        "regla_redondeo":     caso_norm.get("regla_redondeo", "centena"),
+        "marcas":             caso_norm.get("marcas") if caso_norm.get("marcas") else None,
+    }
+
+
+def persistir_caso_matriz_evento(
+    evento_id: int,
+    proveedor_id: int,
+    caso: dict,
+    caso_db_id: int | None = None,
+) -> tuple[int | None, str]:
+    """
+    Persiste caso + contenedor de líneas (precio_evento_linea_excepcion)
+    del listado activo. Retorna (caso_db_id, mensaje_error).
+    """
+    if _evento_esta_cerrado(evento_id):
+        return None, "El listado está cerrado; no se puede editar la matriz."
+
+    norm = normalizar_caso_evento(caso)
+    if not norm["nombre_caso"]:
+        return None, "Nombre de caso obligatorio."
+
+    payload = _caso_dict_para_db(norm)
+
+    if caso_db_id:
+        if not actualizar_caso_evento(int(caso_db_id), payload):
+            return None, "No se pudo actualizar el caso en base de datos."
+    else:
+        dup = get_dataframe(
+            """SELECT id FROM precio_evento_caso
+               WHERE evento_id = :eid AND UPPER(TRIM(nombre_caso)) = UPPER(TRIM(:nc))
+               LIMIT 1""",
+            {"eid": evento_id, "nc": norm["nombre_caso"]},
+        )
+        if dup is not None and not dup.empty:
+            caso_db_id = int(dup.iloc[0]["id"])
+            if not actualizar_caso_evento(caso_db_id, payload):
+                return None, "No se pudo actualizar el caso existente."
+        else:
+            caso_db_id = crear_caso(evento_id, payload)
+            if not caso_db_id:
+                return None, "No se pudo crear el caso en base de datos."
+
+    lineas = norm.get("lineas") or []
+    marcas = parse_marcas_array(norm.get("marcas"))
+    if lineas:
+        reemplazar_lineas_excepcion(int(caso_db_id), lineas, proveedor_id, evento_id)
+    elif not marcas:
+        commit_query(
+            "DELETE FROM precio_evento_linea_excepcion WHERE caso_id = :cid",
+            {"cid": int(caso_db_id)},
+            show_error=False,
+        )
+
+    return int(caso_db_id), ""
+
+
+def eliminar_caso_matriz_evento(caso_db_id: int, evento_id: int) -> tuple[bool, str]:
+    """Elimina un caso y su contenedor de líneas del listado (solo si no está cerrado)."""
+    if _evento_esta_cerrado(evento_id):
+        return False, "Listado cerrado."
+    df = get_dataframe(
+        "SELECT id FROM precio_evento_caso WHERE id = :cid AND evento_id = :eid",
+        {"cid": caso_db_id, "eid": evento_id},
+    )
+    if df is None or df.empty:
+        return False, "Caso no pertenece a este listado."
+
+    n_skus = get_dataframe(
+        "SELECT COUNT(*) AS n FROM precio_lista WHERE caso_id = :cid",
+        {"cid": caso_db_id},
+    )
+    if n_skus is not None and not n_skus.empty and int(n_skus.iloc[0]["n"]) > 0:
+        return False, "El caso ya tiene precios calculados; no se puede eliminar."
+
+    commit_query(
+        "DELETE FROM precio_evento_linea_excepcion WHERE caso_id = :cid",
+        {"cid": caso_db_id},
+        show_error=False,
+    )
+    ok = commit_query(
+        "DELETE FROM precio_evento_caso WHERE id = :cid AND evento_id = :eid",
+        {"cid": caso_db_id, "eid": evento_id},
+    )
+    return ok, "" if ok else "Error al eliminar."
+
+
+def vaciar_matriz_evento(evento_id: int) -> tuple[bool, str]:
+    """Elimina todos los casos y contenedores del listado (sin tocar precio_lista)."""
+    if _evento_esta_cerrado(evento_id):
+        return False, "Listado cerrado."
+    n_skus = contar_skus_procesados(evento_id)
+    if n_skus > 0:
+        return False, f"Hay {n_skus} SKU(s) ya calculados; no se puede vaciar la matriz."
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """DELETE FROM precio_evento_linea_excepcion
+                       WHERE caso_id IN (
+                           SELECT id FROM precio_evento_caso WHERE evento_id = :eid
+                       )"""
+                ),
+                {"eid": evento_id},
+            )
+            conn.execute(
+                text("DELETE FROM precio_evento_caso WHERE evento_id = :eid"),
+                {"eid": evento_id},
+            )
+        return True, ""
+    except Exception as e:
+        DBInspector.log(f"[ENGINE] vaciar_matriz_evento: {e}", "ERROR")
+        return False, str(e)
+
+
+def hydrate_casos_evento_desde_db(evento_id: int) -> list[dict]:
+    """Carga matriz + contenedor de líneas desde BD para el listado activo."""
+    df = get_casos_evento(evento_id)
+    if df is None or df.empty:
+        return []
+    lineas_map = get_lineas_por_evento(evento_id)
+    out: list[dict] = []
+    for _, row in df.iterrows():
+        rec = row.to_dict()
+        cid = int(rec.pop("id"))
+        rec["caso_db_id"] = cid
+        if cid in lineas_map:
+            rec["lineas"] = lineas_map[cid]
+        out.append(normalizar_caso_evento(rec))
+    return out
+
+
+def get_contenedor_lineas_resumen(evento_id: int) -> dict:
+    """Resumen del contenedor FK líneas del listado."""
+    por_caso = excepciones_lineas_por_caso(evento_id)
+    total = sum(len(v) for v in por_caso.values())
+    return {
+        "por_caso": por_caso,
+        "total_lineas": total,
+        "n_casos_con_lineas": len(por_caso),
+    }
+
+
+def get_lineas_contenedor_evento(evento_id: int) -> set[str]:
+    """Unión de códigos de línea definidos en el contenedor del listado."""
+    return set(_mapa_excepciones_evento(evento_id).keys())
+
+
+def asegurar_contenedor_lineas_excel(
+    evento_id: int,
+    proveedor_id: int,
+    skus_df: pd.DataFrame,
+    df_matriz: pd.DataFrame,
+) -> int:
+    """
+    Si una línea del Excel no está en el contenedor pero su marca tiene caso,
+    la inscribe automáticamente (excepción línea→caso). La empresa no se frena.
+    """
+    if skus_df is None or skus_df.empty or df_matriz is None or df_matriz.empty:
+        return 0
+    linea_map, marca_map, _ = build_mapa_caso_desde_biblioteca(df_matriz)
+    linea_map.update(_mapa_excepciones_evento(evento_id))
+
+    df_casos = get_dataframe(
+        """SELECT id, nombre_caso FROM precio_evento_caso
+           WHERE evento_id = :eid""",
+        {"eid": evento_id},
+    )
+    if df_casos is None or df_casos.empty:
+        return 0
+    nombre_to_id: dict[str, int] = {}
+    for _, r in df_casos.iterrows():
+        nom = str(r["nombre_caso"]).replace("*", "").strip()
+        if nom:
+            nombre_to_id[nom] = int(r["id"])
+
+    n = 0
+    lineas_vistas: set[str] = set()
+    for _, row in skus_df.iterrows():
+        try:
+            cod = str(int(float(str(row.get("linea", 0)).strip() or 0)))
+        except (ValueError, TypeError):
+            continue
+        if not cod or cod == "0" or cod in lineas_vistas:
+            continue
+        lineas_vistas.add(cod)
+        if cod in linea_map:
+            continue
+        marca = str(row.get("marca", "")).strip().upper()
+        caso_nombre = marca_map.get(marca)
+        if not caso_nombre:
+            continue
+        caso_id = nombre_to_id.get(caso_nombre)
+        if not caso_id:
+            continue
+        if _insert_linea_en_contenedor(caso_id, proveedor_id, int(cod), evento_id):
+            linea_map[cod] = caso_nombre
+            n += 1
+    if n:
+        DBInspector.log(
+            f"[ENGINE] Contenedor auto: {n} línea(s) inscriptas por marca en evento {evento_id}",
+            "SUCCESS",
+        )
+    return n
+
+
+def validar_barrera_contenedor_excel(
+    evento_id: int,
+    skus_df: pd.DataFrame,
+    df_matriz: pd.DataFrame,
+) -> list[dict]:
+    """
+    Barrera 1: cada línea del Excel debe estar en el contenedor del listado
+    (precio_evento_linea_excepcion) o en la matriz por líneas del paso actual.
+    """
+    linea_map, marca_map, _ = build_mapa_caso_desde_biblioteca(df_matriz)
+    linea_map.update(_mapa_excepciones_evento(evento_id))
+
+    usa_contenedor_lineas = bool(linea_map)
+    if not usa_contenedor_lineas and df_matriz is not None and not df_matriz.empty:
+        for _, row in df_matriz.iterrows():
+            if parse_lineas_array(row.get("lineas")):
+                usa_contenedor_lineas = True
+                break
+
+    errores: list[dict] = []
+    if not usa_contenedor_lineas:
+        return errores
+
+    lineas_excel: set[str] = set()
+    for _, row in skus_df.iterrows():
+        try:
+            cod = str(int(float(str(row.get("linea", 0)).strip() or 0)))
+        except (ValueError, TypeError):
+            continue
+        if cod and cod != "0":
+            lineas_excel.add(cod)
+
+    for cod in sorted(lineas_excel, key=lambda x: (len(x), x)):
+        if cod not in linea_map:
+            marca = ""
+            filas = skus_df[
+                skus_df["linea"].astype(str).str.replace(r"\.0$", "", regex=True) == cod
+            ] if "linea" in skus_df.columns else pd.DataFrame()
+            if not filas.empty:
+                marca = str(filas.iloc[0].get("marca", "")).strip().upper()
+            if marca and marca in marca_map:
+                continue
+            errores.append({
+                "tipo":    "Línea",
+                "codigo":  cod,
+                "mensaje": (
+                    f"Línea {cod} no está en el contenedor de ningún caso del listado. "
+                    "Agregala al caso correspondiente antes de importar."
+                ),
+            })
+    return errores
+
+
+def importar_caso_catalogo_a_evento(
+    evento_id: int,
+    proveedor_id: int,
+    nombre_caso_catalogo: str,
+) -> tuple[int | None, str]:
+    """Copia un caso del catálogo (caso_precio_biblioteca) al listado activo."""
+    df = get_dataframe(
+        """SELECT nombre_caso, dolar_politica, factor_conversion,
+                  descuento_1, descuento_2, descuento_3, descuento_4,
+                  genera_lpc03_lpc04, marcas, lineas, alcance_tipo
+           FROM caso_precio_biblioteca
+           WHERE proveedor_id = :pid AND activo = true
+             AND UPPER(TRIM(nombre_caso)) = UPPER(TRIM(:nc))
+           LIMIT 1""",
+        {"pid": proveedor_id, "nc": nombre_caso_catalogo.strip()},
+    )
+    if df is None or df.empty:
+        return None, f"Caso «{nombre_caso_catalogo}» no existe en el catálogo."
+    rec = normalizar_caso_evento(df.iloc[0].to_dict())
+    return persistir_caso_matriz_evento(evento_id, proveedor_id, rec)
 
 
 def get_lineas_por_evento(evento_id: int) -> dict:
@@ -500,8 +913,8 @@ def parse_lineas_array(lineas_raw) -> list[str]:
     """Convierte columna lineas de biblioteca a códigos proveedor (str enteros)."""
     if lineas_raw is None or (isinstance(lineas_raw, float) and pd.isna(lineas_raw)):
         return []
-    if isinstance(lineas_raw, (list, tuple)):
-        raw = lineas_raw
+    if isinstance(lineas_raw, (list, tuple, set, frozenset)):
+        raw = list(lineas_raw)
     elif isinstance(lineas_raw, str):
         s = lineas_raw.strip()
         if s in ("", "None", "nan", "[]"):
@@ -635,41 +1048,77 @@ def _mapa_excepciones_evento(evento_id: int) -> dict[str, str]:
     return out
 
 
-def guardar_lineas_excepcion(caso_id: int, linea_codigos: list, proveedor_id: int) -> int:
-    """Inserta excepciones línea→caso del evento (sin duplicar filas existentes)."""
-    n = 0
-    for cod in linea_codigos:
-        try:
-            cod_int = int(cod)
-        except (ValueError, TypeError):
-            continue
+def _insert_linea_en_contenedor(
+    caso_id: int,
+    proveedor_id: int,
+    cod_int: int,
+    evento_id: int | None,
+) -> bool:
+    """INSERT en contenedor; compatible con BD sin columna evento_id (pre-043)."""
+    if evento_id is not None:
         ok = commit_query(
-            """INSERT INTO precio_evento_linea_excepcion (caso_id, linea_id)
-               SELECT :cid, id FROM linea
+            """INSERT INTO precio_evento_linea_excepcion (caso_id, linea_id, evento_id)
+               SELECT :cid, id, :eid FROM linea
                WHERE proveedor_id = :pid AND codigo_proveedor = :cod
                  AND NOT EXISTS (
                      SELECT 1 FROM precio_evento_linea_excepcion x
                      WHERE x.caso_id = :cid AND x.linea_id = linea.id
                  )
                LIMIT 1""",
-            {"cid": caso_id, "pid": proveedor_id, "cod": cod_int},
+            {"cid": caso_id, "pid": proveedor_id, "cod": cod_int, "eid": evento_id},
             show_error=False,
         )
         if ok:
+            return True
+    return commit_query(
+        """INSERT INTO precio_evento_linea_excepcion (caso_id, linea_id)
+           SELECT :cid, id FROM linea
+           WHERE proveedor_id = :pid AND codigo_proveedor = :cod
+             AND NOT EXISTS (
+                 SELECT 1 FROM precio_evento_linea_excepcion x
+                 WHERE x.caso_id = :cid AND x.linea_id = linea.id
+             )
+           LIMIT 1""",
+        {"cid": caso_id, "pid": proveedor_id, "cod": cod_int},
+        show_error=False,
+    )
+
+
+def guardar_lineas_excepcion(
+    caso_id: int,
+    linea_codigos: list,
+    proveedor_id: int,
+    evento_id: int | None = None,
+) -> int:
+    """Inserta excepciones línea→caso del evento (contenedor FK, sin duplicar)."""
+    if evento_id is None:
+        evento_id = _evento_id_de_caso(caso_id)
+    n = 0
+    for cod in linea_codigos:
+        try:
+            cod_int = int(cod)
+        except (ValueError, TypeError):
+            continue
+        if _insert_linea_en_contenedor(caso_id, proveedor_id, cod_int, evento_id):
             n += 1
     return n
 
 
 def reemplazar_lineas_excepcion(
-    caso_id: int, linea_codigos: list, proveedor_id: int
+    caso_id: int,
+    linea_codigos: list,
+    proveedor_id: int,
+    evento_id: int | None = None,
 ) -> int:
     """Reemplaza el alcance por líneas de un caso dentro del evento."""
+    if evento_id is None:
+        evento_id = _evento_id_de_caso(caso_id)
     commit_query(
         "DELETE FROM precio_evento_linea_excepcion WHERE caso_id = :cid",
         {"cid": caso_id},
         show_error=False,
     )
-    return guardar_lineas_excepcion(caso_id, linea_codigos, proveedor_id)
+    return guardar_lineas_excepcion(caso_id, linea_codigos, proveedor_id, evento_id)
 
 
 def _cargar_lookups_maestros(proveedor_id: int, conn) -> tuple[dict, dict, dict]:
@@ -786,7 +1235,7 @@ def generar_maestro_lineas_desde_evento(evento_id: int):
     )
 
 
-def cerrar_evento_y_activar(evento_id: int, fecha_hasta: str):
+def cerrar_evento_y_activar(evento_id: int, fecha_hasta: str) -> int:
     commit_query(
         """UPDATE precio_lista SET vigente = false
            WHERE evento_id IN (
@@ -809,6 +1258,55 @@ def cerrar_evento_y_activar(evento_id: int, fecha_hasta: str):
         "UPDATE precio_evento SET estado = 'cerrado' WHERE id = :eid",
         {"eid": evento_id}
     )
+    n_marca = sincronizar_marca_linea_desde_evento(evento_id)
+    if n_marca:
+        DBInspector.log(
+            f"[ENGINE] Marcas en pilar linea sincronizadas desde hojas Excel: {n_marca} líneas",
+            "SUCCESS",
+        )
+    return n_marca
+
+
+def sincronizar_marca_linea_desde_evento(evento_id: int) -> int:
+    """Provisiona pilares (marca FK + L+R + género/estilo/tipo) desde un evento."""
+    from modules.rimec_engine.pillar_fk import provisionar_pilares_desde_evento
+
+    stats = provisionar_pilares_desde_evento(evento_id)
+    return int(stats.get("lr", 0) or 0)
+
+
+def get_marca_por_linea_desde_listados(proveedor_id: int) -> dict[int, str]:
+    """linea_id → marca (último listado cerrado por línea). Fuente: nombre de hoja Excel."""
+    df = get_dataframe(
+        """SELECT DISTINCT ON (pl.linea_id)
+                  pl.linea_id, TRIM(pl.marca) AS marca
+           FROM precio_lista pl
+           JOIN precio_evento pe ON pe.id = pl.evento_id
+           WHERE pe.proveedor_id = :pid
+             AND pe.estado = 'cerrado'
+             AND pl.linea_id IS NOT NULL
+             AND TRIM(COALESCE(pl.marca, '')) <> ''
+           ORDER BY pl.linea_id, pe.created_at DESC, pl.id DESC""",
+        {"pid": proveedor_id},
+    )
+    if df is None or df.empty:
+        return {}
+    return {int(r["linea_id"]): str(r["marca"]) for _, r in df.iterrows()}
+
+
+def get_marcas_distintas_desde_listados(proveedor_id: int) -> list[str]:
+    df = get_dataframe(
+        """SELECT DISTINCT TRIM(pl.marca) AS marca
+           FROM precio_lista pl
+           JOIN precio_evento pe ON pe.id = pl.evento_id
+           WHERE pe.proveedor_id = :pid
+             AND TRIM(COALESCE(pl.marca, '')) <> ''
+           ORDER BY 1""",
+        {"pid": proveedor_id},
+    )
+    if df is None or df.empty:
+        return []
+    return [str(r["marca"]) for _, r in df.iterrows()]
 
 
 def registrar_auditoria(evento_id: int, tabla: str, campo: str,
@@ -861,6 +1359,33 @@ def get_todos_eventos() -> pd.DataFrame:
            ORDER BY pe.created_at DESC"""
     )
     return df if df is not None else pd.DataFrame()
+
+
+def get_eventos_proveedor(proveedor_id: int) -> pd.DataFrame:
+    """Listados de precio del proveedor (más reciente primero)."""
+    df = get_dataframe(
+        """SELECT pe.id, pe.nombre_evento, pe.nombre_archivo, pe.estado,
+                  pe.fecha_vigencia_desde, pe.created_at,
+                  COUNT(pl.id) AS total_skus
+           FROM precio_evento pe
+           LEFT JOIN precio_lista pl ON pl.evento_id = pe.id
+           WHERE pe.proveedor_id = :pid
+           GROUP BY pe.id
+           ORDER BY pe.created_at DESC""",
+        {"pid": proveedor_id},
+    )
+    return df if df is not None else pd.DataFrame()
+
+
+def excepciones_lineas_por_caso(evento_id: int) -> dict[str, list[str]]:
+    """nombre_caso → códigos de línea con excepción en ese listado."""
+    m = _mapa_excepciones_evento(evento_id)
+    out: dict[str, list[str]] = {}
+    for linea, caso in m.items():
+        out.setdefault(caso, []).append(linea)
+    for caso in out:
+        out[caso].sort(key=lambda x: (len(x), x))
+    return out
 
 
 def get_preview_skus(skus_caso: pd.DataFrame, caso: dict, n: int = 5) -> pd.DataFrame:
@@ -935,18 +1460,18 @@ def resolver_casos_skus(
                 hay_error = True
             continue
 
-        if marca in ["BR SPORT", "ACTVITTA"]:
-            fallback = "NORMAL BR-S ACT"
+        casos_asignados.append("—")
+        if linea_map:
+            estados.append(
+                f"❌ ERROR (Línea {linea_val} fuera del contenedor del listado)"
+            )
+        elif marca_map:
+            estados.append(
+                f"❌ ERROR (Marca {marca or '—'} sin caso en la matriz)"
+            )
         else:
-            fallback = "NORMAL BR-VZ-ML-MD-MKA/O"
-
-        if fallback in nombres_bib:
-            casos_asignados.append(fallback)
-            estados.append("⚠️ DEFAULT (sin alcance en biblioteca)")
-        else:
-            casos_asignados.append(fallback)
-            estados.append(f"❌ ERROR (Falta fallback '{fallback}' en matriz)")
-            hay_error = True
+            estados.append("❌ ERROR (Sin caso ni contenedor de líneas)")
+        hay_error = True
 
     skus_df = skus_df.copy()
     skus_df["caso_asignado"] = casos_asignados
@@ -1152,13 +1677,13 @@ def get_precio_lista_completa(evento_id: int) -> pd.DataFrame:
            FROM precio_lista pl
            JOIN precio_evento_caso pec ON pec.id = pl.caso_id
            JOIN precio_evento      pe  ON pe.id  = pl.evento_id
-           LEFT JOIN linea     l ON l.id  = pl.linea_codigo::bigint
-           LEFT JOIN referencia r ON r.id = pl.referencia_codigo::bigint
-           LEFT JOIN material   m ON m.id = pl.material_descripcion::bigint
+           LEFT JOIN linea     l ON l.id  = pl.linea_id
+           LEFT JOIN referencia r ON r.id = pl.referencia_id
+           LEFT JOIN material   m ON m.id = pl.material_id
            WHERE pl.evento_id = :eid
            ORDER BY pec.nombre_caso, pl.marca,
-                    COALESCE(l.codigo_proveedor, pl.linea_codigo::bigint),
-                    COALESCE(r.codigo_proveedor, pl.referencia_codigo::bigint)""",
+                    COALESCE(l.codigo_proveedor, 0),
+                    COALESCE(r.codigo_proveedor, 0)""",
         {"eid": evento_id},
     )
 
@@ -1393,12 +1918,95 @@ def actualizar_lineas_por_rango(
 # PURGA COMPLETA DE LISTAS DE PRECIOS (mantiene pilares)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def purgar_solo_eventos_precio() -> tuple[bool, dict]:
+    """
+    Vacía únicamente listados de precios (precio_evento y tablas hijas).
+    Conserva: pilares (linea, referencia, material, color), listado_precio,
+    biblioteca_precio, caso_precio_biblioteca, biblioteca_caso_linea.
+    """
+    tablas_evento = (
+        "precio_auditoria",
+        "precio_evento_linea_excepcion",
+        "precio_lista",
+        "precio_evento_caso",
+        "precio_evento",
+    )
+    try:
+        with engine.begin() as conn:
+            antes = {
+                "eventos": int(
+                    conn.execute(text("SELECT COUNT(*) FROM precio_evento")).fetchone()[0]
+                ),
+                "casos_evento": int(
+                    conn.execute(text("SELECT COUNT(*) FROM precio_evento_caso")).fetchone()[0]
+                ),
+                "skus": int(
+                    conn.execute(text("SELECT COUNT(*) FROM precio_lista")).fetchone()[0]
+                ),
+                "lineas_contenedor": int(
+                    conn.execute(
+                        text("SELECT COUNT(*) FROM precio_evento_linea_excepcion")
+                    ).fetchone()[0]
+                ),
+            }
+
+            conn.execute(
+                text(
+                    "UPDATE intencion_compra SET precio_evento_id = NULL "
+                    "WHERE precio_evento_id IS NOT NULL"
+                )
+            )
+            conn.execute(
+                text(
+                    "UPDATE intencion_compra_pedido SET precio_evento_id = NULL "
+                    "WHERE precio_evento_id IS NOT NULL"
+                )
+            )
+
+            for tbl in tablas_evento:
+                reg = conn.execute(
+                    text("SELECT to_regclass(:r)"), {"r": f"public.{tbl}"}
+                ).scalar()
+                if reg:
+                    conn.execute(
+                        text(f"TRUNCATE TABLE public.{tbl} RESTART IDENTITY CASCADE")
+                    )
+
+            despues = {
+                "eventos": int(
+                    conn.execute(text("SELECT COUNT(*) FROM precio_evento")).fetchone()[0]
+                ),
+                "linea": int(conn.execute(text("SELECT COUNT(*) FROM linea")).fetchone()[0]),
+                "referencia": int(
+                    conn.execute(text("SELECT COUNT(*) FROM referencia")).fetchone()[0]
+                ),
+            }
+
+        DBInspector.log(
+            f"[ENGINE] Purga solo eventos: {antes['eventos']} listados, "
+            f"{antes['skus']} SKUs precio_lista; pilares intactos (linea={despues['linea']})",
+            "WARNING",
+        )
+        return True, {
+            "eventos_eliminados": antes["eventos"],
+            "casos_evento_eliminados": antes["casos_evento"],
+            "skus_eliminados": antes["skus"],
+            "lineas_contenedor_eliminadas": antes["lineas_contenedor"],
+            "eventos_restantes": despues["eventos"],
+            "linea_pilares": despues["linea"],
+            "referencia_pilares": despues["referencia"],
+        }
+    except Exception as e:
+        DBInspector.log(f"[ENGINE] purgar_solo_eventos_precio: {e}", "ERROR")
+        return False, {"error": str(e)}
+
+
 def purgar_todas_las_listas() -> tuple[bool, dict]:
     """
     Elimina TODOS los eventos de precio y reinicia contadores (RESTART IDENTITY).
     Desvincula intencion_compra / intencion_compra_pedido antes de borrar (FK).
     Conserva: pilares, listado_precio (catálogo LPN/LPC). Vacía caso_precio_biblioteca (legacy).
-  """
+    """
     try:
         with engine.begin() as conn:
             n_skus    = conn.execute(text("SELECT COUNT(*) FROM precio_lista")).fetchone()[0]

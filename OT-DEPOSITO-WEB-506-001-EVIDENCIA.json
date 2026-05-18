@@ -1,0 +1,183 @@
+{
+  "ot_id": "OT-DEPOSITO-WEB-506-001",
+  "titulo": "Deposito Web 36->44 + prevencion material vacio",
+  "fecha_ejecucion": "2026-05-17",
+  "status": "OK",
+  "traspaso_id": 2,
+  "traspaso_nro": "T-2026-0001",
+  "movimiento_id": 1,
+  "sintoma": {
+    "descripcion": "UI Deposito Web muestra 36 pares (3 articulos) pero traspaso_detalle tiene 44 pares (19 filas)",
+    "causa_raiz": "Ingreso a deposito procesado antes de rehidratar ref 565 (OT-505-002). Deposito Web lee de movimiento_detalle, no de traspaso_detalle."
+  },
+  "fase_1_investigacion": {
+    "I1_auditoria_stock": {
+      "script": "scripts/auditar_stock_traspaso_vs_movimiento.py",
+      "argumentos": "--traspaso-id 2",
+      "resultado": "OK",
+      "hallazgos": {
+        "traspaso_detalle": {
+          "filas": 19,
+          "pares": 44
+        },
+        "movimiento_detalle": {
+          "filas_inicial": 14,
+          "pares_inicial": 36,
+          "movimiento_id": 1,
+          "tipo": "INGRESO_COMPRA"
+        },
+        "brecha_inicial": 8,
+        "combinaciones_faltantes": [
+          {"comb_id": 468, "linea": "4202", "ref": "565", "talla": "t36", "deficit": 1},
+          {"comb_id": 469, "linea": "4202", "ref": "565", "talla": "t37", "deficit": 2},
+          {"comb_id": 470, "linea": "4202", "ref": "565", "talla": "t38", "deficit": 2},
+          {"comb_id": 471, "linea": "4202", "ref": "565", "talla": "t39", "deficit": 2},
+          {"comb_id": 472, "linea": "4202", "ref": "565", "talla": "t40", "deficit": 1}
+        ]
+      }
+    }
+  },
+  "fase_2_sincronizacion": {
+    "R1_R4_sincronizar_movimiento": {
+      "script": "scripts/sincronizar_movimiento_desde_traspaso.py",
+      "argumentos": "--traspaso-id 2 --yes",
+      "resultado": "OK",
+      "operacion": {
+        "movimiento_existente": 1,
+        "filas_insertadas": 5,
+        "pares_agregados": 8
+      },
+      "validacion_post_sync": {
+        "traspaso_detalle_pares": 44,
+        "movimiento_detalle_pares": 44,
+        "brecha_final": 0,
+        "status": "SINCRONIZADO"
+      }
+    }
+  },
+  "fase_3_verificacion": {
+    "V1_deposito_web_ui": {
+      "descripcion": "Usuario debe verificar en Nexus -> Deposito Web -> ACTVITTA",
+      "esperado": "44 pares, 4 articulos (incluye ref 565 CAMEL 1528)",
+      "nota": "Deposito Web lee de movimiento_detalle (sincronizado en fase 2)"
+    },
+    "V2_validar_traspaso_detalle": {
+      "script": "scripts/validar_traspaso_detalle.py",
+      "argumentos": "--traspaso-id 2",
+      "resultado": "PASS",
+      "checks": {
+        "C1_combinaciones": "PASS (1165)",
+        "C2_pares": "PASS (44)",
+        "C3_duplicados": "PASS (0)"
+      }
+    }
+  },
+  "fase_4_prevencion": {
+    "P1_reparar_ppd": {
+      "script": "scripts/reparar_ppd_descp_material_vacio.py",
+      "argumentos": "--pp-id 1 --yes",
+      "resultado": "OK",
+      "stats": {
+        "pp_id": 1,
+        "pp_nro": "PP-2026-0001",
+        "ppd_procesados": 40,
+        "ppd_reparados": 40,
+        "ppd_no_encontrados": 0
+      },
+      "ppd_202_verificado": {
+        "ppd_id": 202,
+        "linea": "4202",
+        "referencia": "565",
+        "material_code": 31855,
+        "descp_material_antes": "",
+        "descp_material_despues": "LOC. CENTRUM/CACHAREL",
+        "status": "OK"
+      }
+    },
+    "P2_coalesce_material_snapshot": {
+      "archivo": "modules/compra_legal/logic.py",
+      "lineas_modificadas": ["269-288 (venta_transito)", "329-352 (factura_interna)"],
+      "cambio": "Agregado COALESCE para material: NULLIF(TRIM(ppd.descp_material),'') -> mat.descripcion -> linea_snapshot->'material_nombre'",
+      "proposito": "Evitar material vacio en snapshot_json cuando PPD tiene material_code valido pero descp_material vacio",
+      "status": "IMPLEMENTADO"
+    },
+    "P3_fallback_resolve": {
+      "archivo": "modules/compra_legal/logic.py",
+      "funcion": "_resolve_combinacion_id",
+      "cambio": "NO IMPLEMENTADO",
+      "razon": "P1 (reparar PPD) + P2 (COALESCE upstream) ya previenen material vacio. Fallback por codigo_proveedor en _resolve seria redundante y requeriria cambiar signature de la funcion.",
+      "status": "OMITIDO (cubierto por P1+P2)"
+    },
+    "P4_warning_rehidratar": {
+      "descripcion": "Si traspaso ya CONFIRMADO, advertir antes de rehidratar o auto-sync movimiento",
+      "status": "NO IMPLEMENTADO (opcional)",
+      "razon": "OT marca P4 como opcional. Script sincronizar_movimiento_desde_traspaso.py ya es idempotente y puede ejecutarse manualmente post-rehidratacion."
+    }
+  },
+  "checks_cierre": [
+    {
+      "id": "C1",
+      "pass": true,
+      "expected": "traspaso_detalle pares = 44",
+      "actual": 44
+    },
+    {
+      "id": "C2",
+      "pass": true,
+      "expected": "movimiento_detalle pares = 44",
+      "actual": 44
+    },
+    {
+      "id": "C3",
+      "pass": true,
+      "expected": "delta TD vs MD = 0",
+      "actual": 0
+    },
+    {
+      "id": "C4",
+      "pass": "PENDIENTE_USUARIO",
+      "expected": "deposito_web pares ACTVITTA = 44",
+      "actual": "Usuario debe verificar en UI (movimiento_detalle sincronizado)"
+    },
+    {
+      "id": "C5",
+      "pass": "PENDIENTE_USUARIO",
+      "expected": "deposito_web articulos ref565 visible",
+      "actual": "Usuario debe verificar ref 565 CAMEL 1528 en UI"
+    },
+    {
+      "id": "C6",
+      "pass": true,
+      "expected": "ppd_id 202 descp_material = LOC. CENTRUM/CACHAREL",
+      "actual": "LOC. CENTRUM/CACHAREL"
+    }
+  ],
+  "estado_final": {
+    "traspaso_detalle": {
+      "filas": 19,
+      "pares": 44
+    },
+    "movimiento_detalle": {
+      "filas": 19,
+      "pares": 44
+    },
+    "delta": 0,
+    "sincronizado": true,
+    "ppd_reparados": 40,
+    "prevencion_implementada": true
+  },
+  "dependencias_completadas": [
+    "OT-TRASPASO-504-001 (UniqueViolation fix)",
+    "OT-COMBINACION-505-001 (backfill + rehidratacion base)",
+    "OT-COMBINACION-505-002 (recuperar 8 pares ref 565)"
+  ],
+  "observaciones": [
+    "movimiento_detalle sincronizado con traspaso_detalle: 44 pares en ambas tablas",
+    "ppd_id=202 reparado: descp_material='LOC. CENTRUM/CACHAREL' (antes vacio)",
+    "40 PPD reparados en total para PP-2026-0001",
+    "COALESCE implementado en logic.py para prevenir material vacio en futuros snapshots",
+    "Sistema completo: RIMEC -> Compra Legal -> Traspaso -> Movimiento -> Deposito Web",
+    "Usuario debe refrescar Deposito Web en Nexus para verificar 44 pares y ref 565 visible"
+  ],
+  "proximo_paso": "Usuario: Refrescar Nexus -> Deposito Web -> ACTVITTA. Esperado: 44 pares, 4 articulos (incluye 565 CAMEL 1528)"
+}

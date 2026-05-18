@@ -1,16 +1,27 @@
 """
 Lógica: Excel multi-tienda → public.retail_multitienda_staging (Supabase).
 
+**Política de carga:** cada importación **vacía por completo** ``retail_multitienda_staging``
+y graba **solo** el archivo actual (no se acumulan lotes anteriores en staging). Lo que
+**sí persiste** y se enriquece son los **pilares** (``linea``, ``referencia``,
+``linea_referencia``, ``material``, ``color``, …) cuando ``resolve_retail_fks`` da de
+alta o matchea combinaciones nuevas.
+
 Columnas esperadas (cabeceras flexibles, ver map_header_to_canon). Marca / género /
 estilo / tipo_1 no vienen en el Excel: se resuelven a FK desde linea + linea_referencia;
 si el par falta y línea+ref son numéricos, `fk_resolve` da de alta el par en pilares
-(coherencia por bloque de mil líneas) antes de resolver dimensiones.
+antes de resolver dimensiones.
+
+Los códigos material/color del Excel se copian a ``excel_material_code`` / ``excel_color_code``
+(ver migración 035) **antes** de que ``material_id`` / ``color_id`` pasen a ser FK internas,
+para nombres de foto en Storage cuando el FK cae en el sentinela RETAIL_OTROS (-999001).
 """
 from __future__ import annotations
 
 import re
 import uuid
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import pandas as pd
@@ -472,15 +483,41 @@ def insert_batch(
     batch_label: str | None,
     archivo_origen: str | None,
     created_by: str | None,
+    progress_cb: Callable[[str, float | None], None] | None = None,
 ) -> str:
-    """Inserta filas normalizadas con un mismo batch_id. Devuelve batch_id UUID string."""
+    """
+    Vacía ``retail_multitienda_staging`` y graba solo este lote. Devuelve ``batch_id``.
+
+    Los pilares se enriquecen antes vía ``resolve_retail_fks`` (transacciones propias);
+    staging queda reemplazado en una sola transacción (DELETE + INSERT).
+    """
     bid = str(uuid.uuid4())
     bl = (batch_label or "").strip() or None
     ao = (archivo_origen or "").strip() or None
     cb = (created_by or "").strip() or None
 
+    def _progress(msg: str, pct: float | None = None) -> None:
+        if progress_cb is not None:
+            progress_cb(msg, pct)
+
     df = df.copy()
+    _progress("Preparando y ordenando filas del Excel…", 0.08)
+    # Vista de negocio: recorrer el lote con línea descendente (mayor código primero).
+    # La resolución de FK y el alta en pilares reordenan internamente donde hace falta.
+    df["_sort_lc"] = pd.to_numeric(df["linea_code"], errors="coerce")
+    df["_sort_rc"] = pd.to_numeric(df["referencia_code"], errors="coerce")
+    df = df.sort_values(by=["_sort_lc", "_sort_rc"], ascending=[False, True], kind="mergesort")
+    df = df.drop(columns=["_sort_lc", "_sort_rc"]).reset_index(drop=True)
+
+    # Códigos de celda Excel (antes de resolver a material.id / color.id; ver migración 035).
+    df["excel_material_code"] = df["material_id"].map(lambda v: _canon_codigo_pilar(v) or None)
+    df["excel_color_code"] = df["color_id"].map(lambda v: _canon_codigo_pilar(v) or None)
+    _progress(
+        "Resolviendo pilares y FKs (línea, referencia, material, color) — puede tardar varios minutos…",
+        0.2,
+    )
     df, _fk_warns = resolve_retail_fks(engine, df)
+    _progress("Pilares listos. Grabando staging (reemplazo total)…", 0.72)
     df.insert(0, "batch_id", bid)
     df.insert(1, "batch_label", bl)
     df["archivo_origen"] = ao
@@ -496,6 +533,8 @@ def insert_batch(
         "referencia_code",
         "material_id",
         "color_id",
+        "excel_material_code",
+        "excel_color_code",
         "grada",
         "cantidad",
         "precio_unitario",
@@ -511,10 +550,12 @@ def insert_batch(
     n = len(out)
     print(
         f"[RETAIL-STAGING] insert_batch INICIO batch_id={bid} filas_a_insertar={n} "
-        f"archivo={ao!r}",
+        f"archivo={ao!r} (reemplazo total staging)",
         flush=True,
     )
+    _progress(f"Insertando {n:,} filas en Supabase…", 0.88)
     with engine.begin() as conn:
+        conn.execute(text("DELETE FROM public.retail_multitienda_staging"))
         out.to_sql(
             "retail_multitienda_staging",
             conn,
@@ -524,6 +565,7 @@ def insert_batch(
             method="multi",
             chunksize=500,
         )
+    _progress("Importación finalizada.", 1.0)
     print(f"[RETAIL-STAGING] insert_batch FIN batch_id={bid} filas_esperadas={n}", flush=True)
     return bid
 
@@ -565,6 +607,20 @@ def delete_batch(engine, batch_id: str) -> int:
             {"b": batch_id},
         )
         return r.rowcount or 0
+
+
+def delete_all_retail_staging(engine) -> int:
+    """
+    Borra **todas** las filas de `public.retail_multitienda_staging` (todos los lotes).
+    Útil en entornos de prueba antes de reimportar un Excel (p. ej. líneas nuevas en pilares).
+    No modifica `linea`, `linea_referencia`, `marca_v2`, etc.
+    """
+    with engine.begin() as conn:
+        n0 = conn.execute(
+            text("SELECT COUNT(*)::bigint FROM public.retail_multitienda_staging")
+        ).scalar()
+        conn.execute(text("DELETE FROM public.retail_multitienda_staging"))
+    return int(n0 or 0)
 
 
 def refresh_batch_fks(engine, batch_id: str, *, proveedor_id: int | None = None) -> int:

@@ -1,0 +1,169 @@
+{
+  "ot_id": "OT-PILAR-502-002",
+  "status": "OK",
+  "timestamp": "2026-05-17",
+  "fases": {
+    "fase_2_nexus": {
+      "R1_sync_function": {
+        "completado": true,
+        "archivo": "modules/rimec_engine/pillar_fk.py",
+        "funcion": "sync_linea_referencia_fk(conn, linea_id, ref_id, grupo_estilo_id, tipo_1_id)",
+        "descripcion": "Actualiza FK + descp desde maestras"
+      },
+      "R2_ui_linea_referencia": {
+        "completado": true,
+        "archivo": "modules/rimec_engine/ui.py",
+        "descripcion": "Fila + lote usan R1 (sync_linea_referencia_fk), no UPDATE raw"
+      },
+      "R3_buscador": {
+        "completado": true,
+        "archivo": "modules/rimec_engine/ui.py",
+        "descripcion": "Inputs Línea + Ref para buscar directamente (ej: 5835 / 100)"
+      },
+      "R4_admin_lineas_marca": {
+        "completado": true,
+        "archivos": [
+          "modules/rimec_engine/ui.py",
+          "modules/rimec_engine/logic.py"
+        ],
+        "descripcion": "Marca editable en rango y fila a fila (como género)"
+      },
+      "R5_resync_lr": {
+        "completado": true,
+        "script": "scripts/resync_lr_descripciones.py",
+        "filas_resincronizadas": 1,
+        "resultado": "5835-100: BOTAS -> TENIS"
+      },
+      "R6_caso_5835_100": {
+        "completado": true,
+        "estilo_lr": "TENIS",
+        "estilo_master": "TENIS",
+        "sincronizado": true
+      }
+    },
+    "fase_3_web": {
+      "W1_fetchControl_marca": {
+        "completado": true,
+        "archivo": "rimec-web/lib/controlStock/fetchControl.ts",
+        "cambio": "Marca desde linea.marca_id (via JOIN), no ppd.id_marca"
+      },
+      "W2_vista_marca_estilo": {
+        "completado": true,
+        "archivo": "aplicar_vista_stock_definitiva.py",
+        "cambios": [
+          "marca_id: l.marca_id (no ppd.id_marca)",
+          "JOIN marca_v2 ON l.marca_id (no ppd.id_marca)",
+          "descp_grupo_estilo: COALESCE(ge.descp, lr.descp) - master prioritario",
+          "descp_tipo_1: COALESCE(t1.descp, lr.descp) - master prioritario"
+        ],
+        "reaplicado": true
+      },
+      "W3_filtros_master": {
+        "completado": true,
+        "archivo": "rimec-web/lib/atributosLinea.ts",
+        "cambio": "completarLabels prioriza master (geLabels, t1Labels) sobre lr.descp"
+      },
+      "W4_verificar_propagacion": {
+        "completado": true,
+        "script": "scripts/verificar_pilar_propagacion.py",
+        "caso": "5835-100",
+        "resultado": "OK - Sin desvíos pilar -> vista"
+      },
+      "W5_e2e": {
+        "completado": false,
+        "descripcion": "E2E manual: /estadisticas filtro 5835-100 -> estilo TENIS (no BOTAS)",
+        "pendiente": "Verificación manual en navegador"
+      }
+    }
+  },
+  "checks": [
+    {
+      "id": "P2",
+      "description": "5835/100 lr.descp = TENIS",
+      "pass": true,
+      "expected": "TENIS",
+      "actual": "TENIS"
+    },
+    {
+      "id": "P3",
+      "description": "fetchControl marca from linea",
+      "pass": true,
+      "expected": "linea.marca_id via JOIN",
+      "actual": "lin?.marcaId ? marcaMap.get(lin.marcaId)"
+    },
+    {
+      "id": "P4",
+      "description": "v_stock marca from l.marca_id",
+      "pass": true,
+      "expected": "l.marca_id",
+      "actual": "l.marca_id::bigint AS marca_id"
+    },
+    {
+      "id": "P5",
+      "description": "/estadisticas estilo TENIS",
+      "pass": null,
+      "expected": "TENIS (no BOTAS)",
+      "actual": "Requiere verificación manual E2E (W5)"
+    },
+    {
+      "id": "P6",
+      "description": "resync_lr filas >= 1",
+      "pass": true,
+      "expected": ">= 1",
+      "actual": 1
+    }
+  ],
+  "metrics": {
+    "resync_lr_filas": 1,
+    "caso_5835_100": {
+      "estilo_pilar_lr": "TENIS",
+      "estilo_pilar_master": "TENIS",
+      "estilo_vista": "TENIS",
+      "marca_pilar": "MOLECA",
+      "marca_vista": "MOLECA",
+      "marca_id_pilar": 4,
+      "marca_id_vista": 4
+    }
+  },
+  "verificacion_w4": {
+    "caso": "5835-100",
+    "pilar": {
+      "linea_id": 26,
+      "marca_id": 4,
+      "marca_descp": "MOLECA",
+      "genero_id": 1,
+      "grupo_estilo_id": 30000,
+      "descp_grupo_estilo_master": "TENIS",
+      "descp_grupo_estilo_lr": "TENIS",
+      "tipo_1_id": 2
+    },
+    "v_stock_rimec": {
+      "marca_id": 4,
+      "descp_marca": "MOLECA",
+      "grupo_estilo_id": 30000,
+      "descp_grupo_estilo": "TENIS"
+    },
+    "desvios": []
+  },
+  "archivos_modificados": [
+    "modules/rimec_engine/pillar_fk.py",
+    "modules/rimec_engine/ui.py",
+    "modules/rimec_engine/logic.py",
+    "rimec-web/lib/controlStock/fetchControl.ts",
+    "rimec-web/lib/atributosLinea.ts",
+    "aplicar_vista_stock_definitiva.py"
+  ],
+  "scripts_creados": [
+    "scripts/resync_lr_descripciones.py",
+    "scripts/verificar_pilar_propagacion.py",
+    "scripts/verificar_desvio_marca_ppd_linea.py"
+  ],
+  "notas": [
+    "Fase 2 y 3 completadas con éxito",
+    "Caso 5835-100: estilo sincronizado BOTAS -> TENIS",
+    "Arquitectura H1 corregida: marca desde linea.marca_id",
+    "Arquitectura H2 corregida: descp sincronizadas desde maestras",
+    "W5 (E2E manual) pendiente de verificación por usuario",
+    "No se hicieron commits (según OT: 'No commit salvo pedido del usuario')"
+  ]
+}

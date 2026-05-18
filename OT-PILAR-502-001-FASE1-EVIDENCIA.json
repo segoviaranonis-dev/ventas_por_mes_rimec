@@ -1,0 +1,120 @@
+{
+  "ot_id": "OT-PILAR-502-001",
+  "fase": "FASE_1_INVESTIGACION",
+  "status": "COMPLETADA",
+  "timestamp": "2026-05-17",
+  "objetivo": "Identificar desvíos entre FK canónica (pilar) y lecturas reales",
+  "caso_prueba": "5835-100",
+  "resultados": {
+    "pilar": {
+      "linea_id": 26,
+      "linea_codigo": "5835",
+      "marca_id": 4,
+      "marca_descp": "MOLECA",
+      "genero_id": 1,
+      "genero_descp": "DAMAS",
+      "linea_referencia_id": 48,
+      "referencia_codigo": "100",
+      "grupo_estilo_id": 30000,
+      "grupo_estilo_descp_maestro": "TENIS",
+      "grupo_estilo_descp_lr": "BOTAS",
+      "tipo_1_id": 2,
+      "tipo_1_descp": "CERRADO"
+    },
+    "consumidores": {
+      "ppd": {
+        "id": 306,
+        "id_marca": 4,
+        "marca_descp": "MOLECA"
+      },
+      "v_stock_rimec": {
+        "marca_id": 4,
+        "marca_descp": "MOLECA",
+        "grupo_estilo_id": 30000,
+        "grupo_estilo_descp": "BOTAS",
+        "tipo_1_id": 2,
+        "tipo_1_descp": "CERRADO"
+      }
+    }
+  },
+  "hipotesis_verificadas": {
+    "H1_arquitectonico": {
+      "descripcion": "v_stock_rimec lee ppd.id_marca en lugar de linea.marca_id",
+      "confirmado": true,
+      "tipo": "CRITICO",
+      "desvio_codigo": "aplicar_vista_stock_definitiva.py:18 usa ppd.id_marca",
+      "desvio_datos_actual": false,
+      "filas_verificadas": 273,
+      "filas_inconsistentes": 0,
+      "porcentaje_desvio": 0.0,
+      "impacto": "Cambios en Admin Líneas (marca_id) NO se reflejan en catálogo web",
+      "script_evidencia": "scripts/verificar_desvio_marca_ppd_linea.py"
+    },
+    "H2_descp_desactualizada": {
+      "descripcion": "linea_referencia.descp_* desactualizada respecto a maestras",
+      "confirmado": true,
+      "tipo": "MEDIO",
+      "caso_5835_100": {
+        "lr_descp_grupo_estilo": "BOTAS",
+        "maestro_descp_grupo_estilo": "TENIS",
+        "desvio": true
+      },
+      "impacto": "Vista v_stock_rimec muestra descripciones obsoletas",
+      "causa": "UI no refresca descp al guardar FK"
+    },
+    "H3_pilar_mal_cargado": {
+      "descripcion": "Pilar tiene FK incorrectos desde origen",
+      "confirmado": false,
+      "tipo": "NO_APLICABLE",
+      "observacion": "FK correctos en pilar, problema es propagación a consumers"
+    }
+  },
+  "desvios_criticos": [
+    {
+      "componente": "v_stock_rimec",
+      "atributo": "marca_id",
+      "lee_desde": "ppd.id_marca",
+      "deberia_leer": "linea.marca_id",
+      "fase_fix": "FASE_3_WEB",
+      "tarea": "W2 - Reaplicar vista con l.marca_id"
+    },
+    {
+      "componente": "linea_referencia",
+      "atributo": "descp_grupo_estilo",
+      "valor_actual": "BOTAS",
+      "valor_maestro": "TENIS",
+      "fase_fix": "FASE_2_NEXUS",
+      "tarea": "R1 - sync_linea_referencia_fk()"
+    }
+  ],
+  "entregables": {
+    "audit_doc": "docs/AUDIT_PILAR_FK_CONSUMERS.md",
+    "scripts": [
+      "scripts/investigar_5835_100.py",
+      "scripts/investigar_5835_100_resultado.json",
+      "scripts/verificar_desvio_marca_ppd_linea.py"
+    ],
+    "evidencia_json": "OT-PILAR-502-001-FASE1-EVIDENCIA.json"
+  },
+  "proximas_fases": {
+    "fase_2_nexus": {
+      "tareas": [
+        "R1: Extraer sync_linea_referencia_fk() para refrescar descp",
+        "R2: Buscador Línea×Ref por código (5835 / 100)",
+        "R3: Admin Líneas permitir editar marca_id",
+        "R4: Script verificar_pilar_propagacion.py"
+      ],
+      "bloqueadores": []
+    },
+    "fase_3_web": {
+      "tareas": [
+        "W1: fetchControl.ts marca desde linea.marca_id",
+        "W2: v_stock_rimec marca desde l.marca_id (reaplicar vista)",
+        "W3: Catálogo/filtros alineados con vista corregida",
+        "W4: Verificación end-to-end: cambio pilar → estadísticas"
+      ],
+      "bloqueadores": []
+    }
+  },
+  "fase_1_completa": true
+}

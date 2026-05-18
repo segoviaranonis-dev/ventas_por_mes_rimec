@@ -17,6 +17,10 @@ from modules.compra_legal.logic import (
     get_traspaso_detalle_lines,
     procesar_ingreso_bazar,
 )
+from core.fi_card import render_fi_card
+from modules.facturacion.logic import get_fi_registro_por_numero, get_factura_lineas
+from modules.pedido_proveedor.logic import get_fi_detalles_canonico
+from core.tabla_articulos import render_tabla_5pilares
 
 _ESTADO_COLOR = {
     "BORRADOR":   "#64748B",
@@ -169,20 +173,46 @@ def _render_detalle_traspaso(id_trp: int):
 
     st.divider()
 
-    # ── Líneas de artículos ───────────────────────────────────────────────────
+    # ── OT-COMPRA-WEB-507-001: Mostrar FAC-INT con render_fi_card ─────────────
+    doc_ref = detail.get("factura") or detail.get("documento_ref", "")
+
+    if doc_ref:
+        fi_row = get_fi_registro_por_numero(doc_ref)
+
+        if fi_row:
+            # R3: Mostrar card FI igual que Facturación y Compra Legal
+            st.markdown("### 📄 Factura Interna")
+            render_fi_card(
+                fi_row,
+                detalles=get_fi_detalles_canonico(fi_row["id"]),
+                mostrar_detalle=True,
+                detalle_colapsado=False,
+                key_prefix=f"cw_fi_{id_trp}",
+                mostrar_descuentos=True,
+            )
+        else:
+            # R5: Fallback legacy si no hay factura_interna
+            st.warning(f"⚠️ Factura Interna **{doc_ref}** no encontrada en BD (legacy).")
+            lineas = get_factura_lineas(doc_ref)
+            if lineas:
+                st.markdown("### 📋 Vista Legacy (5 Pilares)")
+                render_tabla_5pilares(lineas, mostrar_totales=True)
+    else:
+        st.warning("Sin documento_ref vinculado (traspaso sin FAC-INT).")
+
+    # ── R4: Vista técnica (opcional, colapsada) ───────────────────────────────
     df_lines = get_traspaso_detalle_lines(id_trp)
 
     with st.expander(
-        f"📋  Artículos (5 Pilares + Talla)  —  {len(df_lines)} línea(s)",
-        expanded=True,
+        f"🔧 Vista técnica: Stock por talla ({len(df_lines)} línea(s))",
+        expanded=False,  # Colapsado por defecto
     ):
         if df_lines.empty:
             snap = detail.get("snapshot", {})
-            st.warning("Líneas aún no resueltas (combinacion_id pendiente).")
+            st.caption("Líneas aún no resueltas (combinacion_id pendiente).")
             if snap:
                 st.json(snap)
         else:
-            # OT-2026-021: Agregar caso_nombre y precio
             cols_display = ["linea","referencia","material","color","talla","cantidad"]
             cols_rename = {
                 "linea":     "Línea",
@@ -193,7 +223,6 @@ def _render_detalle_traspaso(id_trp: int):
                 "cantidad":  "Pares",
             }
 
-            # Agregar caso_nombre y precio si existen
             if "caso_nombre" in df_lines.columns:
                 cols_display.append("caso_nombre")
                 cols_rename["caso_nombre"] = "Caso"

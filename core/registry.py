@@ -46,7 +46,7 @@ def _register(module_package: str) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 _register("modules.home")
 _register("modules.sales_report")
-_register("modules.balance_tiendas_retail")  # 2.1 — Retail Excel + estadísticas (junto a Sales en hub)
+_register("modules.balance_tiendas_retail")  # 2.1 — Retail: importación Excel → staging
 _register("modules.intencion_compra")
 _register("modules.digitacion")       # 3.5 — Puente IC → PP (nro fábrica + evento precio)
 _register("modules.carga_transito")     # 4.2 — Carga Stock Tránsito
@@ -63,6 +63,7 @@ _register("modules.pedido_web")      # 10 — Recepción pedidos catálogo web
 _register("modules.import_data")     # 11
 _register("modules.system_status")   # 12
 _register("modules.rimec_engine")    # 13 — Motor de Precios
+_register("modules.web_precio_caso") # 13.5 — Diccionario Precios Web (OT-509)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

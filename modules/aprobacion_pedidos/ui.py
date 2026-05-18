@@ -10,6 +10,7 @@
 import ast
 import json
 import streamlit as st
+from core.ux_celebrate import celebrate_save
 from modules.aprobacion_pedidos.logic import (
     get_pedidos_pendientes, get_pedidos_autorizados, get_pedidos_rechazados,
     rechazar_pedido, crear_preventa_desde_celula, get_linea_caso_map,
@@ -120,10 +121,16 @@ def construir_celulas(lotes: list) -> list:
 
 def aprobar_celula(pedido_id: int, celula: dict):
     from modules.aprobacion_pedidos.logic import crear_preventa_desde_celula
+
     ok, msg = crear_preventa_desde_celula(pedido_id, celula)
 
     if ok:
-        st.success(f"✅ Preventa generada: {msg}")
+        celebrate_save(
+            f"Preventa generada: {msg}",
+            modulo="Aprobaciones",
+            contexto="aprobacion",
+            balloons=True,
+        )
         import time; time.sleep(1)
         st.rerun()
     else:
@@ -154,7 +161,7 @@ def _confirmar_fi_action(fi: dict):
     fi_id = int(fi["id"])
     ok, msg = confirmar_fi(fi_id)
     if ok:
-        st.success(msg)
+        celebrate_save(msg, modulo="Aprobaciones", contexto="factura_creada", balloons=True)
         import time; time.sleep(0.5)
         st.rerun()
     else:
@@ -188,7 +195,12 @@ def _render_dialogo_anulacion(fi_id: int, key_suffix: str = ""):
                 ok, msg = anular_fi(fi_id, motivo)
                 if ok:
                     st.session_state.pop(flag_key, None)
-                    st.success(msg)
+                    celebrate_save(
+                        msg,
+                        modulo="Aprobaciones",
+                        contexto="aprobacion",
+                        balloons=False,
+                    )
                     import time; time.sleep(0.5)
                     st.rerun()
                 else:
@@ -260,7 +272,12 @@ def _render_celula(pedido_id: int, celula: dict):
                 if st.button("✅ Confirmar", key=f"conf_{key_safe}_{pedido_id}", type="primary"):
                     ok, msg = confirmar_fi(preventa['id'])
                     if ok:
-                        st.success(msg)
+                        celebrate_save(
+                            msg,
+                            modulo="Aprobaciones",
+                            contexto="factura_creada",
+                            balloons=True,
+                        )
                         import time; time.sleep(0.5)
                         st.rerun()
                     else:

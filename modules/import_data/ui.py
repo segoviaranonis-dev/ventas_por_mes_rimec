@@ -11,6 +11,7 @@ from sqlalchemy import text, inspect
 import datetime
 import time
 from core.database import DBInspector
+from core.ux_celebrate import celebrate_import_done
 
 def render_import_interface(engine):
     """
@@ -110,8 +111,10 @@ def render_import_interface(engine):
                 df_gen = pd.read_excel(file_gen) if file_gen.name.endswith('xlsx') else pd.read_csv(file_gen)
                 with st.spinner("Sincronizando..."):
                     count, dur = upsert_grupo_general(df_gen, tabla_op, pk_field)
-                    st.success(f"✅ {count} registros en {dur:.1f}ms")
-                    st.balloons()
+                    celebrate_import_done(
+                        f"{count} registros en {tabla_op} ({dur:.1f}ms)",
+                        modulo="Importación Nexus",
+                    )
             except Exception as e:
                 st.error(f"❌ FALLO CRÍTICO: {str(e)}")
                 # Corregido: Enviamos el string del error, no el objeto, para evitar conflictos de firma
@@ -146,9 +149,11 @@ def render_import_interface(engine):
                                                  index=False, method='multi', chunksize=500)
                                     DBInspector.log("Carga de bloques Ventas V2", "SUCCESS", (time.perf_counter()-t_ins)*1000)
 
-                                st.balloons()
                                 total_v_dur = (time.perf_counter() - t_v_start) * 1000
-                                st.success(f"✅ Saneado desde {f_min}. {len(df_vta)} filas en {total_v_dur:.1f}ms")
+                                celebrate_import_done(
+                                    f"Saneado desde {f_min}. {len(df_vta)} filas en {total_v_dur:.1f}ms",
+                                    modulo="Importación Ventas",
+                                )
                         except Exception as e:
                             DBInspector.log(f"Error Saneamiento Ventas: {str(e)}", "ERROR")
                             st.error(f"❌ ERROR: {str(e)}")

@@ -117,6 +117,12 @@ class SalesGridStyles:
                         styles['backgroundColor'] = '{p_map[1]["bg_ui"]}';
                         styles['color'] = '{p_map[1]["text_ui"]}';
                         styles['fontWeight'] = '600';
+                    }} else {{
+                        // STEEL / detalle: niveles 2+ de jerarquía (Holding → Tienda → Marca → …)
+                        styles['backgroundColor'] = '{p_map[2]["bg_ui"]}';
+                        styles['color'] = '{p_map[2]["text_ui"]}';
+                        styles['fontWeight'] = '500';
+                        styles['fontSize'] = '0.9rem';
                     }}
                     return styles;
                 }}
@@ -140,11 +146,15 @@ class SalesGridStyles:
         grid_theme = settings.UI_CONFIG.get('grid_theme', 'ag-theme-balham-dark')
         gold = settings.UI_PRIMARY
         deep = settings.UI_BACKGROUND
+        # Balham es el que usa streamlit-aggrid con theme='balham'; unificamos selectores.
+        grid_selectors = f".{grid_theme}, .ag-theme-balham, .ag-theme-balham-dark"
 
         return f"""
         <style>
             /* Contenedor Principal del Grid */
-            .{grid_theme} {{
+            {grid_selectors} {{
+                --ag-background-color: {deep} !important;
+                --ag-foreground-color: {settings.TEXT_LIGHT} !important;
                 --ag-header-background-color: {deep} !important;
                 --ag-header-foreground-color: {gold} !important;
                 --ag-border-color: {gold}22 !important;
@@ -158,11 +168,11 @@ class SalesGridStyles:
             }}
 
             /* Headers: Fuerza la estética de élite */
-            .{grid_theme} .ag-header-cell {{
+            {grid_selectors} .ag-header-cell {{
                 border-bottom: 2px solid {gold}44 !important;
             }}
 
-            .{grid_theme} .ag-header-cell-label {{
+            {grid_selectors} .ag-header-cell-label {{
                 justify-content: center;
                 text-transform: uppercase;
                 letter-spacing: 1.2px;
@@ -171,21 +181,21 @@ class SalesGridStyles:
             }}
 
             /* Iconos de flechitas (Chevron) en Oro */
-            .{grid_theme} .ag-group-expanded,
-            .{grid_theme} .ag-group-contracted {{
+            {grid_selectors} .ag-group-expanded,
+            {grid_selectors} .ag-group-contracted {{
                 color: {gold} !important;
             }}
 
             /* Scrollbars tipo Cyberpunk */
-            .{grid_theme} ::-webkit-scrollbar {{
+            {grid_selectors} ::-webkit-scrollbar {{
                 width: 8px;
                 height: 8px;
             }}
-            .{grid_theme} ::-webkit-scrollbar-thumb {{
+            {grid_selectors} ::-webkit-scrollbar-thumb {{
                 background: {gold}33 !important;
                 border-radius: 10px;
             }}
-            .{grid_theme} ::-webkit-scrollbar-thumb:hover {{
+            {grid_selectors} ::-webkit-scrollbar-thumb:hover {{
                 background: {gold}88 !important;
             }}
         </style>

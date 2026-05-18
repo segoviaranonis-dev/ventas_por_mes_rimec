@@ -1,6 +1,8 @@
 # RIMEC — Contexto del Proyecto
 > Subir este archivo al inicio de cada sesión con el Maestro de Obras.
-> Última actualización: 05/05/2026 — Reestructuración Facturas Internas (FI)
+> **Norte macro (misión/visión/política única):** `docs/RIMEC_MISION_VISION_POLITICA.md`
+> Última actualización: **17/05/2026** — Hilo operativo PP-2026-0001 **cerrado** (traspaso + depósito + precio web Bazar)  
+> **Registro OT:** `docs/OT_REGISTRO_ESTADO.md`
 
 ---
 
@@ -56,22 +58,28 @@ Evolución post-mayo: Next.js + Supabase
 
 ---
 
-## Estado de Módulos (23/04/2026)
+## Estado de Módulos (17/05/2026)
 
 | Módulo | Estado |
 |--------|--------|
-| Intención de Compra V3 | ✅ Producción — Tabs PENDIENTES / DEVUELTAS / HISTORIAL + Matriz Negociación |
-| Pedido Proveedor | ✅ Producción — Doble Ala condicional por categoria_id |
-| Compra Legal / Facturación | ✅ Producción |
-| Depósito / Logística | ✅ Producción |
-| Rimec-Engine Motor de Precios | ✅ Producción — Hiedra V2, candado dinámico, Biblioteca de Casos, Admin Líneas con filtros y lotes |
-| Módulo Digitación | ✅ Producción — Bandeja + Asignación + Flujo Rechazo (← Devolver)  |
-| Bazar Web | ✅ Construido — entrega 01/05 |
-| Migración 004 (refacción identidad) | ✅ Ejecutada |
-| Migración 009 (FI Reestructuración) | ✅ Ejecutada — Nomenclatura [PP_ID]-PV[NNN], estado RESERVADA |
-| Reset Operativo | ✅ Ejecutado |
-| Motor Forense Precios (gerencial) | 📋 Post-mayo — hermano de Sales Report |
-| Next.js plataforma | 📋 Post-mayo |
+| Intención de Compra V3 | ✅ Producción |
+| Pedido Proveedor | ✅ Producción — FI `1-PV001`, listado evento **#8** |
+| Compra Legal / Facturación | ✅ Producción — Ley FI card, métricas unificadas |
+| Traspaso → Compra Web | ✅ **44/44 pares** T-2026-0001 (OT-504–505–507) |
+| Depósito Web | ✅ **44 pares** post sync movimiento (OT-506) |
+| Compra Web (recepción Bazar) | ✅ Ley FI — `render_fi_card` (OT-507) |
+| Rimec-Engine Motor de Precios | ✅ Producción — evento #8 CP 7447-4085x |
+| Módulo Digitación | ✅ Producción |
+| Bazar Web (`rimec-web`) | ✅ **precio_web** = LPN + markup por caso (OT-509, migr. 048) |
+| Diccionario precio Web | ✅ Módulo **🌐 Diccionario Web** — `caso_precio_web_regla` editable |
+| FI `caso` en header | ⚠️ Backfill OK (508-F1); crear FI aún sin persistir caso (508-F2) |
+| Motor Forense Precios | 📋 Post-mayo |
+
+### Caso de referencia operativo (PP-2026-0001)
+
+- **FI:** `1-PV001` — 44 pares, `lista_precio_id=8`, caso `BR-VZ-MD-ML-MKA-O`
+- **CL:** CL-2026-0001 — DISTRIBUIDA
+- **Traspaso:** T-2026-0001 — snapshot + detalle alineados (incl. ref 565)
 
 ---
 
@@ -112,7 +120,7 @@ Evolución post-mayo: Next.js + Supabase
 | `referencia` | 229 | Pilar 2 |
 | `material` | 28.881 | Pilar 3 |
 | `color` | 118 | Pilar 4 |
-| `talla` | 8 | Pilar 5 |
+| `talla` | 8 | Pilar 5 — **Grada** (catálogo de talles) |
 | `proveedor_importacion` | 1 | Proveedor 654 |
 | `almacen` | 3 | Configuración |
 | `lista_precio` | 1 | NO TOCAR |
@@ -134,7 +142,11 @@ Evolución post-mayo: Next.js + Supabase
 
 ## Arquitectura de Precios
 
-**Pilares:** linea + referencia + material (color y talla NO determinan precio)
+**5 pilares:** linea · referencia · material · color · grada (`talla`). Ver `docs/RIMEC_PILARES_CINCO.md`.
+
+**Precio:** linea + referencia + material (color/grada no cambian LPN; sí molécula de stock/venta).
+
+**Grada importadora:** caja cerrada `35(1 2 3 3 2 1)40` · **Bazar:** N°35=1, N°36=1… vía `combinacion` + FK.
 
 ```
 indice        = (dolar_politica × factor_conversion) / 100
@@ -145,6 +157,13 @@ lpc04         = floor(lpn × 1.20 / 100) × 100
 ```
 
 Casos parametrizables: PROMOCIONAL · CHINELO · NORMAL · NORMAL/MENOR
+
+### Precio venta Bazar Web (OT-509 — **en producción**)
+
+- Tabla `caso_precio_web_regla` + función `fn_precio_venta_web`
+- Vista `v_stock_rimec.precio_web` — auditoría: **268/268 SKUs** con precio
+- Edición markup: Nexus → **Diccionario Web** (sin deploy)
+- Doc operativo: `docs/DICCIONARIO_PRECIO_WEB.md`
 
 ---
 
@@ -181,19 +200,22 @@ UI: Dashboard de navegación → Paso A (Tipo + Categoría) → Paso B (flujo ex
 
 ## Órdenes al Albañil — Estado
 
-| Orden | Archivo | Estado |
-|-------|---------|--------|
-| Migración 004 | `RIMEC_004_ORDEN_ALBANIL.md` | ✅ Ejecutada |
-| Reset + IC V2 | `RIMEC_RESET_Y_INTENCION_V2.md` | ✅ Completada |
-| Ejecución inmediata | `ALBANIL_EJECUCION_INMEDIATA.md` | ✅ Completada |
-| Módulo Digitación | `ALBANIL_MODULO_DIGITACION.md` | ✅ Completada |
-| IC UI Rediseño | `ALBANIL_IC_UI_REDISENO_1.md` | ✅ Completada |
-| Rechazo Digitación | `ALBANIL_RECHAZO_DIGITACION.md` | ✅ Completada |
-| Candado Precios | `ALBANIL_CANDADO_PRECIOS.md` | ✅ Completada |
-| Matriz Negociación | `ALBANIL_MATRIZ_NEGOCIACION_1.md` | ✅ Completada |
-| Reset Precios + Admin Líneas | `ALBANIL_RESET_PRECIOS_LINEAS.md` | ✅ Completada |
-| Biblioteca de Casos + Lotes | `ALBANIL_BIBLIOTECA_CASOS_LOTES.md` | ✅ Completada |
-| Reestructuración FI | Orden directa 05/05/2026 | ✅ Completada |
+Ver tabla completa: **`docs/OT_REGISTRO_ESTADO.md`**
+
+| OT | Estado | Nota |
+|----|--------|------|
+| OT-TRASPASO-504-001 | ✅ CERRADA | Merge `traspaso_detalle` |
+| OT-COMBINACION-505-001/002 | ✅ CERRADA | Backfill + ref 565 |
+| OT-DEPOSITO-WEB-506-001 | ✅ CERRADA | Stock 44 en depósito |
+| OT-COMPRA-WEB-507-001 | ✅ CERRADA | Ley FI en Compra Web |
+| OT-FI-CASO-508-001 | ✅ Fase 1 / 📋 Fase 2 | Backfill caso; persistir al crear FI pendiente |
+| OT-WEB-PRECIO-509-001 | ✅ CERRADA | LPN + markup % — 268 SKUs, módulo Diccionario Web |
+
+### Histórico albañil (pre-mayo)
+
+| Orden | Estado |
+|-------|--------|
+| Migración 004 / Reset / Digitación / Biblioteca casos / FI PV | ✅ Completadas |
 
 ## Arquitectura de Trazabilidad (decisión 22/04/2026)
 

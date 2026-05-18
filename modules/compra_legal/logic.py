@@ -603,11 +603,26 @@ def get_pps_de_compra(id_cl: int) -> pd.DataFrame:
                 '—'
             )                                   AS marcas,
             COALESCE(SUM(ppd.cantidad_pares), 0) AS total_pares,
-            COALESCE(
-                (SELECT SUM(vt.cantidad_vendida)
-                 FROM venta_transito vt
-                 WHERE vt.pedido_proveedor_id = pp.id),
-                0
+            (
+                COALESCE(
+                    (SELECT SUM(fid.pares)
+                     FROM factura_interna fi
+                     JOIN factura_interna_detalle fid ON fid.factura_id = fi.id
+                     WHERE fi.pp_id = pp.id
+                       AND fi.estado IN ('CONFIRMADA', 'RESERVADA')),
+                    0
+                )
+                + COALESCE(
+                    (SELECT SUM(vt.cantidad_vendida)
+                     FROM venta_transito vt
+                     WHERE vt.pedido_proveedor_id = pp.id
+                       AND NOT EXISTS (
+                         SELECT 1 FROM factura_interna fi2
+                         WHERE fi2.pp_id = vt.pedido_proveedor_id
+                           AND fi2.nro_factura = vt.numero_factura_interna
+                       )),
+                    0
+                )
             )                                   AS total_vendido
         FROM compra_legal_pedido clp
         JOIN pedido_proveedor pp ON pp.id = clp.pedido_proveedor_id
@@ -659,6 +674,151 @@ def rechazar_pp_de_compra(id_cl: int, id_pp: int) -> tuple[bool, str]:
 # COMPRA LEGAL — detalle (Hija Depósito + Hija Facturación)
 # ─────────────────────────────────────────────────────────────────────────────
 
+_ESTADOS_FI_FACTURADOS = ("CONFIRMADA", "RESERVADA")
+
+
+def get_metricas_facturacion_compra(id_cl: int) -> dict:
+    """
+    Única fuente de verdad: pares F9, facturados (FI + VT legacy sin doble conteo), por PP.
+  """
+    df_tot = get_dataframe("""
+        WITH pps AS (
+            SELECT pedido_proveedor_id AS pp_id
+            FROM compra_legal_pedido
+            WHERE compra_legal_id = :id_cl
+        ),
+        fi_pp AS (
+            SELECT fi.pp_id,
+                   COALESCE(SUM(fid.pares), 0)::bigint AS pares_fi
+            FROM factura_interna fi
+            JOIN factura_interna_detalle fid ON fid.factura_id = fi.id
+            WHERE fi.pp_id IN (SELECT pp_id FROM pps)
+              AND fi.estado IN ('CONFIRMADA', 'RESERVADA')
+            GROUP BY fi.pp_id
+        ),
+        vt_pp AS (
+            SELECT vt.pedido_proveedor_id AS pp_id,
+                   COALESCE(SUM(vt.cantidad_vendida), 0)::bigint AS pares_vt
+            FROM venta_transito vt
+            WHERE vt.pedido_proveedor_id IN (SELECT pp_id FROM pps)
+              AND NOT EXISTS (
+                SELECT 1
+                FROM factura_interna fi
+                WHERE fi.pp_id = vt.pedido_proveedor_id
+                  AND fi.nro_factura = vt.numero_factura_interna
+              )
+            GROUP BY vt.pedido_proveedor_id
+        ),
+        pp_base AS (
+            SELECT pp.id AS pp_id,
+                   COALESCE(pp.pares_comprometidos, 0)::bigint AS total_pares
+            FROM compra_legal_pedido clp
+            JOIN pedido_proveedor pp ON pp.id = clp.pedido_proveedor_id
+            WHERE clp.compra_legal_id = :id_cl
+        )
+        SELECT
+            COALESCE((SELECT SUM(total_pares) FROM pp_base), 0) AS total_pares_f9,
+            COALESCE((
+                SELECT SUM(COALESCE(f.pares_fi, 0) + COALESCE(v.pares_vt, 0))
+                FROM pp_base pb
+                LEFT JOIN fi_pp f ON f.pp_id = pb.pp_id
+                LEFT JOIN vt_pp v ON v.pp_id = pb.pp_id
+            ), 0) AS pares_facturados
+    """, {"id_cl": id_cl})
+
+    total_f9 = 0
+    pares_fact = 0
+    if df_tot is not None and not df_tot.empty:
+        total_f9 = int(df_tot.iloc[0]["total_pares_f9"] or 0)
+        pares_fact = int(df_tot.iloc[0]["pares_facturados"] or 0)
+
+    df_pp = get_dataframe("""
+        WITH pps AS (
+            SELECT pedido_proveedor_id AS pp_id
+            FROM compra_legal_pedido
+            WHERE compra_legal_id = :id_cl
+        ),
+        fi_pp AS (
+            SELECT fi.pp_id,
+                   COALESCE(SUM(fid.pares), 0)::bigint AS pares_fi
+            FROM factura_interna fi
+            JOIN factura_interna_detalle fid ON fid.factura_id = fi.id
+            WHERE fi.pp_id IN (SELECT pp_id FROM pps)
+              AND fi.estado IN ('CONFIRMADA', 'RESERVADA')
+            GROUP BY fi.pp_id
+        ),
+        vt_pp AS (
+            SELECT vt.pedido_proveedor_id AS pp_id,
+                   COALESCE(SUM(vt.cantidad_vendida), 0)::bigint AS pares_vt
+            FROM venta_transito vt
+            WHERE vt.pedido_proveedor_id IN (SELECT pp_id FROM pps)
+              AND NOT EXISTS (
+                SELECT 1
+                FROM factura_interna fi
+                WHERE fi.pp_id = vt.pedido_proveedor_id
+                  AND fi.nro_factura = vt.numero_factura_interna
+              )
+            GROUP BY vt.pedido_proveedor_id
+        )
+        SELECT
+            pp.id AS pp_id,
+            COALESCE(f.pares_fi, 0) + COALESCE(v.pares_vt, 0) AS pares_facturados,
+            COALESCE(f.pares_fi, 0) AS pares_fi,
+            COALESCE(v.pares_vt, 0) AS pares_vt
+        FROM compra_legal_pedido clp
+        JOIN pedido_proveedor pp ON pp.id = clp.pedido_proveedor_id
+        LEFT JOIN fi_pp f ON f.pp_id = pp.id
+        LEFT JOIN vt_pp v ON v.pp_id = pp.id
+        WHERE clp.compra_legal_id = :id_cl
+    """, {"id_cl": id_cl})
+
+    por_pp: dict[int, dict] = {}
+    if df_pp is not None and not df_pp.empty:
+        for _, r in df_pp.iterrows():
+            pid = int(r["pp_id"])
+            por_pp[pid] = {
+                "pares_facturados": int(r["pares_facturados"] or 0),
+                "pares_fi": int(r["pares_fi"] or 0),
+                "pares_vt": int(r["pares_vt"] or 0),
+            }
+
+    return {
+        "total_pares_f9": total_f9,
+        "pares_facturados": pares_fact,
+        "pares_deposito": max(total_f9 - pares_fact, 0),
+        "por_pp": por_pp,
+    }
+
+
+def get_facturas_internas_de_compra(id_cl: int) -> pd.DataFrame:
+    """FAC-INT RIMEC de los PPs de esta compra — formato render_fi_card."""
+    return get_dataframe("""
+        SELECT
+            fi.id, fi.nro_factura, fi.estado, fi.created_at,
+            fi.pp_id,
+            pp.numero_registro        AS nro_pp,
+            fi.marca, fi.marca_id,
+            fi.caso,  fi.caso_id,
+            cv.descp_cliente          AS cliente,
+            cv.descp_cliente          AS cliente_nombre,
+            vv.descp_vendedor         AS vendedor,
+            vv.descp_vendedor         AS vendedor_nombre,
+            fi.total_pares,
+            fi.total_monto            AS total_neto,
+            fi.total_monto,
+            fi.lista_precio_id,
+            fi.descuento_1, fi.descuento_2, fi.descuento_3, fi.descuento_4
+        FROM factura_interna fi
+        JOIN compra_legal_pedido clp ON clp.pedido_proveedor_id = fi.pp_id
+        LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
+        LEFT JOIN cliente_v2  cv ON cv.id_cliente  = fi.cliente_id
+        LEFT JOIN vendedor_v2 vv ON vv.id_vendedor = fi.vendedor_id
+        WHERE clp.compra_legal_id = :id_cl
+          AND fi.estado IN ('CONFIRMADA', 'RESERVADA')
+        ORDER BY fi.created_at DESC, fi.nro_factura
+    """, {"id_cl": id_cl})
+
+
 def get_compra_header(id_cl: int) -> dict:
     df = get_dataframe("""
         SELECT
@@ -681,33 +841,14 @@ def get_compra_header(id_cl: int) -> dict:
                  JOIN pedido_proveedor pp2 ON pp2.id = clp2.pedido_proveedor_id
                  WHERE clp2.compra_legal_id = cl.id),
                 0
-            ) AS total_pares_f9,
-            COALESCE(
-                (SELECT SUM(vt.cantidad_vendida)
-                 FROM venta_transito vt
-                 WHERE vt.pedido_proveedor_id IN (
-                     SELECT pedido_proveedor_id FROM compra_legal_pedido
-                     WHERE compra_legal_id = cl.id
-                 )),
-                0
-            ) +
-            COALESCE(
-                (SELECT SUM(fid.pares)
-                 FROM factura_interna fi
-                 JOIN factura_interna_detalle fid ON fid.factura_id = fi.id
-                 WHERE fi.pp_id IN (
-                     SELECT pedido_proveedor_id FROM compra_legal_pedido
-                     WHERE compra_legal_id = cl.id
-                 )
-                 AND fi.estado IN ('CONFIRMADA', 'RESERVADA')),
-                0
-            ) AS pares_facturados
+            ) AS total_pares_f9
         FROM compra_legal cl
         WHERE cl.id = :id_cl
     """, {"id_cl": id_cl})
     if df.empty:
         return {}
     r = df.iloc[0]
+    met = get_metricas_facturacion_compra(id_cl)
     return {
         "id":               int(r["id"]),
         "numero_registro":  str(r["numero_registro"]),
@@ -715,8 +856,8 @@ def get_compra_header(id_cl: int) -> dict:
         "fecha_factura":    r["fecha_factura"],
         "estado":           str(r["estado"]),
         "pps_vinculados":   str(r["pps_vinculados"]),
-        "total_pares_f9":   int(r["total_pares_f9"] or 0),
-        "pares_facturados": int(r["pares_facturados"] or 0),
+        "total_pares_f9":   met["total_pares_f9"],
+        "pares_facturados": met["pares_facturados"],
     }
 
 

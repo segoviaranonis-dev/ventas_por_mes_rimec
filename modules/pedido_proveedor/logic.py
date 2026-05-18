@@ -1368,6 +1368,8 @@ def populate_pp_from_proforma(
     - Actualiza cabecera: proforma, nro_externo, descuentos, eta
     - Inserta filas en pedido_proveedor_detalle con FOB ajustado y grades_json
     - Registra en flujo_auditoria
+    - Regla 2.2: si el pilar color/material tiene nombre/descripcion NULL y la proforma
+      trae texto, ejecuta UPDATE en ``public.color`` / ``public.material`` (mismo proveedor).
     """
     import json
 
@@ -1403,6 +1405,14 @@ def populate_pp_from_proforma(
                 "pp_id": pp_id,
             })
 
+            row_pid = conn.execute(
+                sqlt(
+                    "SELECT proveedor_importacion_id FROM pedido_proveedor WHERE id = :pp_id"
+                ),
+                {"pp_id": pp_id},
+            ).fetchone()
+            prov_id = int(row_pid[0]) if row_pid and row_pid[0] is not None else 654
+
             # ── Lookup de marcas (brand → id_marca) ──────────────────────
             marc_rows = conn.execute(sqlt(
                 "SELECT id_marca, UPPER(descp_marca) AS nom FROM marca_v2"
@@ -1412,17 +1422,25 @@ def populate_pp_from_proforma(
             }
 
             # ── Lookup material (codigo_proveedor → (id, descripcion)) ───
-            mat_rows = conn.execute(sqlt(
-                "SELECT id, codigo_proveedor::text, descripcion FROM material WHERE proveedor_id=654"
-            )).fetchall()
+            mat_rows = conn.execute(
+                sqlt(
+                    "SELECT id, codigo_proveedor::text, descripcion FROM material "
+                    "WHERE proveedor_id = CAST(:pid AS bigint)"
+                ),
+                {"pid": prov_id},
+            ).fetchall()
             mat_lookup: dict[str, tuple] = {
                 r2[1]: (int(r2[0]), str(r2[2] or "")) for r2 in mat_rows
             }
 
             # ── Lookup color (codigo_proveedor → (id, nombre)) ───────────
-            col_rows = conn.execute(sqlt(
-                "SELECT id, codigo_proveedor::text, nombre FROM color WHERE proveedor_id=654"
-            )).fetchall()
+            col_rows = conn.execute(
+                sqlt(
+                    "SELECT id, codigo_proveedor::text, nombre FROM color "
+                    "WHERE proveedor_id = CAST(:pid AS bigint)"
+                ),
+                {"pid": prov_id},
+            ).fetchall()
             col_lookup: dict[str, tuple] = {
                 r2[1]: (int(r2[0]), str(r2[2] or "")) for r2 in col_rows
             }
@@ -1511,6 +1529,36 @@ def populate_pp_from_proforma(
                     "grades":   json.dumps(grades, ensure_ascii=False),
                     "fila":     int(r.get("item", 0)),
                 })
+
+                # Regla 2.2: curar pilar color/material si venían con descripción NULL y la proforma trae texto.
+                heal_col = str(r.get("color", "") or "").strip()
+                if id_col and heal_col:
+                    conn.execute(
+                        sqlt(
+                            """
+                            UPDATE public.color
+                            SET nombre = CAST(:nom AS text)
+                            WHERE id = CAST(:cid AS bigint)
+                              AND proveedor_id = CAST(:pid AS bigint)
+                              AND (nombre IS NULL OR btrim(nombre::text) = '')
+                            """
+                        ),
+                        {"nom": heal_col[:2000], "cid": id_col, "pid": prov_id},
+                    )
+                heal_mat = str(r.get("material", "") or "").strip()
+                if id_mat and heal_mat:
+                    conn.execute(
+                        sqlt(
+                            """
+                            UPDATE public.material
+                            SET descripcion = CAST(:d AS text)
+                            WHERE id = CAST(:mid AS bigint)
+                              AND proveedor_id = CAST(:pid AS bigint)
+                              AND (descripcion IS NULL OR btrim(descripcion::text) = '')
+                            """
+                        ),
+                        {"d": heal_mat[:2000], "mid": id_mat, "pid": prov_id},
+                    )
 
         # ── Auditoría ────────────────────────────────────────────────────
         row_pp = get_dataframe(
@@ -2165,6 +2213,296 @@ def guardar_configuracion_pp(
     except Exception as e:
         DBInspector.log(f"[PP] Error configurando PP {pp_id}: {e}", "ERROR")
         return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LISTADO RIMEC ↔ PP (biblioteca + excel = precio_evento)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_ESTADOS_FI_RECALC_DEFECTO = ("RESERVADA",)
+_ESTADOS_FI_RECALC_CON_CONFIRMADAS = ("RESERVADA", "CONFIRMADA")
+_ESTADOS_FI_NO_TOCAR = frozenset({"ANULADA", "CANCELADA"})
+
+
+def get_pp_estado(pp_id: int) -> str:
+    df = get_dataframe(
+        "SELECT estado FROM pedido_proveedor WHERE id = :id",
+        {"id": pp_id},
+    )
+    if df is None or df.empty:
+        return ""
+    return str(df["estado"].iloc[0] or "").strip().upper()
+
+
+def pp_listado_precio_editable(pp_id: int) -> bool:
+    """False cuando el PP ya pasó a compra legal (ENVIADO)."""
+    return get_pp_estado(pp_id) != "ENVIADO"
+
+
+def get_evento_precio_pp_detalle(pp_id: int) -> dict | None:
+    """
+    Metadatos del listado RIMEC vigente en el PP (precio_evento + biblioteca).
+    """
+    evento_id = get_evento_precio_pp(pp_id)
+    if not evento_id:
+        return None
+    df = get_dataframe("""
+        SELECT pe.id,
+               pe.nombre_evento,
+               UPPER(TRIM(pe.estado)) AS estado,
+               pe.fecha_vigencia_desde,
+               pe.biblioteca_precio_id,
+               COUNT(pl.id) AS n_precios
+        FROM precio_evento pe
+        LEFT JOIN precio_lista pl ON pl.evento_id = pe.id
+        WHERE pe.id = :eid
+        GROUP BY pe.id, pe.nombre_evento, pe.estado,
+                 pe.fecha_vigencia_desde, pe.biblioteca_precio_id
+    """, {"eid": evento_id})
+    if df is not None and not df.empty:
+        bid = df["biblioteca_precio_id"].iloc[0]
+        if bid is not None and str(bid) not in ("", "None", "nan"):
+            try:
+                df_bib = get_dataframe(
+                    "SELECT nombre FROM biblioteca_precio WHERE id = :bid LIMIT 1",
+                    {"bid": int(bid)},
+                )
+                if df_bib is not None and not df_bib.empty:
+                    df = df.copy()
+                    df["biblioteca_nombre"] = df_bib["nombre"].iloc[0]
+            except Exception:
+                pass
+    if df is None or df.empty:
+        return {"id": evento_id}
+    row = df.iloc[0].to_dict()
+    row["id"] = int(row["id"])
+    if row.get("n_precios") is not None:
+        row["n_precios"] = int(row["n_precios"])
+    return row
+
+
+def _factor_descuentos_fi(d1: float, d2: float, d3: float, d4: float) -> float:
+    f = 1.0
+    for d in (d1, d2, d3, d4):
+        if d and float(d) > 0:
+            f *= 1.0 - float(d)
+    return f
+
+
+def _lookup_lpn_evento(
+    conn,
+    evento_id: int,
+    *,
+    ppd_id: int | None = None,
+    linea_id: int | None = None,
+    material_id: int | None = None,
+) -> float | None:
+    """Resuelve LPN base (sin descuentos FI) desde precio_lista del evento."""
+    if ppd_id:
+        row = conn.execute(sqlt("""
+            SELECT pl.lpn
+            FROM pedido_proveedor_detalle ppd
+            JOIN pedido_proveedor pp ON pp.id = ppd.pedido_proveedor_id
+            LEFT JOIN linea l ON l.proveedor_id = pp.proveedor_importacion_id
+                             AND l.codigo_proveedor::text = ppd.linea
+            LEFT JOIN material m ON m.proveedor_id = pp.proveedor_importacion_id
+                                 AND m.codigo_proveedor::text = ppd.material_code
+            LEFT JOIN LATERAL (
+                SELECT lpn
+                FROM precio_lista
+                WHERE evento_id = :eid
+                  AND (
+                        (linea_id IS NOT NULL AND material_id IS NOT NULL
+                         AND linea_id = l.id AND material_id = m.id)
+                     OR (linea_codigo = l.id::text
+                         AND material_descripcion = m.id::text)
+                  )
+                  AND lpn IS NOT NULL AND lpn > 0
+                ORDER BY CASE WHEN linea_id IS NOT NULL THEN 0 ELSE 1 END
+                LIMIT 1
+            ) pl ON true
+            WHERE ppd.id = :ppd
+        """), {"eid": evento_id, "ppd": ppd_id}).fetchone()
+        if row and row[0] is not None:
+            return float(row[0])
+
+    if linea_id and material_id:
+        row = conn.execute(sqlt("""
+            SELECT lpn
+            FROM precio_lista
+            WHERE evento_id = :eid
+              AND lpn IS NOT NULL AND lpn > 0
+              AND (
+                    (linea_id = :lid AND material_id = :mid)
+                 OR (linea_codigo = :lid::text AND material_descripcion = :mid::text)
+              )
+            ORDER BY CASE WHEN linea_id IS NOT NULL THEN 0 ELSE 1 END
+            LIMIT 1
+        """), {"eid": evento_id, "lid": linea_id, "mid": material_id}).fetchone()
+        if row and row[0] is not None:
+            return float(row[0])
+    return None
+
+
+def recalcular_facturas_internas_pp(
+    pp_id: int,
+    evento_id: int,
+    *,
+    incluir_confirmadas: bool = False,
+    usuario_id: int | None = None,
+) -> tuple[bool, str, dict]:
+    """
+    Recalcula precio_unit/subtotal/totales de FI editables del PP usando el evento dado.
+    Por defecto solo RESERVADA; opcionalmente CONFIRMADA (flexibilidad operativa).
+    """
+    stats = {
+        "fi_procesadas": 0,
+        "fi_actualizadas": 0,
+        "lineas_actualizadas": 0,
+        "lineas_sin_precio": 0,
+    }
+    estados = (
+        _ESTADOS_FI_RECALC_CON_CONFIRMADAS
+        if incluir_confirmadas
+        else _ESTADOS_FI_RECALC_DEFECTO
+    )
+    try:
+        with engine.begin() as conn:
+            fi_rows = conn.execute(sqlt("""
+                SELECT id, nro_factura, estado,
+                       COALESCE(descuento_1, 0) AS d1,
+                       COALESCE(descuento_2, 0) AS d2,
+                       COALESCE(descuento_3, 0) AS d3,
+                       COALESCE(descuento_4, 0) AS d4
+                FROM factura_interna
+                WHERE pp_id = :pp
+                  AND UPPER(TRIM(estado)) = ANY(:estados)
+            """), {"pp": pp_id, "estados": list(estados)}).fetchall()
+
+            for fi in fi_rows:
+                stats["fi_procesadas"] += 1
+                fi_id = int(fi.id)
+                factor = _factor_descuentos_fi(fi.d1, fi.d2, fi.d3, fi.d4)
+
+                det_rows = conn.execute(sqlt("""
+                    SELECT id, pares, cajas, ppd_id,
+                           linea_id, referencia_id, material_id,
+                           precio_unit
+                    FROM factura_interna_detalle
+                    WHERE factura_id = :fi
+                """), {"fi": fi_id}).fetchall()
+
+                total_pares = 0
+                total_monto = 0.0
+                lineas_ok = 0
+                lineas_sin = 0
+
+                for det in det_rows:
+                    pares = int(det.pares or 0)
+                    lpn_base = _lookup_lpn_evento(
+                        conn,
+                        evento_id,
+                        ppd_id=int(det.ppd_id) if det.ppd_id else None,
+                        linea_id=int(det.linea_id) if det.linea_id else None,
+                        material_id=int(det.material_id) if det.material_id else None,
+                    )
+                    if lpn_base is None or lpn_base <= 0:
+                        lineas_sin += 1
+                        pu = float(det.precio_unit or 0)
+                    else:
+                        pu = round(lpn_base * factor)
+                        lineas_ok += 1
+
+                    subtotal = round(pares * pu, 2)
+                    conn.execute(sqlt("""
+                        UPDATE factura_interna_detalle
+                        SET precio_unit = :pu,
+                            subtotal    = :st,
+                            precio_neto = :pu
+                        WHERE id = :id
+                    """), {"pu": pu, "st": subtotal, "id": int(det.id)})
+                    total_pares += pares
+                    total_monto += subtotal
+
+                if lineas_ok > 0 or det_rows:
+                    conn.execute(sqlt("""
+                        UPDATE factura_interna
+                        SET lista_precio_id = :ev,
+                            total_pares     = :tp,
+                            total_monto     = :tm
+                        WHERE id = :fi
+                    """), {
+                        "ev": evento_id,
+                        "tp": total_pares,
+                        "tm": round(total_monto, 2),
+                        "fi": fi_id,
+                    })
+                    stats["fi_actualizadas"] += 1
+                    stats["lineas_actualizadas"] += lineas_ok
+                    stats["lineas_sin_precio"] += lineas_sin
+
+            # Sincronizar puntero lista_precio en FI no recalculadas (p. ej. FACTURADA)
+            conn.execute(sqlt("""
+                UPDATE factura_interna
+                SET lista_precio_id = :ev
+                WHERE pp_id = :pp
+                  AND UPPER(TRIM(estado)) NOT IN ('ANULADA', 'CANCELADA')
+            """), {"ev": evento_id, "pp": pp_id})
+
+        msg = (
+            f"{stats['fi_actualizadas']} factura(s) recalculada(s), "
+            f"{stats['lineas_actualizadas']} línea(s) con precio nuevo."
+        )
+        if stats["lineas_sin_precio"]:
+            msg += f" {stats['lineas_sin_precio']} línea(s) sin LPN en el evento (precio anterior conservado)."
+
+        log_flujo(
+            entidad="PP",
+            entidad_id=pp_id,
+            nro_registro=str(pp_id),
+            accion="PP_FI_RECALC_LISTADO",
+            snap={"evento_id": evento_id, **stats},
+            usuario_id=usuario_id,
+        )
+        DBInspector.log(f"[PP] Recalc FI pp={pp_id} ev={evento_id}: {stats}", "SUCCESS")
+        return True, msg, stats
+    except Exception as e:
+        DBInspector.log(f"[PP] recalcular_facturas_internas_pp: {e}", "ERROR")
+        return False, str(e), stats
+
+
+def vincular_listado_precio_a_pp(
+    pp_id: int,
+    evento_id: int,
+    *,
+    recalcular_fi: bool = True,
+    incluir_fi_confirmadas: bool = False,
+    usuario_id: int | None = None,
+) -> tuple[bool, str, dict]:
+    """
+    Asigna precio_evento al PP/ICs y opcionalmente recalcula facturas internas abiertas.
+    """
+    if not pp_listado_precio_editable(pp_id):
+        return False, "El PP está en COMPRA (ENVIADO). El listado de precios no se puede cambiar.", {}
+
+    prev = get_evento_precio_pp(pp_id)
+    if not guardar_configuracion_pp(pp_id, None, evento_id, usuario_id):
+        return False, "No se pudo vincular el evento al PP.", {}
+
+    stats: dict = {"evento_anterior": prev, "evento_nuevo": evento_id}
+    if recalcular_fi:
+        ok, msg, rstats = recalcular_facturas_internas_pp(
+            pp_id,
+            evento_id,
+            incluir_confirmadas=incluir_fi_confirmadas,
+            usuario_id=usuario_id,
+        )
+        stats.update(rstats)
+        if not ok:
+            return False, f"Evento vinculado, pero falló el recálculo de FI: {msg}", stats
+        return True, f"Listado vinculado. {msg}", stats
+
+    return True, "Listado de precios vinculado al PP y sus ICs.", stats
 
 
 def get_todos_eventos_precio() -> pd.DataFrame:

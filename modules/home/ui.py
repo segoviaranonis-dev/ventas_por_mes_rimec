@@ -98,8 +98,8 @@ def render_home():
     _card(
         col_rt,
         icon="🏪",
-        title="Retail multi-tienda",
-        desc="Excel multi-origen, estadísticas venta/stock por tienda, álbum local y herramienta de reposición.",
+        title="Retail — importación Excel",
+        desc="Subida del Excel multi-tienda a staging Supabase; validación de lotes y mantenimiento de FKs.",
         btn_key="nav_retail",
         module_key="balance_tiendas",
     )

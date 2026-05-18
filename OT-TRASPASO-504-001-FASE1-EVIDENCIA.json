@@ -1,0 +1,111 @@
+{
+  "ot_id": "OT-TRASPASO-504-001",
+  "fase": 1,
+  "status": "OK",
+  "timestamp": "2026-05-17",
+  "ejecutor": "Claude Code - albañil bajo OT Auto",
+  "checks": [
+    {
+      "id": "I1",
+      "pass": true,
+      "task": "Audit script auditar_traspaso_duplicados.py",
+      "expected": "Script runs and detects SKUs with multiple fid rows + talla overlap",
+      "actual": "scripts/auditar_traspaso_duplicados.py executed OK",
+      "files": [
+        "scripts/auditar_traspaso_duplicados.py"
+      ],
+      "results": {
+        "compra_id": 1,
+        "compra_nro": "CL-2026-0001",
+        "proforma": "7441-4084",
+        "estado": "PENDIENTE",
+        "traspaso_count": 0,
+        "fi_detalle_rows": 5,
+        "sku_groups": 4,
+        "talla_expansions": 23,
+        "skus_con_multiples_fid": 1
+      },
+      "problema_detectado": {
+        "sku": "4202-500-39-53",
+        "fid_rows": 2,
+        "fid_1_tallas": ["t35", "t36", "t37", "t38", "t39", "t40"],
+        "fid_2_tallas": ["t37", "t38", "t39", "t40"],
+        "overlap": ["t37", "t38", "t39", "t40"],
+        "impact": "Al finalizar Compra, cada talla overlap -> UniqueViolation"
+      }
+    },
+    {
+      "id": "I2",
+      "pass": true,
+      "task": "Documentación AUDIT_TRASPASO_DUPLICADOS.md",
+      "expected": "Root cause analysis + proposed solutions",
+      "actual": "docs/AUDIT_TRASPASO_DUPLICADOS.md completo",
+      "files": [
+        "docs/AUDIT_TRASPASO_DUPLICADOS.md"
+      ],
+      "notes": [
+        "Root cause: INSERT directo sin GROUP BY combinacion_id",
+        "Efecto colateral módulo 500: multiples fid con misma molécula/curva",
+        "Soluciones: (A) Agrupar antes INSERT, (B) UPSERT, (C) Merge en _crear_traspasos_para_pp"
+      ]
+    },
+    {
+      "id": "I3",
+      "pass": true,
+      "task": "JSON audit output",
+      "expected": "audit_traspaso_duplicados_1.json generated",
+      "actual": "scripts/audit_traspaso_duplicados_1.json OK",
+      "files": [
+        "scripts/audit_traspaso_duplicados_1.json"
+      ]
+    }
+  ],
+  "diagnostico": {
+    "root_cause": "crear_traspaso_por_factura INSERT sin GROUP BY combinacion_id",
+    "trigger": "Multiples fid rows con mismo SKU (linea+ref+mat+col) y tallas overlapeadas",
+    "failure_point": "Segundo INSERT de mismo (traspaso_id, combinacion_id) -> UniqueViolation",
+    "efecto_colateral_modulo_500": "Saneo puede dejar multiples fid con misma curva/talla",
+    "constraint": "UNIQUE (traspaso_id, combinacion_id) en traspaso_detalle"
+  },
+  "solucion_propuesta": {
+    "opcion_a": {
+      "descripcion": "Agrupar qty por combinacion_id antes del INSERT",
+      "ubicacion": "modules/compra_legal/logic.py:crear_traspaso_por_factura",
+      "beneficio": "Genérico, eficiente, explícito",
+      "implementacion": "comb_qty_map = {} -> acumular -> INSERT una vez por comb_id"
+    },
+    "opcion_b": {
+      "descripcion": "UPSERT con ON CONFLICT",
+      "ubicacion": "modules/compra_legal/logic.py:crear_traspaso_por_factura line 227",
+      "beneficio": "Seguro como fallback, no requiere refactor grande",
+      "implementacion": "ON CONFLICT (traspaso_id, combinacion_id) DO UPDATE cantidad += EXCLUDED"
+    },
+    "opcion_c": {
+      "descripcion": "Merge items_tallas por SKU en _crear_traspasos_para_pp",
+      "ubicacion": "modules/compra_legal/logic.py:_crear_traspasos_para_pp before line 416",
+      "beneficio": "Previene duplicados antes de llegar a crear_traspaso_por_factura",
+      "implementacion": "merged = {} -> GROUP BY (linea,ref,mat,col) -> sumar tallas"
+    },
+    "recomendacion": "Aplicar Opción A (genérico) + Opción C (específico FI) para doble protección"
+  },
+  "caso_test": {
+    "compra_id": 1,
+    "sku_problema": "4202-500-39-53",
+    "fid_overlap_count": 2,
+    "tallas_overlap": ["t37", "t38", "t39", "t40"],
+    "esperado_sin_fix": "UniqueViolation al finalizar_compra(1)",
+    "esperado_con_fix": "Traspaso creado OK, 0 duplicados, pares ~44"
+  },
+  "archivos": [
+    "scripts/auditar_traspaso_duplicados.py",
+    "scripts/audit_traspaso_duplicados_1.json",
+    "docs/AUDIT_TRASPASO_DUPLICADOS.md"
+  ],
+  "pendiente_fase_2": [
+    "R1: Implementar agrupación en crear_traspaso_por_factura",
+    "R2: Merge items_tallas en _crear_traspasos_para_pp",
+    "R3: Script reparar_traspaso_parcial.py",
+    "R4: Test finalizar_compra(1) sin error",
+    "R5: Validar 0 duplicados + pares ≈ 44"
+  ]
+}

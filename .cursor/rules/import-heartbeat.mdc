@@ -1,0 +1,40 @@
+---
+description: Scripts de importación deben imprimir latido cada 60s (sigo vivo)
+globs: scripts/**/*.py
+alwaysApply: true
+---
+
+# Latido en procesos de importación
+
+Todo script nuevo o modificado de **importación masiva** (Excel → BD, TRUNCATE, lotes largos) **debe** avisar que sigue en ejecución.
+
+## Obligatorio
+
+- Mensaje en consola **cada 60 segundos** mientras dure la operación (conexión Supabase, lectura Excel, lotes).
+- Formato sugerido: `[HH:MM:SS] … sigo vivo (cada 60s, tick N) — <etapa actual>`
+- Usar `flush=True` en cada `print`.
+- Hilo en background (`threading`); detener en `finally` al terminar o fallar.
+
+## Implementación estándar del repo
+
+Reutilizar `scripts/lib/import_heartbeat.py`:
+
+```python
+from scripts.lib.import_heartbeat import start_import_heartbeat, stop_import_heartbeat
+
+status = {"msg": "iniciando"}
+stop_hb, hb_thread = start_import_heartbeat(lambda: status["msg"], interval_sec=60)
+try:
+    status["msg"] = "conectando a Supabase…"
+    ...
+finally:
+    stop_import_heartbeat(stop_hb, hb_thread)
+```
+
+## Al crear un import nuevo
+
+1. Incluir latido 60s desde el primer commit del script.
+2. Actualizar `status["msg"]` (o callable equivalente) en cada fase: leer Excel, purge, UPSERT linea, UPSERT L+R, verificación.
+3. Al arrancar, imprimir una línea: `Latido activo: mensaje cada 60s`.
+
+No usar intervalos menores a 60s salvo que el usuario pida explícitamente otro valor.

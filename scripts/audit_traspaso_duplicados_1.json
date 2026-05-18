@@ -1,0 +1,213 @@
+{
+  "audit_timestamp": "2026-05-17T15:54:45.391830",
+  "compra_id": 1,
+  "diagnostico": {
+    "skus_con_multiples_fid": 1,
+    "ejemplo_multi_fid_skus": [
+      {
+        "sku": "4202-500-39-53",
+        "ocurrencias": 2,
+        "fid_ids": [
+          1,
+          2
+        ],
+        "tallas_overlap": true
+      }
+    ],
+    "root_cause": "N/A"
+  },
+  "duplicados": [],
+  "fi_detalle": [
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 1,
+      "sku": "4202-500-39-53",
+      "talla": "t35",
+      "qty": 1
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 1,
+      "sku": "4202-500-39-53",
+      "talla": "t36",
+      "qty": 2
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 1,
+      "sku": "4202-500-39-53",
+      "talla": "t37",
+      "qty": 1
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 1,
+      "sku": "4202-500-39-53",
+      "talla": "t38",
+      "qty": 3
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 1,
+      "sku": "4202-500-39-53",
+      "talla": "t39",
+      "qty": 3
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 1,
+      "sku": "4202-500-39-53",
+      "talla": "t40",
+      "qty": 2
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 2,
+      "sku": "4202-500-39-53",
+      "talla": "t37",
+      "qty": 1
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 2,
+      "sku": "4202-500-39-53",
+      "talla": "t38",
+      "qty": 2
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 2,
+      "sku": "4202-500-39-53",
+      "talla": "t39",
+      "qty": 2
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 2,
+      "sku": "4202-500-39-53",
+      "talla": "t40",
+      "qty": 3
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 3,
+      "sku": "4202-500-37-50",
+      "talla": "t37",
+      "qty": 2
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 3,
+      "sku": "4202-500-37-50",
+      "talla": "t38",
+      "qty": 2
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 3,
+      "sku": "4202-500-37-50",
+      "talla": "t39",
+      "qty": 2
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 3,
+      "sku": "4202-500-37-50",
+      "talla": "t40",
+      "qty": 2
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 4,
+      "sku": "4202-500-37-51",
+      "talla": "t37",
+      "qty": 2
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 4,
+      "sku": "4202-500-37-51",
+      "talla": "t38",
+      "qty": 2
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 4,
+      "sku": "4202-500-37-51",
+      "talla": "t39",
+      "qty": 2
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 4,
+      "sku": "4202-500-37-51",
+      "talla": "t40",
+      "qty": 2
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 5,
+      "sku": "4202-565-49526-75",
+      "talla": "t36",
+      "qty": 1
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 5,
+      "sku": "4202-565-49526-75",
+      "talla": "t37",
+      "qty": 2
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 5,
+      "sku": "4202-565-49526-75",
+      "talla": "t38",
+      "qty": 2
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 5,
+      "sku": "4202-565-49526-75",
+      "talla": "t39",
+      "qty": 2
+    },
+    {
+      "fi_id": 1,
+      "fi_nro": "1-PV001",
+      "fid_id": 5,
+      "sku": "4202-565-49526-75",
+      "talla": "t40",
+      "qty": 1
+    }
+  ],
+  "desvios": [],
+  "compra_nro": "CL-2026-0001",
+  "proforma": "7441-4084",
+  "estado": "DISTRIBUIDA",
+  "traspaso_id": 2,
+  "traspaso_nro": "T-2026-0001",
+  "traspaso_estado": "BORRADOR"
+}

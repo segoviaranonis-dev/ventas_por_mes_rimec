@@ -13,15 +13,19 @@ import streamlit as st
 import pandas as pd
 
 from core.tabla_articulos import render_tabla_5pilares
+from core.fi_card import render_fi_card
 from modules.compra_legal.logic import (
     get_compras_legales,
     get_compra_header,
     get_compra_hija_deposito,
     get_compra_hija_facturacion,
+    get_metricas_facturacion_compra,
+    get_facturas_internas_de_compra,
     get_pps_de_compra,
     finalizar_compra,
     rechazar_pp_de_compra,
 )
+from modules.pedido_proveedor.logic import get_fi_detalles_canonico
 
 
 _ESTADO_COLOR = {
@@ -304,26 +308,35 @@ def _render_detalle_compra(id_cl: int):
                 hide_index=True, use_container_width=True,
             )
 
-    # ── Hija Facturación (FAC-INTs) ───────────────────────────────────────────
-    df_fac  = get_compra_hija_facturacion(id_cl)
-    fac_tot = int(df_fac["pares"].sum()) if not df_fac.empty else 0
+    # ── Hija Facturación (FAC-INTs) — ley FI: render_fi_card ───────────────────
+    met     = get_metricas_facturacion_compra(id_cl)
+    fac_tot = int(met["pares_facturados"])
+    df_fi   = get_facturas_internas_de_compra(id_cl)
 
     with st.expander(
         f"🧾  Facturas Internas (FAC-INT)  —  {fac_tot:,} pares",
         expanded=True,
     ):
-        if df_fac.empty:
-            st.info("Sin facturas internas en los PPs de esta compra.")
+        if df_fi is None or df_fi.empty:
+            df_legacy = get_compra_hija_facturacion(id_cl)
+            if df_legacy is None or df_legacy.empty:
+                st.info("Sin facturas internas en los PPs de esta compra.")
+            else:
+                st.caption("Solo facturas legacy (venta_transito).")
+                for fac in df_legacy["factura"].unique():
+                    df_f = df_legacy[df_legacy["factura"] == fac]
+                    with st.expander(f"🧾  {fac}  (legacy)", expanded=False):
+                        render_tabla_5pilares(df_f)
         else:
-            for fac in df_fac["factura"].unique():
-                df_f  = df_fac[df_fac["factura"] == fac]
-                t_fac = int(df_f["pares"].sum())
-                t_est = str(df_f["traspaso_estado"].iloc[0])
-                t_lab = _ESTADO_TRP_LABEL.get(t_est, t_est)
-                cli   = str(df_f["cliente"].iloc[0])
-
-                with st.expander(
-                    f"🧾  {fac}  |  {cli}  |  {t_fac:,} pares  |  {t_lab}",
-                    expanded=False,
-                ):
-                    render_tabla_5pilares(df_f)
+            for _, fi in df_fi.iterrows():
+                fi_dict = fi.to_dict()
+                detalles = get_fi_detalles_canonico(int(fi_dict["id"]))
+                render_fi_card(
+                    fi_dict,
+                    detalles=detalles,
+                    mostrar_detalle=True,
+                    detalle_colapsado=True,
+                    key_prefix=f"cl_{id_cl}_fi",
+                    mostrar_descuentos=True,
+                )
+                st.markdown("---")

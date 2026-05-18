@@ -1,0 +1,71 @@
+---
+description: Listado RIMEC (biblioteca+Excel), vínculo PP y facturas internas
+alwaysApply: true
+---
+
+# Listado RIMEC ↔ PP ↔ Facturas internas
+
+## Objeto único: Listado de precios RIMEC
+
+```
+Biblioteca de casos  +  Listado Excel (F9/proveedor)  =  precio_evento  →  precio_lista
+```
+
+- **Política (casos):** `precio_evento` + `precio_evento_caso` + `biblioteca_precio` (`aplicar_biblioteca_a_evento`).
+- **Aritmética (LPN/LPC):** filas en `precio_lista` con `nombre_caso_aplicado`, `dolar_aplicado`, `indice_aplicado`.
+- **NO** usar `linea.caso_id` como fuente de verdad (legacy → NULL). Caso aplicado sale del evento/listado.
+
+## Qué acompaña la compra (Pedido Proveedor)
+
+- El listado que acompaña un **PP** es un único **`precio_evento_id`** en `intencion_compra_pedido` e `intencion_compra` (sincronizado con `guardar_configuracion_pp` / `vincular_listado_precio_a_pp`).
+- UI: pestaña PP → **Importación / Stock** → panel **Listado de precios RIMEC** (`_render_listado_precio_pp`).
+- Cambio de listado: selector de evento + **Vincular al PP** (con confirmación).
+
+## Flexibilidad vs bloqueo
+
+| Fase | PP `estado` | Listado | FI |
+|------|-------------|---------|-----|
+| Preventa / operación | ABIERTO, CERRADO, etc. | Se puede cambiar evento y recalcular | FI **RESERVADA** recalculan LPN/subtotal; opción avanzada incluir **CONFIRMADA** |
+| Compra legal | **ENVIADO** | **Bloqueado** (`pp_listado_precio_editable` = false) | Solo lectura; no crear FI sin listado |
+
+Funciones clave en `modules/pedido_proveedor/logic.py`:
+- `vincular_listado_precio_a_pp`
+- `recalcular_facturas_internas_pp`
+- `get_evento_precio_pp_detalle`
+
+Recálculo FI: LPN desde `precio_lista` del evento (join por `ppd_id` → línea+material o por `linea_id`+`material_id`), aplica descuentos 1–4 de cabecera FI.
+
+## Pilares (import / catálogo)
+
+| Tabla | Campos canónicos |
+|-------|------------------|
+| `linea` | `marca_id`, `genero_id` — **no** `caso_id` en imports nuevos |
+| `linea_referencia` | `estilo`, `tipo_1` por par línea+referencia |
+
+Import correcto: `scripts/import_pilares_linea_lr_excel.py`.  
+Legacy bloqueado: `importar_lineas_desde_excel.py` sin `--allow-legacy-caso-id`.
+
+## Proforma → PP (módulo 500, Excel es ley)
+
+- El Excel/proforma es la **máxima ley**: cada fila ITEM es una caja real; si el proveedor repite 4 líneas AVELA idénticas en curva, son **4 cajas**, no un error de parser.
+- En BD: **1 molécula = 1 fila** en `pedido_proveedor_detalle` **por PP**, agrupando filas Excel que comparten los **5 pilares** dentro del mismo pedido:
+  `linea` + `referencia` + `material` + `color` + **grada** (`grades_json`, curva de tallas).
+- Import: `populate_pp_from_proforma` + `_mol_key_import` en `logic.py` — suma `boxes`/`pairs`/`amount_fob`, log WARNING, trazabilidad de ítems concatenados.
+- Caso 7320/239 (proforma 7441-4084): 8 filas Excel → **3 moléculas** (AVELA 4 cjs; NEGRO ×2 curvas distintas).
+- Saneo puntual PP ya cargado: `scripts/sanear_ppd_duplicados_pp.py`. Test: `scripts/test_normalizacion_proforma.py`.
+
+## Web RIMEC (`rimec-web`, puerto 3001)
+
+- Filtros Estilo/Tipo 1: enriquecer con `lib/atributosLinea.ts` + vista `v_stock_rimec` con join **real** `linea_referencia` (`lr.linea_id = l.id`, `lr.referencia_id = ref.id`) — script `scripts/fix_v_stock_rimec.py` / `APLICAR_VISTA_CATALOGO.bat`.
+- Página **Estadísticas**: `/estadisticas` (PP → género → marca → estilo, Inicial/Vendido/Saldo).
+
+## Repos y puertos
+
+- Nexus: `ventas_por_mes_rimec-main` — Streamlit :8501
+- Web RIMEC: `rimec-web` — :3001
+- Política macro: `docs/RIMEC_MISION_VISION_POLITICA.md`, `.cursor/rules/rimec-arquitectura-unica-verdad.mdc`
+
+## Comunicación con el usuario
+
+- Español, pasos simples, `.bat` cuando aplique.
+- No commitear salvo pedido explícito.

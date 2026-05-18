@@ -43,6 +43,8 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import ProgrammingError
 
+from modules.rimec_engine.lr_schema import linea_referencia_tiene_codigos_proveedor
+
 OTROS_CODIGO = "RETAIL_OTROS"
 # Debe coincidir con migrations/033_retail_staging_fk_dims.sql (marca_v2 sin columna codigo).
 OTROS_MARCA_DESCP = "Otros (retail staging)"
@@ -811,34 +813,91 @@ def provision_missing_linea_referencia_pairs(
                 continue
 
             if _lr_row_exists(conn, linea_id, ref_id):
+                if linea_referencia_tiene_codigos_proveedor(conn):
+                    conn.execute(
+                        text(
+                            """
+                            UPDATE public.linea_referencia lr
+                            SET codigo_proveedor = pi.codigo::text,
+                                linea_codigo_proveedor = CAST(:lc AS bigint),
+                                referencia_codigo_proveedor = CAST(:rc AS bigint)
+                            FROM public.proveedor_importacion pi
+                            WHERE lr.linea_id = CAST(:lid AS bigint)
+                              AND lr.referencia_id = CAST(:rid AS bigint)
+                              AND pi.id = CAST(:p AS bigint)
+                            """
+                        ),
+                        {
+                            "lid": linea_id,
+                            "rid": ref_id,
+                            "p": proveedor_id,
+                            "lc": ln,
+                            "rc": rn,
+                        },
+                    )
                 continue
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO public.linea_referencia (
-                        linea_id, referencia_id, proveedor_id,
-                        grupo_estilo_id, tipo_1_id,
-                        descp_grupo_estilo, descp_tipo_1
-                    )
-                    VALUES (
-                        CAST(:lid AS bigint), CAST(:rid AS bigint), CAST(:p AS bigint),
-                        CAST(:ge AS bigint), CAST(:t1 AS bigint),
-                        (SELECT g.descp_grupo_estilo FROM public.grupo_estilo_v2 g
-                         WHERE g.id_grupo_estilo = CAST(:ge AS bigint) LIMIT 1),
-                        (SELECT t.descp_tipo_1 FROM public.tipo_1 t
-                         WHERE t.id_tipo_1 = CAST(:t1 AS bigint) LIMIT 1)
-                    )
-                    ON CONFLICT (linea_id, referencia_id) DO NOTHING
-                    """
-                ),
-                {
-                    "lid": linea_id,
-                    "rid": ref_id,
-                    "p": proveedor_id,
-                    "ge": ge_lr,
-                    "t1": t1_lr,
-                },
-            )
+            if linea_referencia_tiene_codigos_proveedor(conn):
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO public.linea_referencia (
+                            linea_id, referencia_id, proveedor_id,
+                            codigo_proveedor, linea_codigo_proveedor, referencia_codigo_proveedor,
+                            grupo_estilo_id, tipo_1_id,
+                            descp_grupo_estilo, descp_tipo_1
+                        )
+                        VALUES (
+                            CAST(:lid AS bigint), CAST(:rid AS bigint), CAST(:p AS bigint),
+                            (SELECT codigo::text FROM public.proveedor_importacion
+                             WHERE id = CAST(:p AS bigint) LIMIT 1),
+                            CAST(:lc AS bigint), CAST(:rc AS bigint),
+                            CAST(:ge AS bigint), CAST(:t1 AS bigint),
+                            (SELECT g.descp_grupo_estilo FROM public.grupo_estilo_v2 g
+                             WHERE g.id_grupo_estilo = CAST(:ge AS bigint) LIMIT 1),
+                            (SELECT t.descp_tipo_1 FROM public.tipo_1 t
+                             WHERE t.id_tipo_1 = CAST(:t1 AS bigint) LIMIT 1)
+                        )
+                        ON CONFLICT (linea_id, referencia_id) DO NOTHING
+                        """
+                    ),
+                    {
+                        "lid": linea_id,
+                        "rid": ref_id,
+                        "p": proveedor_id,
+                        "lc": ln,
+                        "rc": rn,
+                        "ge": ge_lr,
+                        "t1": t1_lr,
+                    },
+                )
+            else:
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO public.linea_referencia (
+                            linea_id, referencia_id, proveedor_id,
+                            grupo_estilo_id, tipo_1_id,
+                            descp_grupo_estilo, descp_tipo_1
+                        )
+                        VALUES (
+                            CAST(:lid AS bigint), CAST(:rid AS bigint), CAST(:p AS bigint),
+                            CAST(:ge AS bigint), CAST(:t1 AS bigint),
+                            (SELECT g.descp_grupo_estilo FROM public.grupo_estilo_v2 g
+                             WHERE g.id_grupo_estilo = CAST(:ge AS bigint) LIMIT 1),
+                            (SELECT t.descp_tipo_1 FROM public.tipo_1 t
+                             WHERE t.id_tipo_1 = CAST(:t1 AS bigint) LIMIT 1)
+                        )
+                        ON CONFLICT (linea_id, referencia_id) DO NOTHING
+                        """
+                    ),
+                    {
+                        "lid": linea_id,
+                        "rid": ref_id,
+                        "p": proveedor_id,
+                        "ge": ge_lr,
+                        "t1": t1_lr,
+                    },
+                )
 
     return len(rows)
 

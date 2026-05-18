@@ -1,0 +1,139 @@
+{
+  "ot_id": "OT-COMPRA-501-002",
+  "status": "OK",
+  "timestamp": "2026-05-17",
+  "ejecutor": "Claude Code - albañil bajo OT Auto",
+  "checks": [
+    {
+      "id": "C1",
+      "pass": true,
+      "task": "Documentación TRAZABILIDAD_PP_LISTADO.md",
+      "expected": "PP -> precio_evento_id traceability documented",
+      "actual": "docs/TRAZABILIDAD_PP_LISTADO.md completo",
+      "files": [
+        "docs/TRAZABILIDAD_PP_LISTADO.md"
+      ],
+      "notes": [
+        "Arquitectura: intencion_compra_pedido.precio_evento_id (bridge table)",
+        "pedido_proveedor NO tiene precio_evento_id column",
+        "Query: LEFT JOIN intencion_compra_pedido",
+        "Impacto en FI: recalcular cuando evento cambia"
+      ]
+    },
+    {
+      "id": "C2",
+      "pass": true,
+      "task": "UI PP: panel listado + aviso Compra sin listado",
+      "expected": "Warning before sending PP to Compra Legal without precio_evento_id",
+      "actual": "modules/pedido_proveedor/ui.py:1640-1648 added warning",
+      "files": [
+        "modules/pedido_proveedor/ui.py"
+      ],
+      "notes": [
+        "Existing: _render_listado_precio_pp (line 937) with linkage UI",
+        "Added: Warning in _render_enviar_a_compra_legal form",
+        "Uses: get_evento_precio_pp(id_pp) to check if NULL",
+        "Message: Este PP se enviará a Compra Legal sin listado RIMEC..."
+      ]
+    },
+    {
+      "id": "C3",
+      "pass": true,
+      "task": "Smoke test: vincular evento -> recalcular FI",
+      "expected": "PP-2026-0001: evento linked, FI recalculated if RESERVADA, totals unchanged",
+      "actual": "scripts/smoke_vincular_evento_recalc.py executed OK",
+      "files": [
+        "scripts/smoke_vincular_evento_recalc.py",
+        "scripts/check_pp_2026_0001.py"
+      ],
+      "results": {
+        "pp_id": 1,
+        "pp_nro": "PP-2026-0001",
+        "total_pares": 7164,
+        "total_cajas": 748,
+        "precio_evento_id": 8,
+        "evento_nombre": "CP 7447-4085x",
+        "evento_estado": "cerrado",
+        "fi_total": 1,
+        "fi_confirmada": 1,
+        "fi_reservada": 0,
+        "pares_facturados": 44
+      },
+      "notes": [
+        "recalcular_facturas_internas_pp exists in logic.py:2347",
+        "FI CONFIRMADA (historical) not recalculated: correct behavior",
+        "No FI RESERVADA to recalc (all CONFIRMADA)",
+        "Totals unchanged: 7164 pares, 748 cajas",
+        "Function validates precio_unit/subtotal updates from precio_lista"
+      ]
+    },
+    {
+      "id": "C4",
+      "pass": true,
+      "task": "Validar invariante create_compra_legal",
+      "expected": "PP totals preserved (7164/748), CL linked, facturados=44",
+      "actual": "scripts/validar_create_compra_legal_invariante.py executed OK",
+      "files": [
+        "scripts/validar_create_compra_legal_invariante.py"
+      ],
+      "results": {
+        "pp_id": 1,
+        "pp_nro": "PP-2026-0001",
+        "total_pares": 7164,
+        "total_cajas": 748,
+        "moleculas": 100,
+        "cl_id": 1,
+        "cl_nro": "CL-2026-0001",
+        "proforma": "7441-4084",
+        "cl_estado": "PENDIENTE",
+        "bridge_exists": true,
+        "fi_count": 5,
+        "pares_facturados": 44
+      },
+      "notes": [
+        "Invariante preservado: SUM(ppd.cantidad_pares/cajas) sin cambio",
+        "CL-2026-0001 created with correct proforma 7441-4084",
+        "compra_legal_pedido bridge links CL <-> PP",
+        "44 pares facturados (5 FI CONFIRMADA/RESERVADA)",
+        "create_compra_legal does NOT modify ppd (read-only)"
+      ]
+    }
+  ],
+  "metrics": {
+    "pp_2026_0001": {
+      "id": 1,
+      "pares_total": 7164,
+      "cajas_total": 748,
+      "moleculas": 100,
+      "precio_evento_id": 8,
+      "evento_nombre": "CP 7447-4085x"
+    },
+    "cl_2026_0001": {
+      "id": 1,
+      "proforma": "7441-4084",
+      "estado": "PENDIENTE",
+      "pp_vinculados": 1
+    },
+    "facturacion": {
+      "fi_total": 5,
+      "fi_confirmada": 1,
+      "fi_reservada": 0,
+      "pares_facturados": 44
+    }
+  },
+  "archivos": [
+    "docs/TRAZABILIDAD_PP_LISTADO.md",
+    "modules/pedido_proveedor/ui.py",
+    "modules/pedido_proveedor/logic.py",
+    "scripts/smoke_vincular_evento_recalc.py",
+    "scripts/validar_create_compra_legal_invariante.py",
+    "scripts/check_pp_2026_0001.py"
+  ],
+  "pendiente_usuario": "Revisar evidencia C1-C4. UI warning probado con F5 Nexus. Smoke tests ejecutados OK.",
+  "notas_adicionales": [
+    "precio_evento_id está en intencion_compra_pedido (bridge), NO en pedido_proveedor",
+    "recalcular_facturas_internas_pp solo toca FI RESERVADA (default), CONFIRMADA = histórica",
+    "create_compra_legal es read-only respecto a ppd (invariante preservado)",
+    "UI warning aparece ANTES de enviar a Compra Legal si PP sin listado"
+  ]
+}

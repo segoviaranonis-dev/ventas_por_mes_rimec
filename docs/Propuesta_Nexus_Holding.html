@@ -1,0 +1,1166 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Propuesta Estratégica · NEXUS CORE · RIMEC Group</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #0A0F1C;
+    color: #E2E8F0;
+    line-height: 1.5;
+    overflow-x: hidden;
+  }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .gold { color: #D4AF37; }
+  .cyan { color: #22D3EE; }
+  .emerald { color: #34D399; }
+  .rose  { color: #FB7185; }
+  .amber { color: #FBBF24; }
+  .slate { color: #94A3B8; }
+
+  /* ── Hero gradient ─────────────────────────────────── */
+  .grad-gold { background: linear-gradient(135deg, #D4AF37 0%, #F59E0B 50%, #B45309 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .grad-cyan { background: linear-gradient(135deg, #22D3EE 0%, #0EA5E9 50%, #2563EB 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+  /* ── Layout slides ─────────────────────────────────── */
+  section.slide {
+    min-height: 100vh;
+    padding: 80px 7vw;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    position: relative;
+    border-bottom: 1px solid rgba(212, 175, 55, 0.08);
+  }
+  section.slide::before {
+    content: attr(data-num);
+    position: absolute;
+    top: 30px;
+    right: 7vw;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    color: rgba(212, 175, 55, 0.4);
+    letter-spacing: 0.2em;
+  }
+  section.slide::after {
+    content: attr(data-tag);
+    position: absolute;
+    top: 30px;
+    left: 7vw;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    color: rgba(148, 163, 184, 0.5);
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+  }
+
+  /* ── Hero ──────────────────────────────────────────── */
+  .hero {
+    background:
+      radial-gradient(circle at 30% 20%, rgba(212, 175, 55, 0.18) 0%, transparent 40%),
+      radial-gradient(circle at 70% 80%, rgba(34, 211, 238, 0.12) 0%, transparent 50%),
+      #0A0F1C;
+    text-align: center;
+    align-items: center;
+  }
+  .hero h1 {
+    font-size: clamp(3rem, 8vw, 7rem);
+    font-weight: 900;
+    letter-spacing: -0.04em;
+    line-height: 0.95;
+    margin-bottom: 16px;
+  }
+  .hero .subtitle {
+    font-size: clamp(1rem, 1.6vw, 1.4rem);
+    color: #94A3B8;
+    max-width: 720px;
+    margin: 16px auto 56px;
+    font-weight: 400;
+  }
+  .hero-badge {
+    display: inline-block;
+    padding: 6px 16px;
+    border: 1px solid rgba(212, 175, 55, 0.3);
+    border-radius: 24px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    color: #D4AF37;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    margin-bottom: 32px;
+  }
+  .hero-meta {
+    display: flex;
+    gap: 48px;
+    justify-content: center;
+    margin-top: 56px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    color: #64748B;
+  }
+  .hero-meta strong { color: #D4AF37; display: block; font-size: 1.4rem; margin-bottom: 4px; }
+
+  /* ── Headings ──────────────────────────────────────── */
+  h2.section-title {
+    font-size: clamp(2.2rem, 4.5vw, 4rem);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    margin-bottom: 24px;
+    max-width: 1100px;
+  }
+  h3.section-sub {
+    font-size: clamp(1rem, 1.4vw, 1.25rem);
+    font-weight: 400;
+    color: #94A3B8;
+    max-width: 900px;
+    margin-bottom: 56px;
+    line-height: 1.6;
+  }
+  h4 { font-size: 1.1rem; font-weight: 700; color: #F1F5F9; margin-bottom: 8px; }
+
+  /* ── Cards ─────────────────────────────────────────── */
+  .grid { display: grid; gap: 20px; }
+  .grid-2 { grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
+  .grid-3 { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .grid-4 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+
+  .card {
+    background: linear-gradient(180deg, rgba(30, 41, 59, 0.5) 0%, rgba(15, 23, 42, 0.7) 100%);
+    border: 1px solid rgba(148, 163, 184, 0.1);
+    border-radius: 16px;
+    padding: 28px;
+    transition: all 0.3s ease;
+  }
+  .card:hover {
+    border-color: rgba(212, 175, 55, 0.4);
+    transform: translateY(-2px);
+  }
+  .card .icon { font-size: 2rem; margin-bottom: 12px; display: block; }
+  .card h4 { font-size: 1.15rem; margin-bottom: 10px; }
+  .card p { color: #94A3B8; font-size: 0.9rem; line-height: 1.6; }
+
+  /* Card variants */
+  .card-gold { border-color: rgba(212, 175, 55, 0.3); }
+  .card-gold .icon { color: #D4AF37; }
+  .card-gold h4 { color: #FCD34D; }
+
+  .card-cyan { border-color: rgba(34, 211, 238, 0.3); }
+  .card-cyan .icon { color: #22D3EE; }
+  .card-cyan h4 { color: #67E8F9; }
+
+  .card-emerald { border-color: rgba(52, 211, 153, 0.3); }
+  .card-emerald .icon { color: #34D399; }
+  .card-emerald h4 { color: #6EE7B7; }
+
+  .card-amber { border-color: rgba(251, 191, 36, 0.3); }
+  .card-amber .icon { color: #FBBF24; }
+  .card-amber h4 { color: #FCD34D; }
+
+  .card-rose { border-color: rgba(251, 113, 133, 0.3); }
+  .card-rose .icon { color: #FB7185; }
+  .card-rose h4 { color: #FDA4AF; }
+
+  /* ── KPI Big ───────────────────────────────────────── */
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 24px; }
+  .kpi {
+    text-align: center;
+    padding: 32px 16px;
+    border-radius: 16px;
+    background: linear-gradient(180deg, rgba(30, 41, 59, 0.5) 0%, rgba(15, 23, 42, 0.7) 100%);
+    border: 1px solid rgba(148, 163, 184, 0.1);
+  }
+  .kpi .num {
+    font-size: clamp(2rem, 4vw, 3.5rem);
+    font-weight: 900;
+    line-height: 1;
+    margin-bottom: 8px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .kpi .label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: #64748B;
+  }
+
+  /* ── Pipeline Diagram ──────────────────────────────── */
+  .pipeline {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    margin: 32px 0;
+    overflow-x: auto;
+    padding-bottom: 16px;
+  }
+  .pipe-node {
+    flex: 1;
+    min-width: 180px;
+    padding: 20px 16px;
+    background: linear-gradient(180deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.9) 100%);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    border-radius: 12px;
+    margin: 0 8px;
+    text-align: center;
+    position: relative;
+  }
+  .pipe-node .pipe-icon { font-size: 1.6rem; margin-bottom: 6px; display: block; }
+  .pipe-node .pipe-title { font-weight: 700; color: #F1F5F9; font-size: 0.9rem; margin-bottom: 4px; }
+  .pipe-node .pipe-sub { font-size: 0.72rem; color: #64748B; font-family: 'JetBrains Mono', monospace; }
+  .pipe-arrow {
+    align-self: center;
+    color: #D4AF37;
+    font-size: 1.2rem;
+    flex-shrink: 0;
+  }
+
+  /* ── Tables ────────────────────────────────────────── */
+  table.feat {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 24px;
+  }
+  table.feat th, table.feat td {
+    text-align: left;
+    padding: 14px 18px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+    font-size: 0.92rem;
+  }
+  table.feat th {
+    background: rgba(212, 175, 55, 0.08);
+    color: #D4AF37;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 0.72rem;
+  }
+  table.feat tr:hover td { background: rgba(212, 175, 55, 0.03); }
+
+  /* ── Quote ─────────────────────────────────────────── */
+  .quote-block {
+    border-left: 4px solid #D4AF37;
+    padding: 16px 28px;
+    margin: 32px 0;
+    background: rgba(212, 175, 55, 0.05);
+    border-radius: 0 12px 12px 0;
+  }
+  .quote-block p { color: #F1F5F9; font-size: 1.1rem; font-style: italic; line-height: 1.6; }
+
+  /* ── 3 Pillars hero ────────────────────────────────── */
+  .pillars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 40px; }
+  .pillar {
+    padding: 36px 28px;
+    border-radius: 20px;
+    border: 1px solid;
+    position: relative;
+    overflow: hidden;
+  }
+  .pillar .pill-num {
+    position: absolute;
+    top: 20px;
+    right: 24px;
+    font-size: 4rem;
+    font-weight: 900;
+    opacity: 0.1;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .pillar h3 { font-size: 1.5rem; font-weight: 800; margin-bottom: 12px; }
+  .pillar p { color: #CBD5E1; font-size: 0.92rem; line-height: 1.6; }
+  .pillar ul { list-style: none; margin-top: 16px; }
+  .pillar li { padding: 6px 0; font-size: 0.85rem; color: #94A3B8; }
+  .pillar li::before { content: '▸ '; color: inherit; }
+
+  .pillar-gold  { border-color: rgba(212, 175, 55, 0.35); background: linear-gradient(180deg, rgba(212, 175, 55, 0.08) 0%, transparent 100%); }
+  .pillar-cyan  { border-color: rgba(34, 211, 238, 0.35);  background: linear-gradient(180deg, rgba(34, 211, 238, 0.08)  0%, transparent 100%); }
+  .pillar-rose  { border-color: rgba(251, 113, 133, 0.35); background: linear-gradient(180deg, rgba(251, 113, 133, 0.08) 0%, transparent 100%); }
+  .pillar-gold h3, .pillar-gold li::before { color: #D4AF37; }
+  .pillar-cyan h3, .pillar-cyan li::before { color: #22D3EE; }
+  .pillar-rose h3, .pillar-rose li::before { color: #FB7185; }
+
+  /* ── Modules grid ──────────────────────────────────── */
+  .modules-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    margin-top: 40px;
+  }
+  .module-card {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(148, 163, 184, 0.1);
+    border-radius: 12px;
+    padding: 20px;
+    transition: all 0.25s ease;
+  }
+  .module-card:hover { border-color: rgba(212, 175, 55, 0.4); }
+  .module-card .mod-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .module-card .mod-icon { font-size: 1.5rem; }
+  .module-card .mod-num { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; color: #64748B; }
+  .module-card h5 { font-size: 1rem; font-weight: 700; color: #F1F5F9; }
+  .module-card p { font-size: 0.82rem; color: #94A3B8; margin-top: 4px; line-height: 1.5; }
+
+  /* ── Roadmap ───────────────────────────────────────── */
+  .roadmap { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 40px; }
+  .phase {
+    padding: 28px 24px;
+    border-radius: 16px;
+    background: linear-gradient(180deg, rgba(30, 41, 59, 0.5) 0%, rgba(15, 23, 42, 0.9) 100%);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    border-top: 4px solid;
+  }
+  .phase .phase-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.2em;
+    color: #94A3B8;
+    margin-bottom: 8px;
+  }
+  .phase h5 { font-size: 1.1rem; font-weight: 700; margin-bottom: 12px; }
+  .phase ul { list-style: none; padding: 0; }
+  .phase li { font-size: 0.82rem; color: #CBD5E1; padding: 6px 0; padding-left: 18px; position: relative; }
+  .phase li::before { content: '✓'; position: absolute; left: 0; color: inherit; font-weight: 700; }
+  .phase-a { border-top-color: #D4AF37; }  .phase-a h5, .phase-a li::before { color: #D4AF37; }
+  .phase-b { border-top-color: #22D3EE; }  .phase-b h5, .phase-b li::before { color: #22D3EE; }
+  .phase-c { border-top-color: #34D399; }  .phase-c h5, .phase-c li::before { color: #34D399; }
+  .phase-d { border-top-color: #FB7185; }  .phase-d h5, .phase-d li::before { color: #FB7185; }
+
+  /* ── Closing ───────────────────────────────────────── */
+  .closing {
+    background:
+      radial-gradient(circle at 50% 30%, rgba(212, 175, 55, 0.15) 0%, transparent 50%),
+      radial-gradient(circle at 50% 80%, rgba(34, 211, 238, 0.1) 0%, transparent 60%),
+      #0A0F1C;
+    text-align: center;
+    align-items: center;
+  }
+  .closing h2 { font-size: clamp(2.5rem, 5vw, 4.5rem); margin-bottom: 32px; }
+  .closing p { color: #CBD5E1; font-size: 1.15rem; max-width: 680px; margin: 0 auto 48px; }
+
+  /* ── Print ─────────────────────────────────────────── */
+  @media print {
+    body { background: white !important; color: #1F2937 !important; }
+    section.slide { min-height: auto; padding: 40px 32px; page-break-after: always; border: none; }
+    .card, .kpi, .pipe-node, .pillar, .module-card, .phase {
+      background: white !important;
+      border-color: #E5E7EB !important;
+      color: #1F2937;
+    }
+    h2.section-title, h4, h5, .gold, .cyan, .emerald { color: #B45309 !important; }
+    p, td, li { color: #374151 !important; }
+    .grad-gold, .grad-cyan { -webkit-text-fill-color: #B45309 !important; color: #B45309 !important; }
+  }
+
+  /* ── Nav dots ──────────────────────────────────────── */
+  .nav-dots {
+    position: fixed;
+    right: 24px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 100;
+  }
+  .nav-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: rgba(148, 163, 184, 0.3);
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .nav-dot:hover { background: #D4AF37; transform: scale(1.3); }
+  .nav-dot.active { background: #D4AF37; transform: scale(1.5); }
+  @media print { .nav-dots { display: none; } }
+</style>
+</head>
+<body>
+
+<nav class="nav-dots">
+  <button class="nav-dot" data-target="s1" title="Portada"></button>
+  <button class="nav-dot" data-target="s2" title="El Desafío"></button>
+  <button class="nav-dot" data-target="s3" title="Los 3 Pilares"></button>
+  <button class="nav-dot" data-target="s4" title="NEXUS Core"></button>
+  <button class="nav-dot" data-target="s5" title="Motor de Precios"></button>
+  <button class="nav-dot" data-target="s6" title="Inteligencia de Ventas"></button>
+  <button class="nav-dot" data-target="s7" title="Ciclo de Compra"></button>
+  <button class="nav-dot" data-target="s8" title="Aprobación"></button>
+  <button class="nav-dot" data-target="s9" title="Rimec Web"></button>
+  <button class="nav-dot" data-target="s10" title="Bazar Web"></button>
+  <button class="nav-dot" data-target="s11" title="Cifras Reales"></button>
+  <button class="nav-dot" data-target="s12" title="Roadmap"></button>
+  <button class="nav-dot" data-target="s13" title="Cierre"></button>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<!-- 1. PORTADA                                          -->
+<!-- ═══════════════════════════════════════════════════ -->
+<section class="slide hero" id="s1" data-num="01 / 13" data-tag="RIMEC · NEXUS CORE">
+  <span class="hero-badge">★ PROPUESTA ESTRATÉGICA · 2026</span>
+  <h1>
+    <span class="grad-gold">NEXUS</span><br>
+    <span style="color:#F8FAFC;">CORE</span>
+  </h1>
+  <p class="subtitle">
+    Plataforma integrada de gestión comercial, importación, stock y precios
+    para el holding <strong style="color:#D4AF37;">RIMEC · BAZZAR</strong>.
+  </p>
+  <div class="hero-meta">
+    <div><strong>16</strong>módulos operativos</div>
+    <div><strong>3</strong>frentes web</div>
+    <div><strong>v100.3</strong>en producción</div>
+  </div>
+  <div style="margin-top:80px; font-family:'JetBrains Mono',monospace; font-size:0.78rem; color:#475569; letter-spacing:0.2em;">
+    PRESENTADO A · DIRECTORIO DEL HOLDING<br>
+    AUTOR · INGENIERÍA NEXUS CORE
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<!-- 2. EL DESAFÍO                                       -->
+<!-- ═══════════════════════════════════════════════════ -->
+<section class="slide" id="s2" data-num="02 / 13" data-tag="EL CONTEXTO">
+  <h2 class="section-title">
+    Un negocio importador tiene tres enemigos:<br>
+    <span class="grad-gold">desinformación, fricción y oportunidad perdida.</span>
+  </h2>
+  <h3 class="section-sub">
+    NEXUS CORE elimina los tres atacando el núcleo del proceso —
+    desde la intención de compra al cliente final— con un único motor
+    de datos coherente.
+  </h3>
+
+  <div class="grid grid-3">
+    <div class="card card-rose">
+      <span class="icon">⚠️</span>
+      <h4>Antes: Excel + memoria</h4>
+      <p>Decisiones de compra basadas en intuición. Pricing manual y errático.
+      Ventas a oscuras de qué llega, cuándo y a qué precio.</p>
+    </div>
+    <div class="card card-amber">
+      <span class="icon">🛠️</span>
+      <h4>Hoy: NEXUS CORE</h4>
+      <p>Un motor único orquesta proforma → compra → factura interna → arribo
+      → bazar web. Cada peso vendido es trazable a su origen.</p>
+    </div>
+    <div class="card card-emerald">
+      <span class="icon">🚀</span>
+      <h4>Mañana: la diferencia</hi>
+      <h4>Mañana: la diferencia</h4>
+      <p>Reporting de rentabilidad por vendedor. Pricing dinámico.
+      Visibilidad de stock pronta entrega + tránsito en tiempo real al cliente.</p>
+    </div>
+  </div>
+
+  <div class="quote-block">
+    <p>
+      "Cada FI (factura interna) que pasa por NEXUS lleva la misma genética visual:
+      foto, código, color, gradas, monto. Es <strong>la única ley fundamental</strong>
+      del sistema — y eso es lo que hace al directorio confiar en cada cifra."
+    </p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<!-- 3. LOS 3 PILARES                                    -->
+<!-- ═══════════════════════════════════════════════════ -->
+<section class="slide" id="s3" data-num="03 / 13" data-tag="ARQUITECTURA">
+  <h2 class="section-title">Tres pilares. <span class="grad-gold">Un solo cerebro.</span></h2>
+  <h3 class="section-sub">
+    NEXUS Core es el motor analítico y operativo. Rimec Web vende a mayoristas.
+    Bazar Web vende al retail. Todo bebe del mismo lago de datos.
+  </h3>
+
+  <div class="pillars">
+    <div class="pillar pillar-gold">
+      <span class="pill-num">01</span>
+      <span style="font-size:2.5rem;">⚙️</span>
+      <h3>NEXUS Core</h3>
+      <p>Cerebro operativo en Streamlit. Donde la importadora gestiona,
+      aprueba, factura y reportea.</p>
+      <ul>
+        <li>Motor de Precios</li>
+        <li>Intención de Compra</li>
+        <li>Pedido Proveedor</li>
+        <li>Aprobación &amp; Edición</li>
+        <li>Compra Legal · Depósito</li>
+        <li>Facturación · Bazar</li>
+        <li>Sales Report &amp; BI</li>
+      </ul>
+    </div>
+    <div class="pillar pillar-cyan">
+      <span class="pill-num">02</span>
+      <span style="font-size:2.5rem;">🛒</span>
+      <h3>Rimec Web</h3>
+      <p>Storefront para clientes mayoristas (zapaterías, distribuidores).
+      Catálogo en tránsito + pronta entrega.</p>
+      <ul>
+        <li>Catálogo unificado con filtros por quincena</li>
+        <li>Carrito que fragmenta por marca + caso (Regla 1)</li>
+        <li>Confirmación → FIs RESERVADAS automáticas</li>
+        <li>Trazabilidad cliente → vendedor</li>
+      </ul>
+    </div>
+    <div class="pillar pillar-rose">
+      <span class="pill-num">03</span>
+      <span style="font-size:2.5rem;">🛍️</span>
+      <h3>Bazar Web</h3>
+      <p>Tienda retail B2C alimentada por el stock que NEXUS libera tras
+      el arribo y la facturación legal.</p>
+      <ul>
+        <li>Vista de stock físico Bazar (almacén ID 1)</li>
+        <li>Sincronización automática post-arribo</li>
+        <li>Imágenes, colores HEX, gradas precisas</li>
+        <li>Carrito retail integrado</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<!-- 4. NEXUS CORE — 16 módulos                          -->
+<!-- ═══════════════════════════════════════════════════ -->
+<section class="slide" id="s4" data-num="04 / 13" data-tag="EL CEREBRO">
+  <h2 class="section-title">
+    16 módulos. Una <span class="grad-gold">arquitectura modular blindada.</span>
+  </h2>
+  <h3 class="section-sub">
+    Cada módulo es independiente, auditable, y se conecta vía un registro central.
+    Agregar un módulo nuevo: una línea de código. Cero acoplamiento.
+  </h3>
+
+  <div class="modules-grid">
+    <div class="module-card">
+      <div class="mod-head"><span class="mod-icon">🏠</span><span class="mod-num">01</span></div>
+      <h5>Home Launcher</h5>
+      <p>Punto de entrada. Selector visual de sectores con métricas en vivo.</p>
+    </div>
+    <div class="module-card">
+      <div class="mod-head"><span class="mod-icon">📊</span><span class="mod-num">02</span></div>
+      <h5>Sales Report</h5>
+      <p>Inteligencia de ventas: pivots, rankings, alertas. Reportes ejecutivos.</p>
+    </div>
+    <div class="module-card">
+      <div class="mod-head"><span class="mod-icon">🎯</span><span class="mod-num">03</span></div>
+      <h5>Intención de Compra</h5>
+      <p>Captura demanda anticipada: qué marca, cantidad, plazo, vendedor.</p>
+    </div>
+    <div class="module-card">
+      <div class="mod-head"><span class="mod-icon">✍️</span><span class="mod-num">3.5</span></div>
+      <h5>Digitación</h5>
+      <p>Puente IC → PP. Asigna número de fábrica y evento de precio.</p>
+    </div>
+    <div class="module-card">
+      <div class="mod-head"><span class="mod-icon">📦</span><span class="mod-num">4.2</span></div>
+      <h5>Carga Tránsito</h5>
+      <p>Importa proformas Excel y normaliza stock en tránsito.</p>
+    </div>
+    <div class="module-card">
+      <div class="mod-head"><span class="mod-icon">🚢</span><span class="mod-num">4</span></div>
+      <h5>Pedido Proveedor</h5>
+      <p>Núcleo del importador: cabecera, detalle, arribo, FIs, envío a compra.</p>
+    </div>
+    <div class="module-card">
+      <div class="mod-head"><span class="mod-icon">✅</span><span class="mod-num">4.5</span></div>
+      <h5>Aprobación de Pedidos</h5>
+      <p>Autorización por factura. Editor de FI, anulación con reversión de stock.</p>
+    </div>
+    <div class="module-card">
+      <div class="mod-head"><span class="mod-icon">📑</span><span class="mod-num">5</span></div>
+      <h5>Compra Legal</h5>
+      <p>Consolida N pedidos en una compra (misma proforma). Madre de las FLs.</p>
+    </div>
+    <div class="module-card">
+      <div class="mod-head"><span class="mod-icon">🏭</span><span class="mod-num">6</span></div>
+      <h5>Depósito Rimec</h5>
+      <p>Saldo físico de pronta entrega. Alimenta clientes mayoristas directos.</p>
+    </div>
+    <div class="module-card">
+      <div class="mod-head"><span class="mod-icon">🧾</span><span class="mod-num">7</span></div>
+      <h5>Facturación</h5>
+      <p>FI → FL → Bazar. Genera traspaso + movimiento atómico.</p>
+    </div>
+    <div class="module-card">
+      <div class="mod-head"><span class="mod-icon">🛒</span><span class="mod-num">8</span></div>
+      <h5>Compra Web</h5>
+      <p>Recepción de stock por Bazar tras arribo de pedido.</p>
+    </div>
+    <div class="module-card">
+      <div class="mod-head"><span class="mod-icon">🏬</span><span class="mod-num">9</span></div>
+      <h5>Depósito Web</h5>
+      <p>Stock físico de la tienda online Bazar (ALM 1).</p>
+    </div>
+    <div class="module-card">
+      <div class="mod-head"><span class="mod-icon">🛍️</span><span class="mod-num">10</span></div>
+      <h5>Pedido Web</h5>
+      <p>Recepción de órdenes desde Rimec Web. Convertidor a FIs.</p>
+    </div>
+    <div class="module-card">
+      <div class="mod-head"><span class="mod-icon">📥</span><span class="mod-num">11</span></div>
+      <h5>Import Data</h5>
+      <p>ETL de archivos externos (Excel, CSV) hacia el lago de datos.</p>
+    </div>
+    <div class="module-card">
+      <div class="mod-head"><span class="mod-icon">🔍</span><span class="mod-num">12</span></div>
+      <h5>System Status</h5>
+      <p>Salud del sistema: BD, conexiones, RPCs, auditoría.</p>
+    </div>
+    <div class="module-card">
+      <div class="mod-head"><span class="mod-icon">💰</span><span class="mod-num">13</span></div>
+      <h5>Rimec Engine</h5>
+      <p>Motor de Precios. Cinco pilares + casos + listas (LPN/LPC).</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<!-- 5. MOTOR DE PRECIOS                                 -->
+<!-- ═══════════════════════════════════════════════════ -->
+<section class="slide" id="s5" data-num="05 / 13" data-tag="MOTOR DE PRECIOS · RIMEC ENGINE">
+  <h2 class="section-title">
+    Un precio. Una <span class="grad-gold">verdad.</span>
+  </h2>
+  <h3 class="section-sub">
+    El Motor de Precios resuelve cualquier SKU contra cualquier cliente,
+    plazo y lista, en milisegundos. Sin Excel. Sin disputas. Sin pérdida.
+  </h3>
+
+  <div class="grid grid-2" style="margin-bottom:32px;">
+    <div class="card card-gold">
+      <span class="icon">🎚️</span>
+      <h4>5 Pilares del SKU</h4>
+      <p>Cada producto se define por <strong>línea + referencia + material + color + talla</strong>.
+      No hay descripción ambigua: un SKU = una combinación única en base de datos.</p>
+    </div>
+    <div class="card card-gold">
+      <span class="icon">🗂️</span>
+      <h4>Casos × Marca × Caso</h4>
+      <p>El "caso" agrupa configuraciones equivalentes (ej. <code>NORMAL_BR-VZ-ML-MD-MKA/0</code>).
+      Es la <strong>Regla 1</strong>: una FI nunca mezcla marcas o casos distintos.</p>
+    </div>
+    <div class="card card-cyan">
+      <span class="icon">📜</span>
+      <h4>Listas LPN / LPC02 / LPC03 / LPC04</h4>
+      <p>4 niveles de precio (mayorista a retail). El cliente entra con su lista
+      por defecto, pero el sistema permite override de descuentos en cascada (D1·D2·D3·D4).</p>
+    </div>
+    <div class="card card-cyan">
+      <span class="icon">📅</span>
+      <h4>Eventos de Precio</h4>
+      <p>Cada PP tiene su evento de precio vinculado. Cambiar lista = cambiar evento.
+      <strong>Histórico inmutable</strong>: lo facturado se queda con su precio original.</p>
+    </div>
+  </div>
+
+  <div class="quote-block">
+    <p>"En 2025 perdíamos negocios por <strong>diferencias de precio de 5.000 Gs.</strong> entre vendedores
+    para el mismo SKU. Hoy el sistema no permite que pase: el precio sale de <code>caso_precio_biblioteca</code>
+    o no sale."</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<!-- 6. INTELIGENCIA DE VENTAS                           -->
+<!-- ═══════════════════════════════════════════════════ -->
+<section class="slide" id="s6" data-num="06 / 13" data-tag="SALES REPORT">
+  <h2 class="section-title">
+    De la transacción <span class="grad-cyan">a la decisión.</span>
+  </h2>
+  <h3 class="section-sub">
+    El módulo Sales Report no es un dashboard más: es la sala de control del directorio.
+    Tres minutos para entender por qué un mes fue malo. Tres clics para reaccionar.
+  </h3>
+
+  <div class="grid grid-3">
+    <div class="card card-cyan">
+      <span class="icon">📈</span>
+      <h4>Pivot dinámico</h4>
+      <p>Filtros por marca, vendedor, cliente, mes, año, lista de precio.
+      Cualquier corte que necesite el directorio en vivo.</p>
+    </div>
+    <div class="card card-cyan">
+      <span class="icon">🏆</span>
+      <h4>Rankings</h4>
+      <p>Top vendedores, top clientes, top marcas, top líneas. Con delta vs.
+      período anterior y % de aprovechamiento sobre lo importado.</p>
+    </div>
+    <div class="card card-cyan">
+      <span class="icon">🚨</span>
+      <h4>Alertas operativas</h4>
+      <p>SKUs con saldo crítico. Clientes sin compras hace 90 días.
+      Vendedores debajo de su línea base. Detección automática.</p>
+    </div>
+    <div class="card card-emerald">
+      <span class="icon">📊</span>
+      <h4>Aprovechamiento por PP</h4>
+      <p>¿Cuánto se vendió de lo que se compró? Por marca, por caso, por talla.
+      El KPI que decide si una próxima importación se hace o no.</p>
+    </div>
+    <div class="card card-emerald">
+      <span class="icon">👥</span>
+      <h4>Rentabilidad por vendedor</h4>
+      <p>Margen neto generado por usuario. Mix de marcas vendidas.
+      Plazos otorgados vs. cobranza efectiva. <em>(Fase D del roadmap)</em></p>
+    </div>
+    <div class="card card-emerald">
+      <span class="icon">📤</span>
+      <h4>Exportación ejecutiva</h4>
+      <p>Excel + PDF para reuniones de directorio. Snapshot fechado del estado
+      del negocio en cualquier momento.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<!-- 7. CICLO DE COMPRA                                  -->
+<!-- ═══════════════════════════════════════════════════ -->
+<section class="slide" id="s7" data-num="07 / 13" data-tag="PIPELINE DE NEGOCIO">
+  <h2 class="section-title">
+    De la intención al <span class="grad-gold">peso vendido.</span>
+  </h2>
+  <h3 class="section-sub">
+    Un solo flujo. Diez etapas. Cero papeles. Cada paso queda registrado,
+    auditado y reversible si hace falta.
+  </h3>
+
+  <div class="pipeline">
+    <div class="pipe-node">
+      <span class="pipe-icon">🎯</span>
+      <div class="pipe-title">Intención</div>
+      <div class="pipe-sub">IC</div>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-node">
+      <span class="pipe-icon">✍️</span>
+      <div class="pipe-title">Digitación</div>
+      <div class="pipe-sub">FAB+EV</div>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-node">
+      <span class="pipe-icon">🚢</span>
+      <div class="pipe-title">Pedido<br>Proveedor</div>
+      <div class="pipe-sub">PP-2026-...</div>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-node">
+      <span class="pipe-icon">📦</span>
+      <div class="pipe-title">FI Reservada</div>
+      <div class="pipe-sub">Regla 1</div>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-node">
+      <span class="pipe-icon">✅</span>
+      <div class="pipe-title">Aprobación</div>
+      <div class="pipe-sub">por factura</div>
+    </div>
+  </div>
+
+  <div class="pipeline">
+    <div class="pipe-node">
+      <span class="pipe-icon">📑</span>
+      <div class="pipe-title">Compra Legal</div>
+      <div class="pipe-sub">N PPs · 1 proforma</div>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-node">
+      <span class="pipe-icon">⚖️</span>
+      <div class="pipe-title">Factura Legal</div>
+      <div class="pipe-sub">FL-2026-...</div>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-node">
+      <span class="pipe-icon">🛬</span>
+      <div class="pipe-title">Arribo</div>
+      <div class="pipe-sub">Stock físico</div>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-node">
+      <span class="pipe-icon">🏬</span>
+      <div class="pipe-title">Bazar Web<br>o Depósito</div>
+      <div class="pipe-sub">destino dual</div>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-node">
+      <span class="pipe-icon">💵</span>
+      <div class="pipe-title">Venta</div>
+      <div class="pipe-sub">trazable</div>
+    </div>
+  </div>
+
+  <table class="feat">
+    <thead>
+      <tr><th>Etapa</th><th>Quién</th><th>Output</th><th>Tabla principal</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Intención de Compra</td><td>Vendedor</td><td>Demanda capturada</td><td><code class="mono">intencion_compra</code></td></tr>
+      <tr><td>Digitación</td><td>Operaciones</td><td>Nro. fábrica + evento</td><td><code class="mono">pedido_proveedor</code></td></tr>
+      <tr><td>Pedido Proveedor</td><td>Compras</td><td>PP con proforma cargada</td><td><code class="mono">pedido_proveedor_detalle</code></td></tr>
+      <tr><td>FI Reservada</td><td>Rimec Web (cliente)</td><td>1 FI por PP × Marca × Caso</td><td><code class="mono">factura_interna</code></td></tr>
+      <tr><td>Aprobación</td><td>Director / Gerente</td><td>FI Confirmada · Editable</td><td><code class="mono">factura_interna.estado</code></td></tr>
+      <tr><td>Compra Legal</td><td>Administración</td><td>N PPs en 1 compra</td><td><code class="mono">compra_legal · compra_legal_pedido</code></td></tr>
+      <tr><td>Factura Legal</td><td>Administración</td><td>1 FL por FI confirmada</td><td><code class="mono">factura_legal</code> <em>(Fase B)</em></td></tr>
+      <tr><td>Arribo + Bazar</td><td>Depósito</td><td>Stock disponible online</td><td><code class="mono">traspaso · movimiento · stock_bazar</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<!-- 8. APROBACIÓN & EDICIÓN                             -->
+<!-- ═══════════════════════════════════════════════════ -->
+<section class="slide" id="s8" data-num="08 / 13" data-tag="CONTROL EJECUTIVO">
+  <h2 class="section-title">
+    Aprobación por factura.<br>
+    <span class="grad-gold">Edición antes de la compra.</span>
+  </h2>
+  <h3 class="section-sub">
+    La Regla 1 ya no es opcional: ninguna FI mezcla marcas o casos.
+    Y antes de pasar a compra legal, el directorio puede eliminar ítems,
+    cambiar cantidades o devolver la factura completa con un click.
+  </h3>
+
+  <div class="grid grid-2">
+    <div class="card card-emerald">
+      <span class="icon">🔍</span>
+      <h4>Vista canónica de FI</h4>
+      <p>Una factura interna se renderiza <strong>siempre igual</strong>: foto,
+      línea+ref, color, gradas, cajas, pares, subtotal. Por ley.
+      Misma vista en Aprobación, Pedido Proveedor, Compra Legal y futuro Bazar.</p>
+    </div>
+    <div class="card card-amber">
+      <span class="icon">✏️</span>
+      <h4>Editor fuerte (Fase A)</h4>
+      <p>Eliminar ítem de FI con reversión atómica de stock. Devolver factura
+      completa con motivo registrado. <strong>Solo</strong> mientras la FI no
+      esté en compra legal.</p>
+    </div>
+    <div class="card card-cyan">
+      <span class="icon">⏳</span>
+      <h4>Estados controlados</h4>
+      <p>RESERVADA → CONFIRMADA → LEGAL_PENDIENTE → LEGAL_APROBADA → FACTURADA.
+      Cada transición auditada (quién, cuándo, por qué).</p>
+    </div>
+    <div class="card card-rose">
+      <span class="icon">🛡️</span>
+      <h4>Anulación reversible</h4>
+      <p>Anular una FL post-aprobación <strong>incrementa el stock de Pronta Entrega</strong>:
+      no se pierde mercadería, se reasigna automáticamente al canal directo Rimec.</p>
+    </div>
+  </div>
+
+  <div class="quote-block">
+    <p>"El módulo de Aprobación no es una pantalla bonita. Es el <strong>contrato fiduciario</strong>
+    entre el directorio y el negocio. Nada se compra, factura o despacha sin pasar por ahí."</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<!-- 9. RIMEC WEB                                        -->
+<!-- ═══════════════════════════════════════════════════ -->
+<section class="slide" id="s9" data-num="09 / 13" data-tag="MAYORISTA · STOREFRONT">
+  <h2 class="section-title">
+    Rimec Web. <span class="grad-cyan">El mostrador mayorista 24/7.</span>
+  </h2>
+  <h3 class="section-sub">
+    Cada zapatería del país, cada distribuidor del interior, puede ver el catálogo
+    en tránsito y pronta entrega. Reserva, fragmenta automáticamente por Regla 1,
+    y manda al directorio para aprobación. Cero llamadas. Cero pedidos perdidos.
+  </h3>
+
+  <div class="grid grid-3">
+    <div class="card card-cyan">
+      <span class="icon">🎨</span>
+      <h4>Catálogo visual</h4>
+      <p>Foto, color hexadecimal preciso, gradas de talla, stock por SKU.
+      Filtros por marca, género, caso, color. Búsqueda instantánea.</p>
+    </div>
+    <div class="card card-cyan">
+      <span class="icon">📅</span>
+      <h4>Filtro por origen</h4>
+      <p>El cliente elige: 1ra quincena agosto, 2da quincena, próximas importaciones
+      o <strong>PRONTA ENTREGA</strong>. Una sola interfaz para todo el stock.</p>
+    </div>
+    <div class="card card-cyan">
+      <span class="icon">🧮</span>
+      <h4>Precio resuelto</h4>
+      <p>Por su lista personalizada y descuentos pactados. Si el cliente
+      está en LPC02, ve LPC02. Sin negociación de último momento.</p>
+    </div>
+    <div class="card card-emerald">
+      <span class="icon">🛒</span>
+      <h4>Carrito inteligente</h4>
+      <p>Al confirmar, el sistema <strong>fragmenta automáticamente</strong> el pedido
+      en FIs separadas: una por cada combinación PP × Marca × Caso.
+      Cumple Regla 1 por arquitectura, no por buena voluntad.</p>
+    </div>
+    <div class="card card-emerald">
+      <span class="icon">📨</span>
+      <h4>Confirmación trazable</h4>
+      <p>El pedido viaja al NEXUS Core con número PVR-2026-XXXXXX.
+      El cliente lo ve en "Mis Pedidos" con el estado actualizado en vivo:
+      PENDIENTE → AUTORIZADO → FACTURADA.</p>
+    </div>
+    <div class="card card-emerald">
+      <span class="icon">👤</span>
+      <h4>Por vendedor asignado</h4>
+      <p>Cada cliente puede tener su vendedor asignado. El pedido aparece
+      en el feed del vendedor para seguimiento. Reporting de comisiones automático.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<!-- 10. BAZAR WEB                                       -->
+<!-- ═══════════════════════════════════════════════════ -->
+<section class="slide" id="s10" data-num="10 / 13" data-tag="RETAIL · STOREFRONT">
+  <h2 class="section-title">
+    Bazar Web. <span class="grad-gold">Tienda online retail con stock real.</span>
+  </h2>
+  <h3 class="section-sub">
+    Bazar es el canal B2C del grupo. Se nutre de NEXUS automáticamente:
+    cuando una FL aprobada destina mercadería al ALM 1 (BAZZAR), aparece online.
+    Cero importación manual de productos. Cero discrepancia entre tienda y depósito.
+  </h3>
+
+  <div class="grid grid-3">
+    <div class="card card-rose">
+      <span class="icon">🏬</span>
+      <h4>Stock físico real</h4>
+      <p>La tienda muestra exactamente lo que está en <code>stock_bazar</code>
+      (almacén 1). Si NEXUS marca 5 pares, hay 5 pares. Si se vende, baja en vivo.</p>
+    </div>
+    <div class="card card-rose">
+      <span class="icon">🖼️</span>
+      <h4>Imágenes &amp; colores</h4>
+      <p>Hereda la misma data visual del catálogo Rimec: fotos, color hexadecimal,
+      descripciones normalizadas. <strong>Coherencia visual</strong> en todos los frentes.</p>
+    </div>
+    <div class="card card-rose">
+      <span class="icon">🛍️</span>
+      <h4>Experiencia retail</h4>
+      <p>Carrito B2C, checkout simplificado, métodos de pago locales,
+      tracking de pedido. Diseño optimizado para mobile.</p>
+    </div>
+  </div>
+
+  <div class="grid grid-2" style="margin-top:24px;">
+    <div class="card card-amber">
+      <span class="icon">🔁</span>
+      <h4>Sincronización bidireccional</h4>
+      <p>Lo que se vende en Bazar Web <strong>vuelve</strong> a NEXUS Core
+      como movimiento de salida. Sales Report consolida ambos canales —
+      mayorista y retail — en un solo P&amp;L.</p>
+    </div>
+    <div class="card card-emerald">
+      <span class="icon">📊</span>
+      <h4>Cross-channel reporting</h4>
+      <p>El director ve en un solo gráfico: cuánto vendió mayorista (Rimec Web
+      + cliente directo + vendedor), cuánto retail (Bazar Web + showroom)
+      y cuánto queda en stock por canal.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<!-- 11. CIFRAS REALES                                   -->
+<!-- ═══════════════════════════════════════════════════ -->
+<section class="slide" id="s11" data-num="11 / 13" data-tag="ESTADO DE PRODUCCIÓN · MAY 2026">
+  <h2 class="section-title">
+    <span class="grad-gold">Hoy.</span> El sistema vive.
+  </h2>
+  <h3 class="section-sub">
+    Auditoría real del estado operativo de NEXUS Core, mayo 2026.
+    Lo que sigue no son proyecciones: son cifras de producción.
+  </h3>
+
+  <div class="kpi-grid">
+    <div class="kpi"><div class="num gold">16</div><div class="label">Módulos activos</div></div>
+    <div class="kpi"><div class="num cyan">287</div><div class="label">SKUs catálogo</div></div>
+    <div class="kpi"><div class="num emerald">15.116</div><div class="label">Pares en tránsito</div></div>
+    <div class="kpi"><div class="num gold">6</div><div class="label">Marcas activas</div></div>
+    <div class="kpi"><div class="num cyan">2</div><div class="label">Pedidos Proveedor</div></div>
+    <div class="kpi"><div class="num emerald">3</div><div class="label">Almacenes (Bazar · Tránsito · Depósito)</div></div>
+  </div>
+
+  <div class="kpi-grid" style="margin-top:24px;">
+    <div class="kpi"><div class="num amber">6</div><div class="label">FIs vivas en BD</div></div>
+    <div class="kpi"><div class="num amber">356</div><div class="label">Pares facturados</div></div>
+    <div class="kpi"><div class="num amber">Gs. 38M</div><div class="label">Valor reservado</div></div>
+    <div class="kpi"><div class="num gold">114/122</div><div class="label">Colores con hex (93%)</div></div>
+  </div>
+
+  <div class="grid grid-2" style="margin-top:40px;">
+    <div class="card card-gold">
+      <span class="icon">🏗️</span>
+      <h4>Schema sano</h4>
+      <p>0 huérfanos en FKs críticas (marca, caso, cliente, vendedor, PP).
+      RPC <code>confirmar_pedido_web</code> con Regla 1 enforced en BD.
+      29 migraciones aplicadas. Versionado git limpio.</p>
+    </div>
+    <div class="card card-emerald">
+      <span class="icon">⚡</span>
+      <h4>Latencia operativa</h4>
+      <p>SELECTs vista <code>v_stock_rimec</code>: ~250ms. RPC de confirmación
+      de pedido: &lt;1s. Carga inicial de Pedido Proveedor: 300-500ms.
+      Sub-segundo end-to-end.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<!-- 12. ROADMAP                                         -->
+<!-- ═══════════════════════════════════════════════════ -->
+<section class="slide" id="s12" data-num="12 / 13" data-tag="PRÓXIMOS PASOS">
+  <h2 class="section-title">
+    Lo que viene. <span class="grad-cyan">En cuatro fases.</span>
+  </h2>
+  <h3 class="section-sub">
+    Cada fase es chica, reversible y entrega valor inmediato.
+    Cero big-bang. Cada release es probable en producción al día siguiente.
+  </h3>
+
+  <div class="roadmap">
+    <div class="phase phase-a">
+      <div class="phase-tag">FASE A · 1 SEMANA</div>
+      <h5>Editor de FI</h5>
+      <ul>
+        <li>FK <code class="mono">compra_legal_id</code></li>
+        <li>FK <code class="mono">usuario_vendedor_id</code></li>
+        <li>Eliminar ítem (reversión atómica)</li>
+        <li>Devolver factura</li>
+        <li>Estados extendidos</li>
+      </ul>
+    </div>
+    <div class="phase phase-b">
+      <div class="phase-tag">FASE B · 2 SEMANAS</div>
+      <h5>Factura Legal</h5>
+      <ul>
+        <li>Tabla <code class="mono">factura_legal</code></li>
+        <li>RPC <code class="mono">enviar_pp_a_compra</code></li>
+        <li>UI Compra Legal con FL cards</li>
+        <li>Aprobación por factura</li>
+        <li>Validación de proforma</li>
+      </ul>
+    </div>
+    <div class="phase phase-c">
+      <div class="phase-tag">FASE C · 2 SEMANAS</div>
+      <h5>Stock Dual</h5>
+      <ul>
+        <li>Tabla <code class="mono">stock_deposito_rimec</code></li>
+        <li>RPC aprobar FL con destino</li>
+        <li>Anulación FL → pronta entrega</li>
+        <li>Traspaso + movimiento atómicos</li>
+        <li>Reconciliación bicanal</li>
+      </ul>
+    </div>
+    <div class="phase phase-d">
+      <div class="phase-tag">FASE D · 2 SEMANAS</div>
+      <h5>Catálogo Unificado</h5>
+      <ul>
+        <li>Vista <code class="mono">v_stock_unificado</code></li>
+        <li>Filtro quincena en Rimec Web</li>
+        <li>Carrito fragmentado por origen</li>
+        <li>Reporting por vendedor</li>
+        <li>Filtrado por usuario logueado</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="quote-block" style="margin-top:48px;">
+    <p>"Al final de la Fase D —menos de 8 semanas— el holding tendrá un
+    <strong>e-commerce mayorista funcionando, retail integrado, reporting
+    consolidado y rentabilidad por vendedor</strong>. Todo trazable.
+    Todo auditable. Todo en producción."</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<!-- 13. CIERRE                                          -->
+<!-- ═══════════════════════════════════════════════════ -->
+<section class="slide closing" id="s13" data-num="13 / 13" data-tag="CALL TO ACTION">
+  <span class="hero-badge">★ DECISIÓN ESTRATÉGICA</span>
+  <h2 class="section-title" style="text-align:center;">
+    NEXUS no es un sistema.<br>
+    <span class="grad-gold">Es la ventaja competitiva del grupo.</span>
+  </h2>
+  <p>
+    Los competidores siguen importando con Excel y vendiendo con WhatsApp.
+    Nosotros tenemos un motor de datos coherente, una storefront mayorista 24/7,
+    un retail integrado y un directorio con KPIs en vivo.
+    <br><br>
+    <strong style="color:#D4AF37;">La pregunta no es si invertir.</strong>
+    Es <em>cuánto antes</em> queremos consolidar la ventaja.
+  </p>
+
+  <div class="kpi-grid" style="max-width:900px;margin:48px auto 0;">
+    <div class="kpi">
+      <div class="num grad-gold">8</div>
+      <div class="label">Semanas al cierre</div>
+    </div>
+    <div class="kpi">
+      <div class="num grad-cyan">4</div>
+      <div class="label">Fases auditables</div>
+    </div>
+    <div class="kpi">
+      <div class="num emerald">∞</div>
+      <div class="label">Escalable por módulos</div>
+    </div>
+  </div>
+
+  <div style="margin-top:80px; font-family:'JetBrains Mono',monospace; font-size:0.8rem; color:#475569; letter-spacing:0.2em;">
+    PRÓXIMO PASO · DECISIÓN DEL DIRECTORIO<br>
+    VERSIÓN DOCUMENTO · 1.0 · MAYO 2026<br>
+    SISTEMA EN PRODUCCIÓN · NEXUS CORE v100.3.1
+  </div>
+</section>
+
+<script>
+  // ── Navegación por puntos ─────────────────────────────────
+  const dots = document.querySelectorAll('.nav-dot');
+  const sections = document.querySelectorAll('section.slide');
+
+  dots.forEach(dot => {
+    dot.addEventListener('click', () => {
+      const target = document.getElementById(dot.dataset.target);
+      if (target) target.scrollIntoView({ behavior: 'smooth' });
+    });
+  });
+
+  // Active dot tracking
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const id = entry.target.id;
+        dots.forEach(d => d.classList.toggle('active', d.dataset.target === id));
+      }
+    });
+  }, { threshold: 0.5 });
+  sections.forEach(s => obs.observe(s));
+
+  // Keyboard navigation
+  document.addEventListener('keydown', (e) => {
+    const activeIdx = Array.from(dots).findIndex(d => d.classList.contains('active'));
+    if (e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === ' ') {
+      e.preventDefault();
+      const next = dots[Math.min(activeIdx + 1, dots.length - 1)];
+      if (next) next.click();
+    } else if (e.key === 'ArrowUp' || e.key === 'PageUp') {
+      e.preventDefault();
+      const prev = dots[Math.max(activeIdx - 1, 0)];
+      if (prev) prev.click();
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      dots[0].click();
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      dots[dots.length - 1].click();
+    }
+  });
+</script>
+
+</body>
+</html>

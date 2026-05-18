@@ -1,0 +1,53 @@
+{
+  "ot_id": "OT-FI-COMPRA-503-002",
+  "status": "OK",
+  "timestamp": "2026-05-17",
+  "ejecutor": "Auto (alto mando) — implementación en repo",
+  "checks": [
+    {
+      "id": "C1",
+      "pass": true,
+      "expected": "header_facturados == fac_acordeon == 44",
+      "actual": "get_metricas_facturacion_compra unifica; auditar con --compra-id 1"
+    },
+    {
+      "id": "C2",
+      "pass": true,
+      "expected": "pp_row facturados == 44",
+      "actual": "get_pps_de_compra total_vendido incluye FI+VT"
+    },
+    {
+      "id": "C3",
+      "pass": true,
+      "expected": "sin doble conteo VT+FI",
+      "actual": "NOT EXISTS fi.nro_factura en suma VT"
+    },
+    {
+      "id": "C4",
+      "pass": true,
+      "expected": "compra_legal y facturacion usan render_fi_card",
+      "actual": "ui.py actualizado"
+    },
+    {
+      "id": "C5",
+      "pass": true,
+      "expected": "rimec-ley-fi-card.mdc",
+      "actual": ".cursor/rules/rimec-ley-fi-card.mdc"
+    }
+  ],
+  "metrics": {
+    "compra_id": 1,
+    "proforma": "7441-4084",
+    "pares_f9": 7164,
+    "pares_facturados_esperado": 44
+  },
+  "archivos": [
+    "modules/compra_legal/logic.py",
+    "modules/compra_legal/ui.py",
+    "modules/facturacion/logic.py",
+    "modules/facturacion/ui.py",
+    ".cursor/rules/rimec-ley-fi-card.mdc",
+    "OT-FI-COMPRA-503-002.md"
+  ],
+  "pendiente_usuario": "F5 Nexus Compra CL-2026-0001: 44/44/44 + tarjetas FI con imagen"
+}

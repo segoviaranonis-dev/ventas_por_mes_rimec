@@ -1,0 +1,44 @@
+{
+  "audit_timestamp": "2026-05-17T16:00:49.558943",
+  "traspaso_id": 2,
+  "compra_id": 1,
+  "diagnostico": {
+    "combinacion_vacia": true,
+    "root_cause": "combinacion table empty",
+    "recomendacion": "R1: Backfill combinacion desde ppd + pilares"
+  },
+  "entidades_faltantes": [
+    {
+      "tipo": "referencia",
+      "codigo": "500",
+      "linea_id": 459,
+      "item_idx": 0
+    },
+    {
+      "tipo": "referencia",
+      "codigo": "500",
+      "linea_id": 459,
+      "item_idx": 1
+    },
+    {
+      "tipo": "referencia",
+      "codigo": "500",
+      "linea_id": 459,
+      "item_idx": 2
+    },
+    {
+      "tipo": "referencia",
+      "codigo": "565",
+      "linea_id": 459,
+      "item_idx": 3
+    }
+  ],
+  "resolucion_fallida": [],
+  "traspaso_nro": "T-2026-0001",
+  "traspaso_estado": "BORRADOR",
+  "documento_ref": "1-PV001",
+  "snapshot_items_count": 4,
+  "traspaso_detalle_rows": 0,
+  "traspaso_detalle_pares": 0,
+  "combinacion_total_count": 0
+}

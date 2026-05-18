@@ -1,0 +1,34 @@
+{
+  "caso": "5835-100",
+  "pilar": {
+    "linea_id": 26,
+    "marca_id": 4,
+    "marca_descp": "MOLECA",
+    "genero_id": 1
+  },
+  "pilar_linea_referencia": {
+    "lr_id": 48,
+    "grupo_estilo_id": 30000,
+    "grupo_estilo_descp_maestro": "TENIS",
+    "grupo_estilo_descp_lr": "BOTAS",
+    "tipo_1_id": 2
+  },
+  "ppd": {
+    "count": 1,
+    "marca_id_primera_fila": 4
+  },
+  "v_stock_rimec": {
+    "marca_id": 4,
+    "grupo_estilo_id": 30000
+  },
+  "desvios": [
+    {
+      "tipo": "MEDIO",
+      "componente": "linea_referencia",
+      "atributo": "descp_grupo_estilo",
+      "valor_lr": "BOTAS",
+      "valor_maestro": "TENIS",
+      "hipotesis": "H2 - UI no refresca descp al guardar FK"
+    }
+  ]
+}

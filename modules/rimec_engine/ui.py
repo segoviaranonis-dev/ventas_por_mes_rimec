@@ -9,6 +9,18 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 
+from core.ux_celebrate import celebrate_save, celebrate_step
+from modules.rimec_engine.ui_proceso import proceso_largo, cache_lineas_proveedor
+from modules.rimec_engine.biblioteca_ui import (
+    render_editor_biblioteca,
+    render_maestro_bibliotecas_tab,
+    render_seleccion_biblioteca_post_carga,
+)
+from modules.rimec_engine.biblioteca_maestro import (
+    listar_bibliotecas,
+    mensaje_si_falta_migracion_biblioteca,
+    plantilla_casos_desde_biblioteca,
+)
 from modules.rimec_engine.logic import (
     leer_excel_proveedor,
     calcular_precios_caso,
@@ -32,6 +44,8 @@ from modules.rimec_engine.logic import (
     get_casos_evento,
     get_lineas_por_evento,
     get_todos_eventos,
+    get_eventos_proveedor,
+    excepciones_lineas_por_caso,
     eliminar_evento,
     generar_zip_pdfs_evento,
     evento_esta_en_uso,
@@ -49,7 +63,16 @@ from modules.rimec_engine.logic import (
     parse_marcas_array,
     parse_lineas_array,
     get_lineas_proveedor,
+    get_ultimo_evento_cerrado,
     sincronizar_lineas_caso,
+    persistir_caso_matriz_evento,
+    eliminar_caso_matriz_evento,
+    vaciar_matriz_evento,
+    hydrate_casos_evento_desde_db,
+    get_contenedor_lineas_resumen,
+    validar_barrera_contenedor_excel,
+    importar_caso_catalogo_a_evento,
+    actualizar_caso_evento,
 )
 
 
@@ -85,7 +108,8 @@ def _reset_flujo():
     for k in ["re_evento_id", "re_skus", "re_maestros", "re_marcas",
               "re_casos", "re_paso", "re_archivo_nombre", "re_nombre_evento",
               "re_skus_por_caso", "re_proveedor_id", "re_editando_caso",
-              "re_plantilla_casos", "re_casos_evento", "re_df_evento"]:
+              "re_plantilla_casos", "re_casos_evento", "re_df_evento",
+              "re_casos_evento_hydrated"]:
         if k in st.session_state:
             del st.session_state[k]
 
@@ -98,24 +122,43 @@ def render_rimec_engine():
     st.markdown("## ⚙️ Motor de Precios — RIMEC ENGINE")
     st.markdown("---")
 
-    tab_nuevo, tab_historial, tab_lineas, tab_lr, tab_casos = st.tabs([
-        "🆕 Nuevo Evento", "📋 Historial", "🔧 Admin Líneas",
-        "🔗 Línea × Referencia", "📦 Casos",
-    ])
+    # Solo renderizar la pestaña activa (evita ~30 s cargando las 5 a la vez).
+    opciones_tab = [
+        "🆕 Nuevo Evento",
+        "📋 Historial",
+        "🔧 Admin Líneas",
+        "🔗 Línea × Referencia",
+        "📦 Contenedor / Catálogo",
+    ]
+    tab_activa = st.radio(
+        "Sección",
+        opciones_tab,
+        horizontal=True,
+        key="motor_tab_activa",
+        label_visibility="collapsed",
+    )
 
-    with tab_nuevo:
+    if tab_activa == opciones_tab[0]:
         _render_flujo()
-
-    with tab_historial:
+    elif tab_activa == opciones_tab[1]:
         _render_historial()
-
-    with tab_lineas:
-        _render_admin_lineas()
-
-    with tab_lr:
-        _render_linea_referencia()
-
-    with tab_casos:
+    elif tab_activa == opciones_tab[2]:
+        with proceso_largo(
+            "Cargando administración de líneas",
+            "Consultando pilar de líneas del proveedor…",
+        ) as avanzar:
+            avanzar(0.5, "Base de datos…")
+            _render_admin_lineas()
+            avanzar(1.0, "Listo")
+    elif tab_activa == opciones_tab[3]:
+        with proceso_largo(
+            "Cargando Línea × Referencia",
+            "Preparando grilla de edición…",
+        ) as avanzar:
+            avanzar(0.5, "Consultando…")
+            _render_linea_referencia()
+            avanzar(1.0, "Listo")
+    elif tab_activa == opciones_tab[4]:
         _render_admin_casos()
 
 
@@ -123,14 +166,27 @@ def render_rimec_engine():
 # FLUJO PRINCIPAL
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _indice_paso_barra(paso) -> int:
+    """Convierte re_paso (int o pasos biblioteca str) al índice de la barra 0–5."""
+    if isinstance(paso, int):
+        return max(0, min(paso, 5))
+    if paso in ("bib_select", "bib_editor"):
+        return 0
+    try:
+        return max(0, min(int(paso), 5))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _render_flujo():
     paso = st.session_state.get("re_paso", 0)
+    paso_idx = _indice_paso_barra(paso)
 
     # Barra de progreso
     pasos_labels = ["Carga", "Memoria", "Casos", "Preview", "Validación", "Cierre"]
     cols_prog = st.columns(len(pasos_labels))
     for i, label in enumerate(pasos_labels):
-        color = "#D4AF37" if i == paso else ("#10B981" if i < paso else "#334155")
+        color = "#D4AF37" if i == paso_idx else ("#10B981" if i < paso_idx else "#334155")
         cols_prog[i].markdown(
             f"<div style='text-align:center;padding:6px;background:{color};"
             f"border-radius:6px;font-size:0.72rem;color:white;font-weight:600;'>"
@@ -142,6 +198,10 @@ def _render_flujo():
 
     if paso == 0:
         _paso_0_carga()
+    elif paso == "bib_select":
+        _paso_biblioteca_seleccion()
+    elif paso == "bib_editor":
+        _paso_biblioteca_editor()
     elif paso == 1:
         _paso_1_memoria()
     elif paso == 2:
@@ -158,6 +218,10 @@ def _render_flujo():
 
 def _paso_0_carga():
     _seccion("Paso 0 — Carga del archivo")
+    from modules.rimec_engine.ley_genero import texto_ley_genero_resumen
+
+    with st.expander("Ley de género (obligatoria en cada importación)", expanded=False):
+        st.markdown(texto_ley_genero_resumen())
 
     df_prov = get_proveedores()
     if df_prov.empty:
@@ -190,27 +254,75 @@ def _paso_0_carga():
             st.session_state.pop("hiedra_meta", None)
 
     if archivo and nombre_evento and st.button("🚀 Cargar y analizar", type="primary"):
-        with st.spinner("Leyendo archivo..."):
+        from modules.rimec_engine.ley_genero import (
+            validar_ley_genero_importacion,
+            texto_ley_genero_resumen,
+        )
+
+        load_err: str | None = None
+        evento_id = None
+        skus = marcas = None
+        ley = None
+
+        with proceso_largo(
+            "Leyendo archivo Excel",
+            f"Analizando **{archivo.name}** — marcas, SKUs y ley de género…",
+        ) as avanzar:
+            avanzar(0.1, "Abriendo hojas del proveedor…")
             _hm = st.session_state.get("hiedra_meta", {})
             if _hm.get("reconocido"):
                 from modules.rimec_engine.hiedra import leer_excel_hiedra
                 resultado = leer_excel_hiedra(archivo, archivo.name)
             else:
                 resultado = leer_excel_proveedor(archivo, archivo.name)
+            avanzar(0.45, "Validando estructura…")
 
-        if resultado["error"]:
-            st.error(f"Error al leer el archivo: {resultado['error']}")
+            if resultado["error"]:
+                load_err = resultado["error"]
+                avanzar(1.0, "Error en archivo")
+            else:
+                skus = resultado["skus"]
+                marcas = resultado["marcas"]
+                avanzar(0.6, "Ley de género…")
+                ley = validar_ley_genero_importacion(marcas)
+                if not ley["ok"]:
+                    load_err = "ley_genero"
+                    avanzar(1.0, "Validación detenida")
+                else:
+                    avanzar(0.8, "Creando listado en base de datos…")
+                    evento_id = crear_evento(
+                        nombre_evento, archivo.name, str(fecha_desde), proveedor_id
+                    )
+                    avanzar(1.0, "Listo")
+
+        if load_err == "ley_genero":
+            if ley and ley.get("marcas_rechazadas"):
+                st.error(
+                    "**Ley de género:** marcas no reconocidas: "
+                    + ", ".join(ley["marcas_rechazadas"])
+                )
+            if ley and ley.get("generos_faltantes_bd"):
+                st.error(
+                    "Faltan códigos en maestro **genero**: "
+                    + ", ".join(ley["generos_faltantes_bd"])
+                )
+            with st.expander("Ley de género vigente"):
+                st.markdown(texto_ley_genero_resumen())
             return
-
-        skus = resultado["skus"]
-        marcas = resultado["marcas"]
-
-        st.success(f"✅ {len(skus)} SKUs detectados en {len(marcas)} marcas: **{', '.join(marcas)}**")
-
-        evento_id = crear_evento(nombre_evento, archivo.name, str(fecha_desde), proveedor_id)
+        if load_err:
+            st.error(f"Error al leer el archivo: {load_err}")
+            return
         if not evento_id:
             st.error("Error al crear el evento en la base de datos.")
             return
+
+        asig = ", ".join(f"{m}→{g}" for m, g in ley["asignaciones"].items())
+
+        celebrate_step(
+            "Paso 0",
+            f"{len(skus)} SKUs · {len(marcas)} marcas · Ley de género: {asig}",
+            modulo="Motor de Precios",
+        )
 
         st.session_state["re_evento_id"]      = evento_id
         st.session_state["re_proveedor_id"]   = proveedor_id
@@ -223,93 +335,243 @@ def _paso_0_carga():
         st.session_state["re_plantilla_casos"]  = []
         st.session_state["re_df_evento"]        = pd.DataFrame()
         st.session_state["re_skus_por_caso"]  = {}
+        st.session_state.pop("re_casos_evento_hydrated", None)
         st.session_state.pop("re_skus_resueltos", None)
         st.session_state.pop("re_ready_to_calc", None)
-        st.session_state["re_paso"]           = 1
+        st.session_state["re_pending_biblioteca"] = True
+        st.session_state["re_paso"] = "bib_select"
         st.rerun()
+
+
+def _paso_biblioteca_seleccion():
+    _seccion("Biblioteca de Casos", "Paso tras carga del Excel")
+    evento_id = st.session_state.get("re_evento_id")
+    proveedor_id = st.session_state.get("re_proveedor_id")
+    nombre = st.session_state.get("re_nombre_evento", "")
+    if not evento_id or not proveedor_id:
+        st.error("Falta evento o proveedor. Volvé al Paso 0.")
+        return
+    render_seleccion_biblioteca_post_carga(proveedor_id, evento_id, nombre)
+
+
+def _paso_biblioteca_editor():
+    _seccion("Editor de biblioteca")
+    proveedor_id = st.session_state.get("re_proveedor_id")
+    evento_id = st.session_state.get("bib_editor_evento_id")
+    if not proveedor_id:
+        st.error("Proveedor no definido.")
+        return
+    render_editor_biblioteca(proveedor_id, evento_id)
 
 
 # ── PASO 1 — Memoria del evento anterior ─────────────────────────────────────
 
+def _alcance_columna_casos(df_display: pd.DataFrame, lineas_map: dict[int, list]) -> list[str]:
+    alcance_col = []
+    for _, row in df_display.iterrows():
+        marcas = row.get("marcas")
+        items = []
+        if marcas is not None and marcas == marcas:
+            if isinstance(marcas, (list, tuple)):
+                items = [str(m) for m in marcas if m]
+            elif isinstance(marcas, str) and marcas.strip() not in ("", "None", "nan"):
+                items = [m.strip() for m in marcas.strip("{}").split(",") if m.strip()]
+        if items:
+            alcance_col.append(", ".join(items))
+        else:
+            cid = row.get("id") or row.get("caso_biblioteca_id")
+            lins = lineas_map.get(int(cid), []) if cid is not None and cid == cid else []
+            if not lins and isinstance(row.get("lineas"), (list, tuple)):
+                lins = [str(x) for x in row["lineas"]]
+            n = len(lins)
+            if lins:
+                preview = ", ".join(lins[:6])
+                alcance_col.append(f"Líneas ({n}): {preview}{'…' if n > 6 else ''}")
+            else:
+                alcance_col.append("—")
+    return alcance_col
+
+
+def _celda_display_streamlit(val: object) -> str:
+    if val is None:
+        return "—"
+    try:
+        if pd.isna(val):
+            return "—"
+    except (TypeError, ValueError):
+        pass
+    if isinstance(val, bool):
+        return "Sí" if val else "No"
+    if isinstance(val, float) and 0 <= val <= 1:
+        return f"{val * 100:.2f}%"
+    return str(val)
+
+
+def _df_arrow_safe(df: pd.DataFrame) -> pd.DataFrame:
+    """Evita ArrowTypeError en st.dataframe (columnas object mixtas)."""
+    out = df.copy()
+    for col in out.columns:
+        out[col] = out[col].map(_celda_display_streamlit)
+    return out
+
+
+def _mostrar_tabla_casos_plantilla(df_display: pd.DataFrame, lineas_map: dict[int, list]) -> None:
+    if df_display is None or df_display.empty:
+        st.caption("Sin casos en este origen.")
+        return
+    df_display = df_display.copy()
+    if "dolar_politica" in df_display.columns and "factor_conversion" in df_display.columns:
+        df_display["indice"] = (
+            pd.to_numeric(df_display["dolar_politica"], errors="coerce")
+            * pd.to_numeric(df_display["factor_conversion"], errors="coerce")
+            / 100
+        ).round(0).astype("Int64")
+    df_display["alcance"] = _alcance_columna_casos(df_display, lineas_map)
+    cols_show = [
+        c
+        for c in [
+            "nombre_caso",
+            "dolar_politica",
+            "factor_conversion",
+            "indice",
+            "descuento_1",
+            "genera_lpc03_lpc04",
+            "alcance",
+        ]
+        if c in df_display.columns
+    ]
+    st.dataframe(_df_arrow_safe(df_display[cols_show]), width="stretch", hide_index=True)
+
+
 def _paso_1_memoria():
     _seccion("Paso 1 — Memoria del evento anterior")
 
+    proveedor_id = st.session_state.get("re_proveedor_id")
     evento_ant = get_ultimo_evento_cerrado()
+    mig = mensaje_si_falta_migracion_biblioteca()
+    df_bib = (
+        listar_bibliotecas(int(proveedor_id))
+        if proveedor_id and not mig
+        else pd.DataFrame()
+    )
 
+    origenes: list[tuple[str, int, str]] = []
     if evento_ant:
-        st.info(
-            f"📂 Último evento cerrado: **{evento_ant['nombre_evento']}** "
-            f"({evento_ant['total_skus']} SKUs — {evento_ant['fecha_vigencia_desde']})"
+        origenes.append(
+            (
+                "evento",
+                int(evento_ant["id"]),
+                f"📅 Último evento cerrado: {evento_ant['nombre_evento']} "
+                f"({evento_ant['total_skus']} SKUs — {evento_ant['fecha_vigencia_desde']})",
+            )
         )
-        casos_ant = get_casos_evento(int(evento_ant["id"]))
+    if df_bib is not None and not df_bib.empty:
+        for _, row in df_bib.iterrows():
+            origenes.append(
+                (
+                    "bib",
+                    int(row["id"]),
+                    f"📚 Biblioteca: {row['nombre']}",
+                )
+            )
 
+    if not origenes:
+        st.info("No hay eventos cerrados ni bibliotecas de precios. Se empieza desde cero.")
+        if mig:
+            st.warning(mig)
+        if st.button("▶️ Continuar"):
+            st.session_state["re_plantilla_casos"] = []
+            st.session_state["re_paso"] = 2
+            st.rerun()
+        return
+
+    labels = [o[2] for o in origenes]
+    idx_prev = int(st.session_state.get("re_memoria_origen_idx", 0))
+    if idx_prev >= len(labels):
+        idx_prev = 0
+    sel_idx = st.selectbox(
+        "Origen de la plantilla (evento cerrado o biblioteca de precios)",
+        range(len(labels)),
+        format_func=lambda i: labels[i],
+        index=idx_prev,
+        key="re_memoria_origen_idx",
+    )
+    tipo, origen_id, _label = origenes[sel_idx]
+
+    plantilla: list[dict] = []
+    lineas_map: dict[int, list] = {}
+    df_display = pd.DataFrame()
+
+    if tipo == "evento":
+        casos_ant = get_casos_evento(origen_id)
         if not casos_ant.empty:
-            lineas_map = get_lineas_por_evento(int(evento_ant["id"]))
-
-            st.markdown("**Casos del evento anterior:**")
+            lineas_map = get_lineas_por_evento(origen_id)
             df_display = casos_ant.copy()
-            df_display["indice"] = (df_display["dolar_politica"] * df_display["factor_conversion"] / 100).round(0).astype(int)
-
-            alcance_col = []
-            for _, row in df_display.iterrows():
-                marcas = row.get("marcas")
-                items = []
-                # marcas llega como lista Python, string PG "{A,B}", o None/NaN
-                if marcas is not None and marcas == marcas:  # excluye NaN
-                    if isinstance(marcas, (list, tuple)):
-                        items = [str(m) for m in marcas if m]
-                    elif isinstance(marcas, str) and marcas.strip() not in ("", "None", "nan"):
-                        items = [m.strip() for m in marcas.strip("{}").split(",") if m.strip()]
-                if items:
-                    alcance_col.append(", ".join(items))
-                else:
-                    lins = lineas_map.get(int(row["id"]), [])
-                    n = len(lins)
-                    if lins:
-                        preview = ", ".join(lins[:6])
-                        alcance_col.append(f"Líneas ({n}): {preview}{'…' if n > 6 else ''}")
-                    else:
-                        alcance_col.append("—")
-            df_display["alcance"] = alcance_col
-            cols_show = [c for c in ["nombre_caso", "dolar_politica", "factor_conversion",
-                                     "indice", "descuento_1", "genera_lpc03_lpc04",
-                                     "alcance"] if c in df_display.columns]
-            st.dataframe(df_display[cols_show].fillna("—"), use_container_width=True, hide_index=True)
-
-        def _build_plantilla():
-            lineas_map = get_lineas_por_evento(int(evento_ant["id"]))
             plantilla = casos_ant.to_dict("records")
             for rec in plantilla:
                 cid = int(rec.get("id", 0))
                 if cid in lineas_map:
                     rec["lineas"] = lineas_map[cid]
-            return plantilla
-
-        col1, col2, col3 = st.columns(3)
-        if col1.button("📋 Usar como plantilla"):
-            st.session_state["re_plantilla_casos"] = _build_plantilla()
-            st.session_state["re_paso"] = 2
-            st.rerun()
-        if col2.button("✏️ Modificar y usar"):
-            st.session_state["re_plantilla_casos"] = _build_plantilla()
-            st.session_state["re_paso"] = 2
-            st.rerun()
-        if col3.button("🆕 Empezar desde cero"):
-            st.session_state["re_plantilla_casos"] = []
-            st.session_state["re_paso"] = 2
-            st.rerun()
     else:
-        st.info("No hay eventos anteriores cerrados. Se empieza desde cero.")
-        if st.button("▶️ Continuar"):
-            st.session_state["re_plantilla_casos"] = []
-            st.session_state["re_paso"] = 2
-            st.rerun()
+        if not proveedor_id:
+            st.error("Falta proveedor del listado (Paso 0). No se puede cargar la biblioteca.")
+            return
+        plantilla = plantilla_casos_desde_biblioteca(int(proveedor_id), origen_id)
+        if plantilla:
+            df_display = pd.DataFrame(plantilla)
+            for i, rec in enumerate(plantilla):
+                lineas_map[i] = list(rec.get("lineas") or [])
+
+    st.markdown("**Casos de la plantilla elegida:**")
+    _mostrar_tabla_casos_plantilla(df_display, lineas_map)
+
+    def _plantilla_actual() -> list[dict]:
+        if tipo == "evento":
+            casos = get_casos_evento(origen_id)
+            if casos.empty:
+                return []
+            lm = get_lineas_por_evento(origen_id)
+            out = casos.to_dict("records")
+            for rec in out:
+                cid = int(rec.get("id", 0))
+                if cid in lm:
+                    rec["lineas"] = lm[cid]
+            return out
+        if proveedor_id:
+            return plantilla_casos_desde_biblioteca(int(proveedor_id), origen_id)
+        return []
+
+    col1, col2, col3 = st.columns(3)
+    if col1.button("📋 Usar como plantilla", type="primary"):
+        st.session_state["re_plantilla_casos"] = _plantilla_actual()
+        st.session_state["re_biblioteca_plantilla_id"] = (
+            origen_id if tipo == "bib" else None
+        )
+        st.session_state["re_paso"] = 2
+        st.rerun()
+    if col2.button("✏️ Modificar y usar"):
+        st.session_state["re_plantilla_casos"] = _plantilla_actual()
+        st.session_state["re_biblioteca_plantilla_id"] = (
+            origen_id if tipo == "bib" else None
+        )
+        st.session_state["re_paso"] = 2
+        st.rerun()
+    if col3.button("🆕 Empezar desde cero"):
+        st.session_state["re_plantilla_casos"] = []
+        st.session_state.pop("re_biblioteca_plantilla_id", None)
+        st.session_state["re_paso"] = 2
+        st.rerun()
 
 
 # ── PASO 2 — Matriz del listado + análisis ───────────────────────────────────
 
-def _form_caso_listado(marcas_disponibles: list, prefix: str = "ev") -> None:
-    """Agrega un caso a la matriz del listado actual (session, no biblioteca)."""
+def _form_caso_listado(
+    marcas_disponibles: list,
+    prefix: str = "ev",
+    evento_id: int | None = None,
+    proveedor_id: int | None = None,
+) -> None:
+    """Agrega un caso a la matriz del listado y persiste contenedor de líneas en BD."""
     nombre_caso = st.text_input("Nombre del caso", key=f"{prefix}_nombre",
                                 placeholder="Ej: PROMOCIONALES, NORMAL…")
     col3, col4 = st.columns(2)
@@ -363,8 +625,21 @@ def _form_caso_listado(marcas_disponibles: list, prefix: str = "ev") -> None:
         if caso["nombre_caso"].upper() in nombres:
             st.error(f"Ya existe el caso «{caso['nombre_caso']}» en este listado.")
             return
+        if evento_id and proveedor_id:
+            caso_db_id, err = persistir_caso_matriz_evento(
+                int(evento_id), int(proveedor_id), caso
+            )
+            if err:
+                st.error(err)
+                return
+            caso["caso_db_id"] = caso_db_id
         st.session_state.setdefault("re_casos_evento", []).append(caso)
-        st.success(f"Caso «{caso['nombre_caso']}» agregado a la matriz del listado.")
+        celebrate_save(
+            f"Caso «{caso['nombre_caso']}» + contenedor de líneas guardado",
+            modulo="Motor de Precios",
+            contexto="guardado",
+            balloons=False,
+        )
         st.rerun()
 
 
@@ -385,22 +660,70 @@ def _paso_2_casos():
         st.error("No hay SKUs cargados.")
         return
 
-    if "re_casos_evento" not in st.session_state:
-        plantilla = st.session_state.get("re_plantilla_casos", [])
-        st.session_state["re_casos_evento"] = [
-            normalizar_caso_evento(r) for r in plantilla
-        ]
+    hydrated_for = st.session_state.get("re_casos_evento_hydrated")
+    if hydrated_for != evento_id:
+        db_casos = []
+        with proceso_largo(
+            "Cargando matriz del listado",
+            "Sincronizando casos y contenedor de líneas desde base de datos…",
+        ) as avanzar:
+            avanzar(0.4, "Leyendo casos del evento…")
+            db_casos = hydrate_casos_evento_desde_db(evento_id)
+            avanzar(1.0, "Matriz lista")
+        if db_casos:
+            st.session_state["re_casos_evento"] = db_casos
+        elif "re_casos_evento" not in st.session_state:
+            plantilla = st.session_state.get("re_plantilla_casos", [])
+            st.session_state["re_casos_evento"] = [
+                normalizar_caso_evento(r) for r in plantilla
+            ]
+        st.session_state["re_casos_evento_hydrated"] = evento_id
 
     st.caption(
         f"Listado **{nombre_ev}** (id {evento_id}). "
-        "Cada listado define su matriz de casos y excepciones por línea."
+        "Cada caso guarda su **contenedor de líneas** (FK) en base de datos — barrera 1 del import."
     )
 
+    resumen_cont = get_contenedor_lineas_resumen(evento_id)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Líneas en contenedor", f"{resumen_cont['total_lineas']:,}")
+    c2.metric("Casos con líneas", resumen_cont["n_casos_con_lineas"])
+    c3.metric("SKUs en Excel", f"{len(skus_disp):,}")
+
     if st.button("🔄 Vaciar matriz y empezar de nuevo", key="p2_reset_matriz"):
-        st.session_state["re_casos_evento"] = []
-        for k in ("re_skus_resueltos", "re_ready_to_calc", "re_df_evento", "re_conflictos"):
-            st.session_state.pop(k, None)
-        st.rerun()
+        ok, msg = vaciar_matriz_evento(evento_id)
+        if not ok:
+            st.error(msg or "No se pudo vaciar la matriz.")
+        else:
+            st.session_state["re_casos_evento"] = []
+            st.session_state["re_casos_evento_hydrated"] = evento_id
+            for k in ("re_skus_resueltos", "re_ready_to_calc", "re_df_evento", "re_conflictos"):
+                st.session_state.pop(k, None)
+            st.rerun()
+
+    df_cat = get_biblioteca_casos(proveedor_id)
+    if df_cat is not None and not df_cat.empty:
+        with st.expander("📚 Importar caso desde catálogo", expanded=False):
+            nombres_cat = sorted(df_cat["nombre_caso"].astype(str).tolist())
+            caso_cat = st.selectbox("Caso del catálogo", nombres_cat, key="p2_caso_catalogo")
+            if st.button("➕ Añadir catálogo al listado", key="p2_import_cat"):
+                cid, err = importar_caso_catalogo_a_evento(
+                    evento_id, proveedor_id, caso_cat
+                )
+                if err:
+                    st.error(err)
+                else:
+                    st.session_state["re_casos_evento"] = hydrate_casos_evento_desde_db(
+                        evento_id
+                    )
+                    st.session_state["re_casos_evento_hydrated"] = evento_id
+                    celebrate_save(
+                        f"«{caso_cat}» importado (contenedor {cid})",
+                        modulo="Motor de Precios",
+                        contexto="guardado",
+                        balloons=False,
+                    )
+                    st.rerun()
 
     marcas_disp = sorted(
         {str(m).strip() for m in skus_disp.get("marca", pd.Series(dtype=object)).dropna() if str(m).strip()}
@@ -423,6 +746,12 @@ def _paso_2_casos():
         st.dataframe(pd.DataFrame(rows_show), use_container_width=True, hide_index=True)
         for i, c in enumerate(casos_ev):
             if st.button(f"🗑️ Quitar «{c['nombre_caso']}»", key=f"rm_caso_{i}"):
+                caso_db_id = c.get("caso_db_id")
+                if caso_db_id:
+                    ok, msg = eliminar_caso_matriz_evento(int(caso_db_id), evento_id)
+                    if not ok:
+                        st.error(msg or "No se pudo eliminar el caso.")
+                        st.stop()
                 casos_ev.pop(i)
                 st.session_state["re_casos_evento"] = casos_ev
                 st.session_state.pop("re_skus_resueltos", None)
@@ -431,19 +760,73 @@ def _paso_2_casos():
         st.warning("Agregá al menos un caso a este listado (abajo).")
 
     with st.expander("➕ Agregar caso a este listado", expanded=not bool(casos_ev)):
-        _form_caso_listado(marcas_disp, prefix="ev_add")
+        _form_caso_listado(
+            marcas_disp, prefix="ev_add",
+            evento_id=evento_id, proveedor_id=proveedor_id,
+        )
 
     st.markdown("---")
 
     if not casos_ev:
         return
 
+    if st.button("🛡️ Barrera 1 — Validar líneas del Excel", key="p2_barrera"):
+        df_ev_tmp = casos_evento_to_dataframe(casos_ev)
+        barrera = validar_barrera_contenedor_excel(evento_id, skus_disp, df_ev_tmp)
+        if barrera:
+            st.error(f"**{len(barrera)} línea(s)** del Excel no están en el contenedor del listado.")
+            st.dataframe(pd.DataFrame(barrera), use_container_width=True, hide_index=True)
+        else:
+            st.success("Todas las líneas del Excel están cubiertas por el contenedor.")
+
     if st.button("🔍 Analizar asignación de SKUs", type="primary"):
         df_evento = casos_evento_to_dataframe(casos_ev)
-        with st.spinner("Resolviendo casos..."):
-            skus_resueltos, ready_to_calc, conflictos = resolver_casos_skus(
-                skus_disp, proveedor_id, df_evento, evento_id=evento_id
+        skus_resueltos = ready_to_calc = None
+        conflictos = []
+        with proceso_largo(
+            "Analizando SKUs",
+            "Barrera de líneas + asignación de casos…",
+        ) as avanzar:
+            from modules.rimec_engine.logic import asegurar_contenedor_lineas_excel
+            from modules.rimec_engine.pillar_fk import asegurar_pilares_para_listado
+
+            avanzar(0.1, "Alta automática en pilar (líneas del Excel)…")
+            asegurar_pilares_para_listado(
+                proveedor_id, skus_disp, evento_id=evento_id
             )
+            df_evento = casos_evento_to_dataframe(casos_ev)
+            n_auto_cont = asegurar_contenedor_lineas_excel(
+                evento_id, proveedor_id, skus_disp, df_evento
+            )
+            if n_auto_cont:
+                st.session_state["_re_auto_contenedor_n"] = n_auto_cont
+            avanzar(0.2, "Barrera 1 — contenedor de líneas…")
+            barrera = validar_barrera_contenedor_excel(evento_id, skus_disp, df_evento)
+            if barrera:
+                st.session_state["_re_barrera_fail"] = barrera
+                avanzar(1.0, "Bloqueado por barrera")
+            else:
+                avanzar(0.5, "Resolviendo casos por línea/marca…")
+                skus_resueltos, ready_to_calc, conflictos = resolver_casos_skus(
+                    skus_disp, proveedor_id, df_evento, evento_id=evento_id
+                )
+                avanzar(1.0, "Análisis completo")
+        n_auto_cont = st.session_state.pop("_re_auto_contenedor_n", 0)
+        if n_auto_cont:
+            st.info(
+                f"Se inscribieron **{n_auto_cont}** línea(s) nuevas en el contenedor "
+                f"del listado (por marca), automáticamente."
+            )
+        barrera = st.session_state.pop("_re_barrera_fail", None)
+        if barrera:
+            st.error(
+                f"Barrera 1: **{len(barrera)}** línea(s) del Excel fuera del contenedor. "
+                "Corregí los casos antes de continuar."
+            )
+            st.dataframe(pd.DataFrame(barrera), use_container_width=True, hide_index=True)
+            return
+        if skus_resueltos is None:
+            return
         st.session_state["re_skus_resueltos"] = skus_resueltos
         st.session_state["re_ready_to_calc"]  = ready_to_calc
         st.session_state["re_df_evento"]      = df_evento
@@ -578,7 +961,12 @@ def _form_nuevo_caso_biblioteca(proveedor_id: int, marcas_disponibles: list,
         }
         ok = save_caso_biblioteca(proveedor_id, caso)
         if ok:
-            st.success(f"'{caso['nombre_caso']}' guardado en biblioteca.")
+            celebrate_save(
+                f"'{caso['nombre_caso']}' guardado en biblioteca",
+                modulo="Motor de Precios",
+                contexto="guardado",
+                balloons=False,
+            )
             st.rerun()
         else:
             st.error("Error al guardar en biblioteca.")
@@ -611,6 +999,77 @@ def _paso_3_preview():
 
     if st.button("✅ Iniciar Cálculo de todos los SKUs", type="primary"):
         with st.spinner("Calculando y guardando precios en base de datos..."):
+            from modules.rimec_engine.ley_genero import (
+                validar_ley_genero_importacion,
+                texto_ley_genero_resumen,
+            )
+            from modules.rimec_engine.logic import asegurar_contenedor_lineas_excel
+            from modules.rimec_engine.lr_schema import mensaje_si_falta_migracion_042
+            from modules.rimec_engine.pillar_fk import asegurar_pilares_para_listado
+
+            mig42 = mensaje_si_falta_migracion_042()
+            if mig42:
+                st.warning(mig42 + " El listado puede continuar; los códigos denormalizados en linea_referencia quedarán pendientes.")
+
+            stats_pilar = asegurar_pilares_para_listado(
+                proveedor_id, skus_resueltos, evento_id=evento_id
+            )
+            if stats_pilar.get("error_deadlock"):
+                st.error(
+                    "El pilar se está actualizando en otra operación (deadlock). "
+                    "Cerrá otras pestañas de la app, esperá 5 s y pulsá de nuevo."
+                )
+                return
+            n_auto_cont = asegurar_contenedor_lineas_excel(
+                evento_id, proveedor_id, skus_resueltos, df_evento
+            )
+            if n_auto_cont:
+                st.info(
+                    f"Alta automática: **{n_auto_cont}** línea(s) agregadas al contenedor del listado."
+                )
+            if stats_pilar.get("lineas_alta_automatica"):
+                st.info(
+                    f"Pilar: **{stats_pilar['lineas_alta_automatica']}** línea(s) creadas "
+                    f"por herencia desde línea inferior."
+                )
+            if stats_pilar.get("lineas_alta_errores"):
+                st.warning(
+                    "Algunas líneas no se pudieron crear en pilar: "
+                    + "; ".join(stats_pilar["lineas_alta_errores"][:4])
+                )
+
+            marcas_imp = skus_resueltos["marca"].dropna().unique().tolist()
+            ley = validar_ley_genero_importacion(marcas_imp)
+            if not ley["ok"]:
+                st.error("**Ley de género:** importación bloqueada.")
+                if ley["marcas_rechazadas"]:
+                    st.error("Marcas no permitidas: " + ", ".join(ley["marcas_rechazadas"]))
+                if ley["generos_faltantes_bd"]:
+                    st.error("Géneros faltantes en BD: " + ", ".join(ley["generos_faltantes_bd"]))
+                st.markdown(texto_ley_genero_resumen())
+                return
+
+            if stats_pilar.get("ley_genero_rechazadas") or stats_pilar.get("genero_bd_faltante"):
+                st.warning(
+                    "Ley de género (algunas filas del Excel): "
+                    + ", ".join(stats_pilar.get("ley_genero_rechazadas", []))
+                    + " ".join(stats_pilar.get("genero_bd_faltante", []))
+                    + " — se intentó alta por herencia de línea inferior."
+                )
+            if stats_pilar.get("marcas_no_encontradas"):
+                st.error(
+                    "Marcas sin FK en **marca_v2** (nombre de hoja Excel): "
+                    + ", ".join(stats_pilar["marcas_no_encontradas"])
+                    + ". Corregí el catálogo o el nombre de la hoja antes de continuar."
+                )
+                return
+            if stats_pilar.get("lineas_marca_conflicto"):
+                st.error(
+                    "La misma línea aparece en hojas con marcas distintas: "
+                    + ", ".join(str(x) for x in stats_pilar["lineas_marca_conflicto"][:20])
+                )
+                return
+
             cache = build_pillar_cache(proveedor_id)
             grupos = skus_resueltos.groupby("caso_asignado")
             
@@ -647,14 +1106,25 @@ def _paso_3_preview():
                     "alcance_tipo":       str(caso_params.get("alcance_tipo") or "marcas"),
                 }
 
-                caso_id = crear_caso(evento_id, caso_db)
-                if not caso_id:
-                    st.error(f"Fallo al guardar configuración del caso {nombre_caso}.")
-                    continue
+                caso_db_id = caso_params.get("caso_db_id")
+                if caso_db_id is not None and not (
+                    isinstance(caso_db_id, float) and pd.isna(caso_db_id)
+                ):
+                    caso_id = int(caso_db_id)
+                    if not actualizar_caso_evento(caso_id, caso_db):
+                        st.error(f"Fallo al actualizar caso {nombre_caso}.")
+                        continue
+                else:
+                    caso_id = crear_caso(evento_id, caso_db)
+                    if not caso_id:
+                        st.error(f"Fallo al guardar configuración del caso {nombre_caso}.")
+                        continue
 
                 if lineas_ev:
-                    n_exc = reemplazar_lineas_excepcion(caso_id, lineas_ev, proveedor_id)
-                    print(f"[ENGINE] Excepciones línea→caso '{nombre_caso}': {n_exc} filas")
+                    n_exc = reemplazar_lineas_excepcion(
+                        caso_id, lineas_ev, proveedor_id, evento_id
+                    )
+                    print(f"[ENGINE] Contenedor línea→caso '{nombre_caso}': {n_exc} filas")
 
                 casos_procesados.append(caso_db)
                 
@@ -723,6 +1193,12 @@ def _paso_3_preview():
                 progress_bar.progress(pct, text=f"Calculado {skus_procesados}/{total_skus} SKUs ({pct}%) — Caso actual: {nombre_caso}")
                 print(f"[ENGINE] Completado caso '{nombre_caso}' ({len(skus_grupo)} SKUs procesados). Progreso: {pct}%")
 
+            if stats_pilar.get("ley_genero_lineas"):
+                st.info(
+                    f"Ley de género: **{stats_pilar['ley_genero_lineas']}** líneas con "
+                    f"`genero_id` FK en el pilar."
+                )
+
             if skus_omitidos_total:
                 st.warning(f"⚠️ {skus_omitidos_total} SKU(s) omitidos por pilares nulos. Revisar Excel.")
             
@@ -731,6 +1207,13 @@ def _paso_3_preview():
             st.session_state["re_skus_por_caso"] = confirmados
             
             avanzar_estado_evento(evento_id, "validado")
+            total_guardados = sum(confirmados.values()) if confirmados else 0
+            celebrate_step(
+                "Paso 3",
+                f"{total_guardados:,} precios guardados en precio_lista",
+                modulo="Motor de Precios",
+                handoff="Validación (Paso 4)",
+            )
             st.session_state["re_paso"] = 4
             st.rerun()
 
@@ -819,13 +1302,13 @@ def _paso_4_validacion():
                   pl.lpc04        AS "LPC04"
            FROM precio_lista pl
            JOIN precio_evento_caso pec ON pec.id = pl.caso_id
-           LEFT JOIN linea     l ON l.id  = pl.linea_codigo::bigint
-           LEFT JOIN referencia r ON r.id = pl.referencia_codigo::bigint
-           LEFT JOIN material   m ON m.id = pl.material_descripcion::bigint
+           LEFT JOIN linea     l ON l.id  = pl.linea_id
+           LEFT JOIN referencia r ON r.id = pl.referencia_id
+           LEFT JOIN material   m ON m.id = pl.material_id
            WHERE pl.evento_id = :eid
            ORDER BY pec.nombre_caso, pl.marca,
-                    COALESCE(l.codigo_proveedor, pl.linea_codigo::bigint),
-                    COALESCE(r.codigo_proveedor, pl.referencia_codigo::bigint)""",
+                    COALESCE(l.codigo_proveedor, 0),
+                    COALESCE(r.codigo_proveedor, 0)""",
         {"eid": evento_id},
     )
 
@@ -843,7 +1326,11 @@ def _paso_4_validacion():
             "Volvé al Paso 3 y confirmá todos los casos."
         )
     else:
-        st.success(f"✅ Todos los casos calculados ({casos_ok} casos). El Director puede validar.")
+        celebrate_step(
+            "Paso 4",
+            f"Todos los casos calculados ({casos_ok} casos). Listo para el Director.",
+            modulo="Motor de Precios",
+        )
         if col_val.button("✅ Validar evento", type="primary"):
             st.session_state["re_paso"] = 5
             st.rerun()
@@ -870,15 +1357,21 @@ def _paso_5_cierre():
     )
 
     if st.button("🔒 Cerrar y activar precios", type="primary"):
-        cerrar_evento_y_activar(evento_id, str(date.today()))
+        n_m = cerrar_evento_y_activar(evento_id, str(date.today()))
         if justificacion:
             registrar_auditoria(
                 evento_id, "precio_evento", "estado",
                 "validado", "cerrado", justificacion
             )
-        st.success("🎉 Evento cerrado. Los nuevos precios están activos.")
+        extra = f" Pilares FK: {n_m} pares línea+referencia." if n_m else ""
+        celebrate_save(
+            f"Evento cerrado. Los nuevos precios están activos.{extra}",
+            modulo="Motor de Precios",
+            contexto="evento_cerrado",
+            toast=True,
+            balloons=True,
+        )
         _reset_flujo()
-        st.balloons()
         st.rerun()
 
     if st.button("← Volver a revisar"):
@@ -906,7 +1399,7 @@ def _ui_eliminar_listado(eid: int, nombre: str, key_prefix: str) -> None:
     ):
         ok, msg = eliminar_evento(eid)
         if ok:
-            st.success(msg)
+            celebrate_save(msg, modulo="Motor de Precios", contexto="guardado", balloons=False)
             st.session_state.pop(f"{key_prefix}_confirm_del_{eid}", None)
             st.rerun()
         else:
@@ -1067,9 +1560,9 @@ def _render_historial():
                               pl.vigente AS "Vigente"
                        FROM precio_lista pl
                        JOIN precio_evento_caso pec ON pec.id = pl.caso_id
-                       LEFT JOIN linea     l ON l.id  = pl.linea_codigo::bigint
-                       LEFT JOIN referencia r ON r.id = pl.referencia_codigo::bigint
-                       LEFT JOIN material   m ON m.id = pl.material_descripcion::bigint
+                       LEFT JOIN linea     l ON l.id  = pl.linea_id
+                       LEFT JOIN referencia r ON r.id = pl.referencia_id
+                       LEFT JOIN material   m ON m.id = pl.material_id
                        WHERE pl.evento_id = :eid
                        ORDER BY pec.nombre_caso, pl.marca, pl.linea_codigo, pl.referencia_codigo""",
                     {"eid": eid},
@@ -1082,6 +1575,67 @@ def _render_historial():
 # ADMIN LÍNEAS — maestro Línea + Marca + Caso + Clasificación
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _render_import_pilares_excel(proveedor_id: int) -> None:
+    """Import masivo linea + linea_referencia (más líneas = mejores filtros web)."""
+    import tempfile
+    from pathlib import Path
+
+    from scripts.import_pilares_linea_lr_excel import run_import_pilares
+
+    with st.expander("📥 Importar pilares desde Excel (linea + linea_referencia)", expanded=False):
+        st.markdown(
+            "Subí **linea.xlsx** y **linea_referencia.xlsx**. No se escribe `linea.caso_id`. "
+            "**Estilo / Tipo 1** quedan en `linea_referencia` (línea + referencia)."
+        )
+        st.caption(
+            "Más líneas en el pilar → filtros de cabecera del catálogo web más completos."
+        )
+        c1, c2 = st.columns(2)
+        f_linea = c1.file_uploader("linea.xlsx", type=["xlsx", "xls"], key="imp_pilar_linea")
+        f_lr = c2.file_uploader(
+            "linea_referencia.xlsx", type=["xlsx", "xls"], key="imp_pilar_lr"
+        )
+        prev = st.checkbox("Solo vista previa (dry-run)", key="imp_pilar_dry")
+        if st.button("Ejecutar import de pilares", type="primary", key="imp_pilar_btn"):
+            if f_linea is None or f_lr is None:
+                st.warning("Subí ambos archivos.")
+            else:
+                with tempfile.TemporaryDirectory() as tmp:
+                    p_linea = Path(tmp) / "linea.xlsx"
+                    p_lr = Path(tmp) / "linea_referencia.xlsx"
+                    p_linea.write_bytes(f_linea.getvalue())
+                    p_lr.write_bytes(f_lr.getvalue())
+                    log_box = st.empty()
+                    lines: list[str] = []
+
+                    def _log(msg: str = "") -> None:
+                        if msg:
+                            lines.append(str(msg))
+                        log_box.code("\n".join(lines[-40:]) or "…")
+
+                    try:
+                        with st.spinner("Importando pilares…"):
+                            out = run_import_pilares(
+                                p_linea,
+                                p_lr,
+                                int(proveedor_id),
+                                dry_run=prev,
+                                log=_log,
+                            )
+                        if out.get("dry_run"):
+                            st.info(
+                                f"Vista previa: {out.get('linea_filas', 0):,} filas linea · "
+                                f"{out.get('lr_filas', 0):,} L+R."
+                            )
+                        else:
+                            st.success(
+                                f"**{out.get('lineas', 0):,}** líneas · "
+                                f"**{out.get('lr', 0):,}** pares linea_referencia."
+                            )
+                    except Exception as e:
+                        st.error(f"Import falló: {e}")
+
+
 def _render_admin_lineas():
     from core.database import get_dataframe
     from modules.intencion_compra.logic import (
@@ -1089,10 +1643,11 @@ def _render_admin_lineas():
         update_linea_clasificacion, get_proveedores,
     )
 
-    _seccion("Administración de Líneas", "Pilar catálogo — marca y género")
+    _seccion("Administración de Líneas", "Pilar catálogo — FK desde listado y maestras")
     st.caption(
-        "El pilar `linea` guarda marca y género. "
-        "El caso comercial se define en Biblioteca de Casos y en cada evento de precios."
+        "**Marca / Género:** en `linea` (marca_id, genero_id). "
+        "**Estilo / Tipo 1:** en `linea_referencia` (por línea + referencia) — alimenta filtros del catálogo web. "
+        "**Caso comercial:** en listado/biblioteca (`precio_evento_caso`), **no** en `linea.caso_id`."
     )
 
     df_prov = get_proveedores()
@@ -1104,9 +1659,11 @@ def _render_admin_lineas():
     prov_label = st.selectbox("Proveedor", list(opts_prov.keys()), key="al_prov")
     prov_id    = opts_prov[prov_label]
 
+    _render_import_pilares_excel(prov_id)
+
     # ── Barra de filtros ──────────────────────────────────────────────────────
     _NULL = "— Vacío —"
-    marcas_vals  = ["Todas"] + get_valores_filtro_lineas(prov_id, "marca")
+    marcas_vals = ["Todas"] + get_valores_filtro_lineas(prov_id, "marca")
     genero_vals  = ["Todos", _NULL] + get_valores_filtro_lineas(prov_id, "descp_genero")
 
     fc1, fc2 = st.columns(2)
@@ -1123,10 +1680,55 @@ def _render_admin_lineas():
         st.info("No hay líneas activas para este proveedor con los filtros seleccionados.")
         return
 
+    ult_cerrado = get_ultimo_evento_cerrado()
+    if ult_cerrado and int(ult_cerrado.get("proveedor_id", 0)) == prov_id:
+        with st.expander("Reaplicar FK de pilares desde listado cerrado", expanded=False):
+            st.caption(
+                f"Último listado: **{ult_cerrado.get('nombre_evento')}** — "
+                "marca, **Ley de género → linea.genero_id**, L+R, estilo y tipo_1."
+            )
+            bc1, bc2 = st.columns(2)
+            if bc1.button("Reaplicar FK pilares", key="al_sync_marca", type="primary"):
+                from modules.rimec_engine.pillar_fk import provisionar_pilares_desde_evento
+
+                stats = provisionar_pilares_desde_evento(int(ult_cerrado["id"]))
+                if stats.get("marcas_no_encontradas"):
+                    st.error(
+                        "Sin FK en marca_v2: "
+                        + ", ".join(stats["marcas_no_encontradas"])
+                    )
+                elif stats.get("ley_genero_rechazadas"):
+                    st.error(
+                        "Ley de género sin FK: "
+                        + ", ".join(stats["ley_genero_rechazadas"])
+                    )
+                else:
+                    celebrate_step(
+                        "Pilares",
+                        f"{stats.get('lr', 0)} pares L+R · "
+                        f"{stats.get('ley_genero_lineas', 0)} líneas con genero_id",
+                        modulo="Motor de Precios",
+                    )
+                st.rerun()
+            if bc2.button("Solo Ley de género → linea", key="al_sync_genero"):
+                from modules.rimec_engine.ley_genero import aplicar_ley_genero_desde_evento
+
+                gen = aplicar_ley_genero_desde_evento(int(ult_cerrado["id"]))
+                if gen.get("sin_fk"):
+                    st.error("Sin FK genero: " + ", ".join(gen["sin_fk"]))
+                else:
+                    celebrate_save(
+                        f"{gen.get('lineas', 0)} líneas con genero_id "
+                        f"(de {gen.get('total', 0)} del listado)",
+                        modulo="Motor de Precios",
+                        contexto="guardado",
+                        balloons=False,
+                    )
+                st.rerun()
+
     st.markdown(
         f"**{len(df_lineas)} líneas** &nbsp;·&nbsp; "
-        "Solo **Género** es editable en el pilar. "
-        "El caso de precio se define en **Biblioteca → líneas del caso** y en cada **evento**.",
+        "Marca = `marca_v2` vía FK. Solo **Género** se edita manualmente aquí.",
         unsafe_allow_html=True,
     )
 
@@ -1154,7 +1756,12 @@ def _render_admin_lineas():
                     prov_id, int(rango_desde), int(rango_hasta), None, genero_val
                 )
                 if ok:
-                    st.success(f"✓ {n} líneas actualizadas (rango {rango_desde}–{rango_hasta}).")
+                    celebrate_save(
+                        f"{n} líneas actualizadas (rango {rango_desde}–{rango_hasta})",
+                        modulo="Motor de Precios",
+                        contexto="guardado",
+                        balloons=False,
+                    )
                     st.rerun()
                 else:
                     st.error("Error al aplicar el rango.")
@@ -1201,7 +1808,12 @@ def _render_admin_lineas():
                 linea_id, genero_id=nuevo_gen_id, _campos={"genero_id"}
             )
             if ok:
-                st.success(f"Línea {cod} guardada (género).")
+                celebrate_save(
+                    f"Línea {cod} guardada (género)",
+                    modulo="Motor de Precios",
+                    contexto="guardado",
+                    balloons=False,
+                )
                 st.rerun()
             else:
                 st.error(f"Error al guardar línea {cod}.")
@@ -1289,9 +1901,11 @@ def _render_linea_referencia():
     df = get_dataframe(f"""
         SELECT
             lr.id,
-            l.id                    AS linea_id,
-            l.codigo_proveedor      AS linea_cod,
-            r.codigo_proveedor      AS ref_cod,
+            lr.proveedor_id,
+            pi.codigo::text                 AS proveedor_cod,
+            l.id                            AS linea_id,
+            l.codigo_proveedor              AS linea_cod,
+            r.codigo_proveedor              AS ref_cod,
             COALESCE(mv.descp_marca, '') AS marca,
             COALESCE(ge.descp_grupo_estilo, lr.descp_grupo_estilo) AS descp_grupo_estilo,
             COALESCE(t1.descp_tipo_1, lr.descp_tipo_1)             AS descp_tipo_1,
@@ -1300,6 +1914,7 @@ def _render_linea_referencia():
         FROM linea_referencia lr
         JOIN linea      l  ON l.id  = lr.linea_id
         JOIN referencia r  ON r.id  = lr.referencia_id
+        JOIN proveedor_importacion pi ON pi.id = lr.proveedor_id
         LEFT JOIN marca_v2  mv ON mv.id_marca = l.marca_id
         LEFT JOIN grupo_estilo_v2 ge ON ge.id_grupo_estilo = lr.grupo_estilo_id
         LEFT JOIN tipo_1          t1 ON t1.id_tipo_1       = lr.tipo_1_id
@@ -1319,7 +1934,12 @@ def _render_linea_referencia():
         st.divider()
         # Vista rápida de solo lectura — sin widgets, carga instantánea
         st.dataframe(
-            df[["linea_id", "linea_cod", "ref_cod", "marca", "descp_grupo_estilo", "descp_tipo_1"]].rename(columns={
+            df[[
+                "proveedor_id", "proveedor_cod", "linea_id", "linea_cod", "ref_cod",
+                "marca", "descp_grupo_estilo", "descp_tipo_1",
+            ]].rename(columns={
+                "proveedor_id": "prov_id",
+                "proveedor_cod": "Cód. prov.",
                 "linea_id": "linea_id",
                 "linea_cod": "Línea", "ref_cod": "Ref.", "marca": "Marca",
                 "descp_grupo_estilo": "Estilo", "descp_tipo_1": "Tipo 1",
@@ -1363,7 +1983,12 @@ def _render_linea_referencia():
                         conn.execute(sqlt(
                             f"UPDATE linea_referencia SET {campo_lote} = :val WHERE id = ANY(:ids)"
                         ), {"val": int(val_lote), "ids": batch})
-                st.success(f"✓ {len(ids)} registros actualizados.")
+                celebrate_save(
+                    f"{len(ids)} registros L+R actualizados",
+                    modulo="Motor de Precios",
+                    contexto="guardado",
+                    balloons=False,
+                )
                 st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -1413,6 +2038,12 @@ def _render_linea_referencia():
                         SET grupo_estilo_id = :ge, tipo_1_id = :t1
                         WHERE id = :id
                     """), {"ge": int(ge_nuevo), "t1": int(t1_nuevo), "id": lr_id})
+                celebrate_save(
+                    f"L+R línea {int(row['linea_cod'])} ref {int(row['ref_cod'])} guardado",
+                    modulo="Motor de Precios",
+                    contexto="guardado",
+                    balloons=False,
+                )
                 st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -1423,11 +2054,9 @@ def _render_linea_referencia():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _render_admin_casos():
-    _seccion("Biblioteca de casos (legacy)", "Deprecada — casos por listado en Paso 2")
-    st.info(
-        "Desde el arranque formal, **cada listado de precios define su matriz en el Paso 2** "
-        "(Nuevo Evento). Esta pestaña solo sirve para consulta o purga histórica; "
-        "no es obligatoria para cargar un evento nuevo."
+    _seccion(
+        "Contenedor de líneas y catálogo",
+        "FK línea→caso por listado · plantillas reutilizables por proveedor",
     )
 
     df_prov = get_proveedores()
@@ -1439,9 +2068,113 @@ def _render_admin_casos():
     prov_label = st.selectbox("Proveedor", list(opts_prov.keys()), key="ac_prov")
     prov_id    = opts_prov[prov_label]
 
+    tab_listado, tab_catalogo = st.tabs(["Listado activo", "Catálogo de casos"])
+
+    with tab_listado:
+        df_ev = get_eventos_proveedor(prov_id)
+        if df_ev is None or df_ev.empty:
+            st.info(
+                "Todavía no hay listados. Creá uno en **Nuevo Evento**; "
+                "el contenedor de líneas se guarda en **Paso 2**."
+            )
+        else:
+            opts_ev = {
+                f"{r['nombre_evento']} — {str(r['estado']).upper()} — "
+                f"{int(r['total_skus']):,} SKUs": int(r["id"])
+                for _, r in df_ev.iterrows()
+            }
+            ev_label = st.selectbox("Listado de precios", list(opts_ev.keys()), key="ac_listado")
+            eid = opts_ev[ev_label]
+            estado_ev = ev_label.split(" — ")[1].strip().upper()
+
+            resumen = get_contenedor_lineas_resumen(eid)
+            st.metric("Total líneas en contenedor (FK)", resumen["total_lineas"])
+
+            df_casos = get_casos_evento(eid)
+            if df_casos is None or df_casos.empty:
+                st.warning("Sin casos en este listado. Definilos en **Nuevo Evento → Paso 2**.")
+            else:
+                exc_por_caso = excepciones_lineas_por_caso(eid)
+                editable = estado_ev not in ("CERRADO",)
+                alguna_edicion = any(
+                    st.session_state.get(f"ac_edit_cont_{int(row['id'])}")
+                    for _, row in df_casos.iterrows()
+                )
+                lineas_disp: list[str] = []
+                if alguna_edicion:
+                    with proceso_largo(
+                        "Cargando pilar de líneas",
+                        "Preparando selector (~1.500 líneas)…",
+                    ) as avanzar:
+                        avanzar(0.5, "Consultando base de datos…")
+                        lineas_disp = [c for c, _ in cache_lineas_proveedor(prov_id)]
+                        avanzar(1.0, "Listo")
+
+                for _, row in df_casos.iterrows():
+                    cid = int(row["id"])
+                    nombre = str(row["nombre_caso"])
+                    dolar = _to_float(row.get("dolar_politica")) or 0.0
+                    factor = _to_float(row.get("factor_conversion")) or 0.0
+                    indice = (dolar * factor) / 100
+                    lineas_exc = exc_por_caso.get(nombre.replace("*", "").strip(), [])
+                    lpc_icon = "✓" if row.get("genera_lpc03_lpc04") else "✗"
+                    st.markdown(
+                        f"**{nombre}** · índice **{indice:,.0f}** · LPC {lpc_icon} · "
+                        f"**{len(lineas_exc)}** líneas en contenedor"
+                    )
+                    if lineas_exc:
+                        prev = ", ".join(lineas_exc[:12])
+                        st.caption(f"{prev}{'…' if len(lineas_exc) > 12 else ''}")
+
+                    if editable and st.session_state.get(f"ac_edit_cont_{cid}"):
+                        sel = st.multiselect(
+                            f"Líneas — {nombre}",
+                            options=lineas_disp,
+                            default=lineas_exc,
+                            key=f"ac_cont_ms_{cid}",
+                        )
+                        b1, b2 = st.columns(2)
+                        if b1.button("💾 Guardar contenedor", key=f"ac_cont_save_{cid}"):
+                            n = reemplazar_lineas_excepcion(
+                                cid, sel, prov_id, eid
+                            )
+                            st.session_state.pop(f"ac_edit_cont_{cid}", None)
+                            celebrate_save(
+                                f"{n} líneas en contenedor «{nombre}»",
+                                modulo="Motor de Precios",
+                                contexto="guardado",
+                                balloons=False,
+                            )
+                            st.rerun()
+                        if b2.button("Cancelar", key=f"ac_cont_cancel_{cid}"):
+                            st.session_state.pop(f"ac_edit_cont_{cid}", None)
+                            st.rerun()
+                    elif editable:
+                        if st.button(f"✏️ Editar líneas — {nombre}", key=f"ac_cont_edit_{cid}"):
+                            st.session_state[f"ac_edit_cont_{cid}"] = True
+                            with st.spinner("Preparando líneas del proveedor…"):
+                                cache_lineas_proveedor(prov_id)
+                            st.rerun()
+
+                if estado_ev == "CERRADO":
+                    st.caption("Listado cerrado: contenedor solo lectura.")
+
+    with tab_catalogo:
+        if st.session_state.get("bib_editor_state") and st.session_state.get(
+            "bib_editor_en_catalogo"
+        ):
+            if st.button("← Volver al listado de bibliotecas", key="ac_bib_back"):
+                st.session_state.pop("bib_editor_state", None)
+                st.session_state.pop("bib_editor_en_catalogo", None)
+                st.rerun()
+            render_editor_biblioteca(prov_id, None)
+        else:
+            render_maestro_bibliotecas_tab(prov_id)
+
+
+def _render_biblioteca_legacy(prov_id: int):
     df_bib = get_biblioteca_casos(prov_id)
 
-    # ── Tabla de casos existentes ─────────────────────────────────────────────
     if df_bib is not None and not df_bib.empty:
         st.markdown(f"**{len(df_bib)} casos en biblioteca**")
         st.markdown("---")
@@ -1480,7 +2213,12 @@ def _render_admin_casos():
                     eliminar_caso_biblioteca(cid)
                     for k in [f"ac_confirm_del_{cid}", f"ac_editing_{cid}"]:
                         st.session_state.pop(k, None)
-                    st.success(f"Caso **{nombre}** eliminado.")
+                    celebrate_save(
+                        f"Caso **{nombre}** eliminado",
+                        modulo="Motor de Precios",
+                        contexto="guardado",
+                        balloons=False,
+                    )
                     st.rerun()
                 if cc2.button("Cancelar", key=f"ac_del_cancel_{cid}"):
                     st.session_state.pop(f"ac_confirm_del_{cid}", None)
@@ -1539,9 +2277,12 @@ def _render_admin_casos():
                             ok_sync, n_lineas = sincronizar_lineas_caso(prov_id, nuevo_nombre.strip(), lineas_seleccionadas)
                             if ok_sync:
                                 st.session_state.pop(f"ac_editing_{cid}", None)
-                                st.success(
+                                celebrate_save(
                                     f"Caso **{nuevo_nombre}** actualizado "
-                                    f"({n_lineas} líneas en plantilla biblioteca)."
+                                    f"({n_lineas} líneas en plantilla biblioteca)",
+                                    modulo="Motor de Precios",
+                                    contexto="guardado",
+                                    balloons=False,
                                 )
                                 st.rerun()
                             else:
@@ -1554,13 +2295,11 @@ def _render_admin_casos():
 
             st.markdown("---")
     else:
-        st.info("La biblioteca está vacía. Creá el primer caso usando el formulario.")
+        st.caption("Biblioteca vacía (esperado con el modelo por listado).")
 
-    # ── Formulario nuevo caso ─────────────────────────────────────────────────
-    with st.expander("➕ Crear nuevo caso en biblioteca"):
+    with st.expander("➕ Crear caso en biblioteca (solo legacy)"):
         _form_nuevo_caso_biblioteca(prov_id, marcas_disponibles=[], prefix="ac_new")
 
-    # ── Purga de listas de precios ────────────────────────────────────────────
     st.markdown("---")
     _seccion("Zona de Mantenimiento", "Operaciones destructivas — solo Director/Admin")
 
@@ -1585,10 +2324,13 @@ def _render_admin_casos():
             ok, stats = purgar_todas_las_listas()
             if ok:
                 bib = stats.get("biblioteca", 0)
-                st.success(
-                    f"✓ Purga completada — "
-                    f"{stats['eventos']} eventos, {stats['casos']} casos evento, "
-                    f"{stats['skus']:,} SKUs, {bib} plantillas biblioteca. Pilares intactos."
+                celebrate_save(
+                    f"Purga completada — "
+                    f"{stats['eventos']} eventos, {stats['casos']} casos, "
+                    f"{stats['skus']:,} SKUs, {bib} plantillas. Pilares intactos.",
+                    modulo="Motor de Precios",
+                    contexto="purge_reset",
+                    balloons=True,
                 )
                 st.rerun()
             else:

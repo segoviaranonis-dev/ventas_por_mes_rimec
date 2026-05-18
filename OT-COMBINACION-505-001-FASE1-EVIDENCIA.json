@@ -1,0 +1,119 @@
+{
+  "ot_id": "OT-COMBINACION-505-001",
+  "fase": 1,
+  "status": "OK",
+  "timestamp": "2026-05-17",
+  "ejecutor": "Claude Code - albañil bajo OT Auto",
+  "checks": [
+    {
+      "id": "I1",
+      "pass": true,
+      "task": "Audit script auditar_combinacion_traspaso.py",
+      "expected": "Detect why traspaso_detalle is empty",
+      "actual": "scripts/auditar_combinacion_traspaso.py executed OK",
+      "files": [
+        "scripts/auditar_combinacion_traspaso.py",
+        "scripts/audit_combinacion_traspaso_2.json"
+      ]
+    },
+    {
+      "id": "I2",
+      "pass": true,
+      "task": "Analyze entity resolution failures per snapshot item",
+      "expected": "Identify missing linea/ref/mat/col/talla + combinacion",
+      "actual": "4 items analyzed, all have linea OK, all missing referencia",
+      "details": {
+        "linea_found": true,
+        "linea_id": 459,
+        "proveedor_id": 654,
+        "referencias_faltantes": ["500", "565"],
+        "combinacion_total": 0
+      }
+    },
+    {
+      "id": "I3",
+      "pass": true,
+      "task": "Documentation AUDIT_COMBINACION_VACIA.md",
+      "expected": "Root cause analysis + resolution strategy",
+      "actual": "docs/AUDIT_COMBINACION_VACIA.md completo",
+      "files": [
+        "docs/AUDIT_COMBINACION_VACIA.md"
+      ]
+    }
+  ],
+  "diagnostico": {
+    "traspaso_id": 2,
+    "traspaso_nro": "T-2026-0001",
+    "traspaso_estado": "BORRADOR",
+    "documento_ref": "1-PV001",
+    "snapshot_items": 4,
+    "traspaso_detalle_rows": 0,
+    "traspaso_detalle_pares": 0,
+    "root_cause_primary": "Tabla combinacion VACIA (0 rows)",
+    "root_cause_secondary": "Referencias 500, 565 NOT FOUND para linea_id=459",
+    "impacto": "Facturacion -> Bazar bloqueado, sin stock movement"
+  },
+  "snapshot_analysis": {
+    "items": [
+      {
+        "idx": 0,
+        "sku": "4202-500-39-53",
+        "tallas_count": 6,
+        "linea_ok": true,
+        "referencia_ok": false,
+        "error": "referencia codigo=500 NOT FOUND"
+      },
+      {
+        "idx": 1,
+        "sku": "4202-500-37-51",
+        "tallas_count": 4,
+        "linea_ok": true,
+        "referencia_ok": false,
+        "error": "referencia codigo=500 NOT FOUND"
+      },
+      {
+        "idx": 2,
+        "sku": "4202-500-37-50",
+        "tallas_count": 4,
+        "linea_ok": true,
+        "referencia_ok": false,
+        "error": "referencia codigo=500 NOT FOUND"
+      },
+      {
+        "idx": 3,
+        "sku": "4202-565-49526-75",
+        "tallas_count": 5,
+        "linea_ok": true,
+        "referencia_ok": false,
+        "error": "referencia codigo=565 NOT FOUND"
+      }
+    ],
+    "total_tallas_expansion": 19,
+    "pares_esperados": "20-44"
+  },
+  "estrategia_resolucion": {
+    "recomendacion": "R1 (Backfill) + R3 (Rehidratar)",
+    "r1": {
+      "descripcion": "Backfill combinacion desde pedido_proveedor_detalle",
+      "fuente": "PP-2026-0001 (273 moleculas)",
+      "script": "scripts/backfill_combinacion_desde_ppd.py --pp-id 1 --yes",
+      "crea": "linea_referencia + combinacion para todas las moleculas del PP"
+    },
+    "r3": {
+      "descripcion": "Rehidratar traspaso_detalle desde snapshot",
+      "prereq": "R1 ejecutado (combinacion poblada)",
+      "script": "scripts/rehidratar_traspaso_detalle.py --traspaso-id 2 --yes",
+      "resultado": "traspaso_detalle con ~19 rows, ~20-44 pares"
+    }
+  },
+  "archivos": [
+    "scripts/auditar_combinacion_traspaso.py",
+    "scripts/audit_combinacion_traspaso_2.json",
+    "docs/AUDIT_COMBINACION_VACIA.md"
+  ],
+  "pendiente_fase_2": [
+    "R1: backfill_combinacion_desde_ppd.py",
+    "R3: rehidratar_traspaso_detalle.py",
+    "R4: Validar SUM(traspaso_detalle.cantidad) >= 40"
+  ]
+}

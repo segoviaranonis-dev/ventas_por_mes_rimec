@@ -12,14 +12,17 @@ import streamlit as st
 import pandas as pd
 
 from core.tabla_articulos import render_tabla_5pilares
+from core.fi_card import render_fi_card
 from modules.facturacion.logic import (
     get_facturas,
     get_factura_lineas,
+    get_fi_registro_por_numero,
     enviar_factura_a_bazar,
     get_pps_con_saldo,
     get_skus_con_saldo,
     save_carga_manual,
 )
+from modules.pedido_proveedor.logic import get_fi_detalles_canonico
 
 _ESTADO_TRP_LABEL = {
     "SIN_TRASPASO": "⚪ Sin Traspaso",
@@ -131,12 +134,24 @@ def _render_facturas():
                     unsafe_allow_html=True,
                 )
 
-            # ── Detalle de artículos (5 Pilares + Tallas) ────────────────────
-            df_lin = get_factura_lineas(factura)
-            if not df_lin.empty:
-                render_tabla_5pilares(df_lin)
+            # ── Ley FI: tarjeta canónica si existe en factura_interna ─────────
+            fi_row = get_fi_registro_por_numero(factura)
+            if fi_row:
+                render_fi_card(
+                    fi_row,
+                    detalles=get_fi_detalles_canonico(int(fi_row["id"])),
+                    mostrar_detalle=True,
+                    detalle_colapsado=True,
+                    key_prefix=f"fac_{factura}",
+                    mostrar_descuentos=True,
+                )
             else:
-                st.caption("Sin detalle de líneas registrado.")
+                df_lin = get_factura_lineas(factura)
+                if not df_lin.empty:
+                    st.caption("Factura legacy (venta_transito) — tabla plana.")
+                    render_tabla_5pilares(df_lin)
+                else:
+                    st.caption("Sin detalle de líneas registrado.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

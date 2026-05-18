@@ -1,0 +1,93 @@
+{
+  "ot_id": "OT-TRASPASO-504-001",
+  "fase": 2,
+  "status": "OK",
+  "timestamp": "2026-05-17",
+  "ejecutor": "Claude Code - albañil bajo OT Auto",
+  "checks": [
+    {
+      "id": "R1",
+      "pass": true,
+      "task": "Fix crear_traspaso_por_factura - agrupar por combinacion_id",
+      "expected": "comb_qty_map accumulates qty before INSERT",
+      "actual": "modules/compra_legal/logic.py:208-233 refactored",
+      "files": [
+        "modules/compra_legal/logic.py"
+      ],
+      "changes": [
+        "Added comb_qty_map = {} to accumulate quantities",
+        "First loop: resolve comb_id and sum qty by comb_id",
+        "Second loop: INSERT once per comb_id with total_qty",
+        "Prevents UniqueViolation when multiple items resolve to same combinacion_id"
+      ]
+    },
+    {
+      "id": "R2",
+      "pass": true,
+      "task": "Merge items_tallas por SKU en _crear_traspasos_para_pp",
+      "expected": "items_tallas_merged consolidates before crear_traspaso_por_factura",
+      "actual": "modules/compra_legal/logic.py:422-440 added merge logic",
+      "files": [
+        "modules/compra_legal/logic.py"
+      ],
+      "changes": [
+        "After building items_tallas from FI detalle rows",
+        "Merge by SKU key: (linea, ref, id_material, id_color)",
+        "Sum tallas quantities for matching SKUs",
+        "Pass items_tallas_merged to crear_traspaso_por_factura",
+        "Double protection: prevents duplicates at source + at INSERT"
+      ]
+    },
+    {
+      "id": "R3",
+      "pass": true,
+      "task": "Script reparar_traspaso_parcial.py",
+      "expected": "Consolidates traspaso_detalle duplicates if traspaso quedó a medias",
+      "actual": "scripts/reparar_traspaso_parcial.py created",
+      "files": [
+        "scripts/reparar_traspaso_parcial.py"
+      ],
+      "features": [
+        "Detects duplicates: GROUP BY combinacion_id HAVING COUNT(*) > 1",
+        "Consolidates: DELETE all rows + INSERT consolidated with SUM(cantidad)",
+        "Transaction: BEGIN/COMMIT or ROLLBACK on error",
+        "Verification: checks 0 duplicates remaining",
+        "Usage: python scripts/reparar_traspaso_parcial.py --traspaso-id 1"
+      ]
+    }
+  ],
+  "implementacion": {
+    "strategy": "Double protection (prevention at source + safe INSERT)",
+    "layer_1": {
+      "ubicacion": "_crear_traspasos_para_pp",
+      "accion": "Merge items_tallas by SKU before crear_traspaso_por_factura",
+      "beneficio": "Prevents duplicates at data preparation stage"
+    },
+    "layer_2": {
+      "ubicacion": "crear_traspaso_por_factura",
+      "accion": "Group qty by combinacion_id before INSERT",
+      "beneficio": "Protects against duplicates even if input has overlaps"
+    },
+    "repair_tool": {
+      "script": "reparar_traspaso_parcial.py",
+      "uso": "Clean up traspaso if partially created before fix"
+    }
+  },
+  "caso_test": {
+    "sku_problema": "4202-500-39-53",
+    "fid_rows_antes": 2,
+    "tallas_overlap_antes": ["t37", "t38", "t39", "t40"],
+    "comportamiento_antes": "4 INSERT duplicados -> UniqueViolation",
+    "comportamiento_despues": "Merge -> 1 item SKU, tallas consolidadas -> 1 INSERT por talla"
+  },
+  "archivos_modificados": [
+    "modules/compra_legal/logic.py"
+  ],
+  "archivos_creados": [
+    "scripts/reparar_traspaso_parcial.py"
+  ],
+  "pendiente_fase_3": [
+    "R4: Test finalizar_compra(1) sin error",
+    "R5: Validar 0 duplicados en traspaso_detalle + pares ≈ 44"
+  ]
+}

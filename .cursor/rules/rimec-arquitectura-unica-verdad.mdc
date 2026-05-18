@@ -1,0 +1,55 @@
+---
+description: Arquitectura RIMEC — Única Verdad (Productos vs Procesos)
+alwaysApply: true
+---
+
+# RIMEC — Única Verdad: Productos y Procesos
+
+Modelo acordado del ecosistema. No mezclar responsabilidades entre capas.
+
+## PRODUCTOS (canales / apps)
+
+| Producto | Qué es | Datos |
+|----------|--------|--------|
+| **Nexus** | App operativa: **Streamlit** + **web RIMEC** + **web Bazar** | Flujos comerciales end-to-end (IC, PP, aprobaciones, etc.) |
+| **Report** | **Sales report** — reporting / análisis de ventas | Usa **tablas maestras**; **no usa pilares** (`linea`, `referencia`, `linea_referencia`, etc.) |
+
+## PROCESOS (motores que transforman / enriquecen datos)
+
+| Proceso | Rol | Pilares | Entrada |
+|---------|-----|---------|---------|
+| **Motor de precios** | Lista de precios, casos por evento, `precio_lista`, cierre de listados | **Sí** — provisiona y sincroniza FK en pilares (marca, género, L+R, códigos proveedor) | Excel proveedor + reglas (Ley de Género, casos por `precio_evento`) |
+| **Retail** | Import Excel multi-tienda → staging → filtros enriquecidos | **Sí** — usa pilares para **crear filtros / FK** en staging | **Depende de un Excel** (no es fuente autónoma) |
+
+## Los 5 pilares (identidad molecular)
+
+1. **linea** · 2. **referencia** · 3. **material** · 4. **color** · 5. **grada** (catálogo: tabla `talla`, FK `talla_id`)
+
+**Precio (Motor):** hasta L+R+material. Color/grada no cambian LPN; sí stock y venta.
+
+**Grada — dos notaciones:**
+- **Importadora:** caja cerrada — ej. `35(1 2 3 3 2 1)40` en F9/PP (`grada` + `grades_json`).
+- **Bazar Web:** números abiertos — N°35=1, N°36=1… por `combinacion` + movimientos.
+
+**Relacionamiento:** `linea_referencia` (estilo/tipo L+R) · **`combinacion`** (5 FK) · `movimiento_detalle` / `pedido_proveedor_detalle` → trazabilidad IC→PP→evento→caso histórica.
+
+Doc completo: `docs/RIMEC_PILARES_CINCO.md`
+
+## Pilares en procesos vs Report
+
+- **Motor** y **Retail** leen/escriben pilares y `combinacion`.
+- **Report:** maestras sí, **pilares no**.
+
+## Reglas de diseño
+
+1. **Caso comercial** vive en el **listado/evento** (`precio_evento` + `precio_evento_caso`), no en `linea.caso_id` (legacy → NULL).
+2. **Marca en listado** = nombre de hoja Excel → `linea.marca_id` vía `marca_v2`.
+3. No proponer que Report consuma pilares ni que Retail reemplace al Motor de precios.
+4. Nexus une productos; los **procesos** alimentan pilares y tablas de negocio que Nexus y Bazar consumen después.
+
+## Módulos repo (referencia rápida)
+
+- Motor: `modules/rimec_engine/`
+- Retail: `modules/balance_tiendas_retail/`
+- Nexus UI: `app.py` + módulos `modules/*`
+- Imports CLI pilares: `scripts/import_pilares_linea_lr_excel.py`, `scripts/import_linea_referencia_excel.py`

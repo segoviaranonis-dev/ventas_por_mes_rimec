@@ -1,0 +1,39 @@
+---
+description: Ley FI — toda factura interna usa render_fi_card (5 pilares + imagen)
+alwaysApply: true
+---
+
+# Ley Factura Interna (FI)
+
+Toda pantalla que muestre una **Factura Interna** debe usar `core.fi_card.render_fi_card` con detalle desde `get_fi_detalles_canonico(fi_id)`.
+
+## Obligatorio en cada ítem FI
+
+- 5 pilares en `linea_snapshot`: línea, referencia, material, color, grada/tallas
+- Imagen del calzado (`imagen_url` en snapshot cuando exista)
+- Mismo formato que **Pedido Proveedor** y **Aprobación**
+
+## Prohibido
+
+- `render_tabla_5pilares` como vista principal de una FI en `factura_interna`
+- Excepción: facturas **solo legacy** (`venta_transito` sin fila en `factura_interna`)
+
+## Módulos alineados
+
+| Módulo | Patrón |
+|--------|--------|
+| `pedido_proveedor/ui.py` | `render_fi_card` ✓ |
+| `aprobacion_pedidos/ui.py` | `render_fi_card` ✓ |
+| `compra_legal/ui.py` | `get_facturas_internas_de_compra` + `render_fi_card` |
+| `facturacion/ui.py` | `get_fi_registro_por_numero` + `render_fi_card` |
+| `compra_web/ui.py` | `get_fi_registro_por_numero` + `render_fi_card` (OT-507) |
+
+## Caso comercial en header FI
+
+- Mostrar `factura_interna.caso` (caso que formó el precio del listado).
+- Si vacío: backfill vía `scripts/reparar_fi_caso_desde_listado.py` (OT-508).
+- Al crear FI: persistir `caso` + `lista_precio_id` = evento PP (OT-508 Fase 2 pendiente).
+
+## Métricas Compra Legal
+
+Una sola fuente: `get_metricas_facturacion_compra(id_cl)` — header, fila PP y acordeón FAC-INT deben mostrar el mismo `pares_facturados`.

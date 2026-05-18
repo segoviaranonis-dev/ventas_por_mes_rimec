@@ -1,0 +1,29 @@
+{
+  "audit_timestamp": "2026-05-17T15:14:14.809707",
+  "compra_id": 1,
+  "proforma": "7441-4084",
+  "metricas": {
+    "header_vt": 0,
+    "header_fi": 44,
+    "header_facturados": 44,
+    "pp_total_vendido_new": 44,
+    "pp_rows": [
+      {
+        "pp_id": 1,
+        "pp_nro": "PP-2026-0001",
+        "total_pares": 7164,
+        "total_vendido": 44
+      }
+    ],
+    "fac_expander_fi_rows": 5,
+    "fac_expander_fi_pares": 44,
+    "fac_expander_vt_rows": 0,
+    "fac_expander_vt_pares": 0,
+    "fac_expander_total": 44,
+    "overlap_facturas": 0,
+    "overlap_vt_pares": 0,
+    "overlap_fi_pares": 0
+  },
+  "desvios": [],
+  "diagnostico": {}
+}

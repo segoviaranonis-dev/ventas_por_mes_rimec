@@ -1,0 +1,40 @@
+---
+description: Celebración UI (toast/globos) y latido 60s en imports — experiencia RIMEC
+alwaysApply: true
+---
+
+# Experiencia positiva en procesos RIMEC
+
+## Importaciones (CLI / scripts)
+
+- **Latido obligatorio cada 60 s** mientras corre el proceso (`scripts/lib/import_heartbeat.py`).
+- Mensaje: `[HH:MM:SS] … sigo vivo (cada 60s, tick N) — <etapa>`
+
+## UI Streamlit (Motor, Pedido Proveedor, Aprobaciones, Retail)
+
+Tras **cada escritura exitosa en BD** (INSERT/UPDATE/COMMIT que el usuario disparó):
+
+1. Llamar `celebrate_save` o `celebrate_step` desde `core.ux_celebrate`.
+2. **Toast** en guardados normales; **globos** (`st.balloons`) en hitos:
+   - Importación Excel terminada
+   - Listado de precios cerrado / evento activado
+   - Aprobación / preventa / factura creada
+   - Handoff explícito entre módulos (ej. Motor → IC, PP → Aprobaciones)
+
+```python
+from core.ux_celebrate import celebrate_save, celebrate_step, celebrate_import_done
+
+celebrate_save("84 SKUs guardados en precio_lista", modulo="Motor de Precios", contexto="guardado")
+celebrate_step("Paso 3", "Cálculo guardado", modulo="Motor de Precios")
+celebrate_import_done("Pilares importados", modulo="Import")
+celebrate_step("IC vinculada", "Precios del listado asignados", modulo="Pedido Proveedor", handoff="Digitación")
+```
+
+## Módulos donde aplica si o si
+
+- `modules/rimec_engine/ui.py` — Motor de Precios
+- `modules/pedido_proveedor/ui.py` — Pedido Proveedor
+- `modules/aprobacion_pedidos/ui.py` — Aprobaciones
+- Importaciones en app (`balance_tiendas_retail`, etc.)
+
+No dejar solo `st.success` plano en persistencias; usar el helper para toast + énfasis coherente.

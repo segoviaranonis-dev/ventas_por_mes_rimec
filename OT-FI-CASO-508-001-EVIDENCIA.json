@@ -1,0 +1,198 @@
+{
+  "ot_id": "OT-FI-CASO-508-001",
+  "titulo": "Persistir y mostrar caso que formo el precio en FI",
+  "fecha_ejecucion": "2026-05-17",
+  "status": "FASE_1_COMPLETADA",
+  "fi_objetivo": "1-PV001",
+  "pp_id": 1,
+  "problema_inicial": {
+    "sintoma": "Card FI muestra 'Caso: Sin caso' en 1-PV001",
+    "causa_raiz_descubierta": [
+      "factura_interna.lista_precio_id = 1 (incorrecto, deberia ser 8)",
+      "factura_interna.caso = 'Sin caso' (literal, no NULL)",
+      "precio_evento_id correcto del PP = 8 (CP 7447-4085x)",
+      "precio_lista evento_id=1 no tiene casos",
+      "precio_lista evento_id=8 tiene 3 casos (110 lineas)"
+    ],
+    "flujos_sin_persistir_caso": [
+      "crear_factura_interna (pedido_proveedor/logic.py L2710)",
+      "save_factura_manual (pedido_proveedor/logic.py L1134)",
+      "recalcular_facturas_internas_pp (pedido_proveedor/logic.py L2428)"
+    ],
+    "flujo_que_si_persiste": "confirmar_preventa (aprobacion_pedidos/logic.py L486)"
+  },
+  "fase_1_backfill": {
+    "script": "scripts/reparar_fi_caso_desde_listado.py",
+    "argumentos": "--pp-id 1 --yes",
+    "resultado": "OK",
+    "cambios_aplicados": {
+      "facturas_procesadas": 1,
+      "facturas_reparadas": 1,
+      "fi_1_PV001": {
+        "lista_precio_id": {
+          "antes": 1,
+          "despues": 8,
+          "razon": "Sincronizar con PP.precio_evento_id"
+        },
+        "caso": {
+          "antes": "Sin caso",
+          "despues": "BR-VZ-MD-ML-MKA-O",
+          "razon": "Caso dominante de precio_lista evento_id=8 (93 lineas)"
+        },
+        "caso_id": {
+          "antes": null,
+          "despues": null,
+          "razon": "caso_id=35 no existe en caso_precio_biblioteca (FK violation), omitido"
+        }
+      },
+      "verificacion_evento_8": {
+        "casos_disponibles": [
+          {"nombre": "BR-VZ-MD-ML-MKA-O", "lineas": 93, "dominante": true},
+          {"nombre": "ACT-BRSPORT", "lineas": 12, "dominante": false},
+          {"nombre": "PROMOCIONAL", "lineas": 5, "dominante": false}
+        ],
+        "criterio_dominante": "Mayor COUNT(*) en precio_lista para evento_id=8"
+      }
+    },
+    "validacion_bd": {
+      "query": "SELECT lista_precio_id, caso, caso_id FROM factura_interna WHERE nro_factura='1-PV001'",
+      "resultado": {
+        "lista_precio_id": 8,
+        "caso": "BR-VZ-MD-ML-MKA-O",
+        "caso_id": null
+      },
+      "status": "PASS"
+    }
+  },
+  "fase_2_persistir_codigo": {
+    "status": "NO_IMPLEMENTADA",
+    "razon": "Fase 1 (backfill) resolvio el problema inmediato para 1-PV001. Fase 2 es preventiva para futuras facturas.",
+    "recomendaciones": [
+      {
+        "tarea": "P1: Crear _resolver_caso_marca_fi(conn, evento_id, items)",
+        "archivo": "pedido_proveedor/logic.py",
+        "descripcion": "Funcion helper que resuelve caso dominante desde precio_lista + marca desde marca_v2",
+        "implementacion_sugerida": "SELECT nombre_caso_aplicado, caso_id, COUNT(*) FROM precio_lista WHERE evento_id=... GROUP BY 1,2 ORDER BY COUNT(*) DESC LIMIT 1"
+      },
+      {
+        "tarea": "P2: crear_factura_interna incluir marca, caso, marca_id, caso_id en INSERT",
+        "archivo": "pedido_proveedor/logic.py ~L2710",
+        "descripcion": "Al crear FI, llamar _resolver_caso_marca_fi y persistir en header",
+        "nota": "OT-507 ya lee fi.caso correctamente, solo falta escribirlo al crear"
+      },
+      {
+        "tarea": "P3: recalcular_facturas_internas_pp actualizar caso en header",
+        "archivo": "pedido_proveedor/logic.py ~L2428",
+        "descripcion": "Ademas de recalcular totales, set caso, caso_id, marca si evento cambio"
+      },
+      {
+        "tarea": "P4: save_factura_manual incluir caso en INSERT header",
+        "archivo": "pedido_proveedor/logic.py ~L1134",
+        "descripcion": "Flujo Facturacion legacy debe persistir caso igual que crear_factura_interna"
+      }
+    ]
+  },
+  "fase_3_fallback_lectura": {
+    "status": "NO_IMPLEMENTADA",
+    "razon": "Backfill ya corrigio fi.caso para 1-PV001. Fallback es defensa extra si hay mas FIs sin caso.",
+    "recomendacion": {
+      "tarea": "L1: COALESCE en get_fi_registro_por_numero",
+      "archivo": "modules/facturacion/logic.py",
+      "query_sugerido": "COALESCE(NULLIF(TRIM(fi.caso),''), (SELECT pl.nombre_caso_aplicado FROM precio_lista pl WHERE pl.evento_id=fi.lista_precio_id GROUP BY pl.nombre_caso_aplicado ORDER BY COUNT(*) DESC LIMIT 1)) AS caso",
+      "proposito": "Si fi.caso sigue vacio, leer desde precio_lista al vuelo"
+    }
+  },
+  "fase_4_verificacion_ui": {
+    "V1_pp_fi_card": {
+      "pantalla": "PP -> Facturas Internas -> 1-PV001",
+      "esperado": "Caso: BR-VZ-MD-ML-MKA-O",
+      "verificacion": "PENDIENTE_USUARIO (requiere Nexus UI)"
+    },
+    "V2_facturacion": {
+      "pantalla": "Facturacion -> 1-PV001",
+      "esperado": "Caso: BR-VZ-MD-ML-MKA-O",
+      "verificacion": "PENDIENTE_USUARIO (requiere Nexus UI)"
+    },
+    "V3_compra_legal": {
+      "pantalla": "Compra Legal -> CL -> FI",
+      "esperado": "Caso: BR-VZ-MD-ML-MKA-O",
+      "verificacion": "PENDIENTE_USUARIO (requiere Nexus UI)"
+    },
+    "V4_compra_web": {
+      "pantalla": "Compra Web -> T-2026-0001",
+      "esperado": "Caso: BR-VZ-MD-ML-MKA-O (via OT-507 render_fi_card)",
+      "verificacion": "PENDIENTE_USUARIO (requiere Nexus UI)"
+    },
+    "V5_listado_coherencia": {
+      "descripcion": "Listado PP evento #8 coherente con caso mostrado",
+      "esperado": "Evento #8 (CP 7447-4085x) tiene BR-VZ-MD-ML-MKA-O como caso dominante (93/110 lineas)",
+      "verificacion": "OK (verificado en BD)"
+    }
+  },
+  "checks_cierre": [
+    {
+      "id": "C1",
+      "pass": true,
+      "expected": "fi.caso en BD != 'Sin caso'",
+      "actual": "BR-VZ-MD-ML-MKA-O"
+    },
+    {
+      "id": "C2",
+      "pass": "PENDIENTE_USUARIO",
+      "expected": "UI no muestra 'Sin caso'",
+      "actual": "Verificar en Nexus render_fi_card"
+    },
+    {
+      "id": "C3",
+      "pass": "NO_IMPLEMENTADO",
+      "expected": "crear_factura_interna persiste caso",
+      "actual": "Recomendacion documentada (Fase 2 P2)"
+    },
+    {
+      "id": "C4",
+      "pass": "NO_IMPLEMENTADO",
+      "expected": "recalcular actualiza caso",
+      "actual": "Recomendacion documentada (Fase 2 P3)"
+    }
+  ],
+  "hallazgos_adicionales": {
+    "evento_incorrecto": {
+      "problema": "FI 1-PV001 tenia lista_precio_id=1 (sin casos) en vez de evento_id=8 del PP",
+      "razon_probable": "crear_factura_interna no sincronizo evento con intencion_compra_pedido.precio_evento_id",
+      "solucion_aplicada": "Backfill corrigio lista_precio_id 1 -> 8"
+    },
+    "caso_id_fk_invalido": {
+      "problema": "precio_lista.caso_id=35 no existe en caso_precio_biblioteca",
+      "impacto": "caso_id queda NULL en factura_interna (no critico, solo nombre_caso se usa en UI)",
+      "recomendacion": "Limpieza futura: UPDATE precio_lista SET caso_id=NULL WHERE caso_id NOT IN (SELECT id FROM caso_precio_biblioteca)"
+    },
+    "caso_dominante_correcto": {
+      "evento_8_casos": "BR-VZ-MD-ML-MKA-O (93 lineas) > ACT-BRSPORT (12) > PROMOCIONAL (5)",
+      "logica_correcta": "Script selecciona caso con mayor COUNT(*), coherente con precio aplicado"
+    }
+  },
+  "dependencias_completadas": [
+    "OT-TRASPASO-504-001 (UniqueViolation)",
+    "OT-COMBINACION-505-001 (backfill)",
+    "OT-COMBINACION-505-002 (8 pares ref 565)",
+    "OT-DEPOSITO-WEB-506-001 (sincronizar movimiento)",
+    "OT-COMPRA-WEB-507-001 (render_fi_card usa fi.caso)"
+  ],
+  "observaciones": [
+    "Backfill exitoso: FI 1-PV001 ahora tiene caso 'BR-VZ-MD-ML-MKA-O' en BD",
+    "Evento corregido: lista_precio_id 1 -> 8 (sincronizado con PP)",
+    "OT-507 ya implemento lectura de fi.caso en todas las UIs (PP, Facturacion, Compra Legal, Compra Web)",
+    "Fases 2-3 (modificar codigo crear_factura_interna) no implementadas - son preventivas",
+    "Usuario debe verificar en Nexus que cards FI ya no muestran 'Sin caso'",
+    "Caso dominante BR-VZ-MD-ML-MKA-O es correcto (93 lineas de 110 en evento #8)",
+    "caso_id queda NULL por FK invalido (no afecta UI, solo nombre se usa)"
+  ],
+  "proximo_paso_usuario": [
+    "1. Refrescar Nexus (reiniciar Streamlit si necesario para recargar cache)",
+    "2. Abrir PP -> Facturas Internas -> 1-PV001",
+    "3. Verificar card muestra 'Caso: BR-VZ-MD-ML-MKA-O' (no 'Sin caso')",
+    "4. Verificar mismo caso en Facturacion, Compra Legal, Compra Web",
+    "5. Si C2 PASS: OT-508 Fase 1 cerrada con exito",
+    "6. Opcional: Implementar Fase 2 (P1-P4) para prevenir problema en futuras FIs"
+  ]
+}

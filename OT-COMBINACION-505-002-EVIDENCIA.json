@@ -1,0 +1,202 @@
+{
+  "ot_id": "OT-COMBINACION-505-002",
+  "titulo": "Recuperar 8 pares ref 565 (44 -> 36 en traspaso)",
+  "fecha_ejecucion": "2026-05-17",
+  "status": "OK",
+  "traspaso_id": 2,
+  "traspaso_numero": "T-2026-0001",
+  "diagnostico_inicial": {
+    "pares_snapshot": 44,
+    "pares_traspaso_detalle": 36,
+    "brecha": 8,
+    "items_faltantes": {
+      "linea": "4202",
+      "referencia": "565",
+      "material_snapshot": "",
+      "color": "CAMEL 1528",
+      "tallas": {
+        "t36": 1,
+        "t37": 2,
+        "t38": 2,
+        "t39": 2,
+        "t40": 1
+      },
+      "total_pares_faltantes": 8
+    }
+  },
+  "root_cause": {
+    "capa": "snapshot_json",
+    "problema": "material='' (vacio) para ref 565",
+    "origen": "ppd_id=202 (PP-2026-0001) tiene descp_material='' pero material_code=31855 con descripcion valida",
+    "implicacion": "_resolve_combinacion_id retorna None cuando material vacio (L47-48)",
+    "ppd_id_afectado": 202,
+    "material_code": 31855,
+    "material_descripcion": "LOC. CENTRUM/CACHAREL"
+  },
+  "fase_1_correccion": {
+    "R1_corregir_snapshot": {
+      "script": "scripts/corregir_snapshot_ref565.py",
+      "argumentos": "--traspaso-id 2 --yes",
+      "resultado": "OK",
+      "material_antes": "",
+      "material_despues": "LOC. CENTRUM/CACHAREL"
+    },
+    "R2_rehidratar_detalle": {
+      "script": "scripts/rehidratar_traspaso_standalone.py",
+      "argumentos": "--traspaso-id 2 --yes",
+      "resultado": "OK",
+      "stats": {
+        "snapshot_items": 4,
+        "combinaciones_resolved": 19,
+        "misses": 0,
+        "traspaso_detalle_rows": 19,
+        "total_pares": 44
+      },
+      "mejora": {
+        "filas_antes": 14,
+        "filas_despues": 19,
+        "filas_nuevas": 5,
+        "pares_antes": 36,
+        "pares_despues": 44,
+        "pares_recuperados": 8
+      }
+    },
+    "R3_validacion": {
+      "script": "scripts/validar_traspaso_detalle.py",
+      "argumentos": "--traspaso-id 2",
+      "resultado": "PASS",
+      "checks": {
+        "C1_combinaciones": {
+          "esperado": "> 0",
+          "obtenido": 1165,
+          "status": "PASS"
+        },
+        "C2_pares": {
+          "esperado": 44,
+          "obtenido": 44,
+          "status": "PASS"
+        },
+        "C3_duplicados": {
+          "esperado": 0,
+          "obtenido": 0,
+          "status": "PASS"
+        }
+      }
+    },
+    "R4_diagnostico_final": {
+      "script": "scripts/diagnosticar_brecha_traspaso.py",
+      "argumentos": "--traspaso-id 2",
+      "resultado": "OK",
+      "brecha_antes": 8,
+      "brecha_despues": 0
+    }
+  },
+  "checks_cierre": [
+    {
+      "id": "C1",
+      "pass": true,
+      "expected": "snapshot ref565 material no vacio",
+      "actual": "LOC. CENTRUM/CACHAREL"
+    },
+    {
+      "id": "C2",
+      "pass": true,
+      "expected": "traspaso_detalle pares = 44",
+      "actual": 44
+    },
+    {
+      "id": "C3",
+      "pass": true,
+      "expected": "traspaso_detalle filas = 19",
+      "actual": 19
+    },
+    {
+      "id": "C4",
+      "pass": true,
+      "expected": "duplicados (traspaso_id, combinacion_id) = 0",
+      "actual": 0
+    },
+    {
+      "id": "C5",
+      "pass": true,
+      "expected": "brecha snapshot vs detalle = 0",
+      "actual": 0
+    }
+  ],
+  "detalle_ref565_recuperado": {
+    "combinaciones_creadas": 5,
+    "distribucion": [
+      {
+        "linea": "4202",
+        "referencia": "565",
+        "material": "LOC. CENTRUM/CACHAREL",
+        "color": "CAMEL 1528",
+        "talla": "t36",
+        "pares": 1,
+        "combinacion_id": 468
+      },
+      {
+        "linea": "4202",
+        "referencia": "565",
+        "material": "LOC. CENTRUM/CACHAREL",
+        "color": "CAMEL 1528",
+        "talla": "t37",
+        "pares": 2,
+        "combinacion_id": 469
+      },
+      {
+        "linea": "4202",
+        "referencia": "565",
+        "material": "LOC. CENTRUM/CACHAREL",
+        "color": "CAMEL 1528",
+        "talla": "t38",
+        "pares": 2,
+        "combinacion_id": 470
+      },
+      {
+        "linea": "4202",
+        "referencia": "565",
+        "material": "LOC. CENTRUM/CACHAREL",
+        "color": "CAMEL 1528",
+        "talla": "t39",
+        "pares": 2,
+        "combinacion_id": 471
+      },
+      {
+        "linea": "4202",
+        "referencia": "565",
+        "material": "LOC. CENTRUM/CACHAREL",
+        "color": "CAMEL 1528",
+        "talla": "t40",
+        "pares": 1,
+        "combinacion_id": 472
+      }
+    ],
+    "total_pares_recuperados": 8
+  },
+  "estado_final": {
+    "traspaso_detalle_completo": true,
+    "snapshot_vs_detalle": "MATCH",
+    "pares_totales": 44,
+    "filas_totales": 19,
+    "combinaciones_unicas": 19,
+    "duplicados": 0
+  },
+  "fase_2_prevencion": {
+    "recomendaciones": [
+      "P1: Backfill ppd.descp_material desde material.descripcion para ppd_id=202 y similares",
+      "P2: En _crear_traspasos_para_pp: COALESCE(descp_material, m.descripcion) para snapshot",
+      "P3: En _resolve_combinacion_id: fallback por material.codigo_proveedor si texto vacio"
+    ],
+    "implementado": false,
+    "razon": "Fase 2 opcional - requiere confirmacion de usuario"
+  },
+  "observaciones": [
+    "OT-TRASPASO-504-001 (UniqueViolation) resuelto en fase previa",
+    "OT-COMBINACION-505-001 (backfill base) completado previamente",
+    "OT-COMBINACION-505-002 (recuperacion 8 pares ref 565) COMPLETADO",
+    "Sistema operativo: traspasos RIMEC -> Bazar con inventario completo",
+    "Backfill desde PP-2026-0001 creo 1165 combinaciones + 5 adicionales ref 565",
+    "Total combinaciones en sistema: 1165 (despues de ref 565 se crean dinamicamente)"
+  ]
+}

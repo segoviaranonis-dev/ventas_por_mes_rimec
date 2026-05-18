@@ -148,6 +148,36 @@ def get_facturas(id_cl: int | None = None) -> pd.DataFrame:
     """, params if params else None)
 
 
+def get_fi_registro_por_numero(nro_factura: str) -> dict | None:
+    """Cabecera FI formato render_fi_card, o None si es solo legacy VT."""
+    df = get_dataframe("""
+        SELECT
+            fi.id, fi.nro_factura, fi.estado, fi.created_at,
+            fi.pp_id,
+            pp.numero_registro        AS nro_pp,
+            fi.marca, fi.marca_id,
+            fi.caso,  fi.caso_id,
+            cv.descp_cliente          AS cliente,
+            cv.descp_cliente          AS cliente_nombre,
+            vv.descp_vendedor         AS vendedor,
+            vv.descp_vendedor         AS vendedor_nombre,
+            fi.total_pares,
+            fi.total_monto            AS total_neto,
+            fi.total_monto,
+            fi.lista_precio_id,
+            fi.descuento_1, fi.descuento_2, fi.descuento_3, fi.descuento_4
+        FROM factura_interna fi
+        LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
+        LEFT JOIN cliente_v2  cv ON cv.id_cliente  = fi.cliente_id
+        LEFT JOIN vendedor_v2 vv ON vv.id_vendedor = fi.vendedor_id
+        WHERE fi.nro_factura = :nro
+        LIMIT 1
+    """, {"nro": str(nro_factura).strip()})
+    if df is None or df.empty:
+        return None
+    return df.iloc[0].to_dict()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ENVIAR A WEB BAZAR — por factura individual
 # ─────────────────────────────────────────────────────────────────────────────

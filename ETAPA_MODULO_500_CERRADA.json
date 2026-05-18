@@ -1,0 +1,74 @@
+{
+  "etapa": "MODULO_500_PP_SANEO",
+  "pp_ref": "PP-2026-0001",
+  "pp_id": 1,
+  "ppd_filas": 273,
+  "cajas": 748,
+  "pares": 7164,
+  "pps_duplicados_globales": 0,
+  "import_normalizado": true,
+  "web_verificado": true,
+  "fecha_cierre": "2026-05-17",
+  "evidencia": {
+    "ot_501a_catalogo_web": "OT-CERRAR-501-A-EVIDENCIA.json",
+    "ot_501b_nexus_operacion": "OT-CERRAR-501-B-EVIDENCIA.json",
+    "ot_501c_acta_cierre": "ETAPA_MODULO_500_CERRADA.json"
+  },
+  "verificaciones": {
+    "sku_7320_239_colores": 2,
+    "sku_7320_239_avela_cajas": 4,
+    "v_stock_rimec_filas": 273,
+    "v_stock_rimec_sin_duplicados": true,
+    "test_normalizacion_pasado": true,
+    "pps_con_duplicados_count": 0
+  },
+  "cambios_implementados": {
+    "normalizacion_import": {
+      "archivo": "modules/pedido_proveedor/logic.py",
+      "funcion": "_mol_key_import() + populate_pp_from_proforma()",
+      "descripcion": "Deduplica moléculas automáticamente al importar proforma"
+    },
+    "saneo_bd": {
+      "script": "scripts/sanear_ppd_duplicados_pp.py",
+      "filas_antes": 391,
+      "filas_despues": 273,
+      "moleculas_consolidadas": 91,
+      "filas_eliminadas": 118
+    },
+    "vista_actualizada": {
+      "script": "scripts/aplicar_vista_stock_definitiva.py",
+      "columnas_agregadas": ["cajas_disponibles", "pares_vendidos", "saldo_pares"]
+    }
+  },
+  "scripts_creados": [
+    "scripts/test_normalizacion_proforma.py",
+    "scripts/sanear_ppd_duplicados_pp.py",
+    "scripts/listar_pps_con_duplicados.py",
+    "scripts/auditar_proforma_excel_pp.py",
+    "scripts/verificar_catalogo_web_ot501a.py",
+    "scripts/generar_evidencia_ot501b.py"
+  ],
+  "informes_generados": [
+    "OT-PROFORMA-7447-INFORME-COMPLETADO.md",
+    "SANEO_PP_2026_0001_COMPLETADO.md",
+    "ETAPA_MODULO_500_CERRADA.json"
+  ],
+  "proxima_etapa": {
+    "ot_id": "OT-COMPRA-501-002",
+    "titulo": "Compra legal + listado precio_evento",
+    "prerequisitos": [
+      "ETAPA_MODULO_500_CERRADA.json con web_verificado=true",
+      "PP-2026-0001 en estado ABIERTO con 273 moléculas",
+      "Sin FI RESERVADA pendientes"
+    ]
+  },
+  "responsable": "Claude Code (albañil)",
+  "aprobacion_usuario": {
+    "requerido": true,
+    "criterio": "Verificar 7320/239 = 2 col. en http://localhost:3001",
+    "pendiente": false,
+    "confirmado": "2026-05-17",
+    "nota": "Usuario: 2 col. y 4 cajas AVELA OK"
+  },
+  "etapa_cerrada": true
+}
