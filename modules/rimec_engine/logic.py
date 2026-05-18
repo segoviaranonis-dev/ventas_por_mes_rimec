@@ -1167,7 +1167,7 @@ def guardar_precio_lista(filas: list[dict]):
     """
     if not filas:
         return
-    evento_id = filas[0].get("evento_id")
+    evento_id = filas[0].get("eid") or filas[0].get("evento_id")
     if _evento_esta_cerrado(evento_id):
         DBInspector.log(
             f"[ENGINE] Escritura bloqueada — evento {evento_id} en estado CERRADO",
@@ -1485,6 +1485,86 @@ def contar_skus_procesados(evento_id: int) -> int:
         {"eid": evento_id}
     )
     return int(df.iloc[0]["n"]) if df is not None and not df.empty else 0
+
+
+def resumen_paso3_evento(evento_id: int) -> dict:
+    """Estado del evento y filas en precio_lista (recuperación tras cálculo largo en Cloud)."""
+    if not evento_id:
+        return {"estado": None, "n_precio_lista": 0}
+    df = get_dataframe(
+        """SELECT pe.estado,
+                  (SELECT COUNT(*)::int FROM precio_lista pl WHERE pl.evento_id = pe.id) AS n_pl
+           FROM precio_evento pe
+           WHERE pe.id = :eid""",
+        {"eid": evento_id},
+    )
+    if df is None or df.empty:
+        return {"estado": None, "n_precio_lista": 0}
+    row = df.iloc[0]
+    return {
+        "estado": str(row["estado"]) if row["estado"] is not None else None,
+        "n_precio_lista": int(row["n_pl"] or 0),
+    }
+
+
+def hidratar_paso4_desde_bd(evento_id: int) -> dict:
+    """
+    Reconstruye re_casos y re_skus_por_caso desde precio_evento_caso + precio_lista.
+    Usar si el cálculo terminó en BD pero Streamlit no avanzó de paso (timeout Cloud).
+    """
+    df = get_dataframe(
+        """SELECT pec.id, pec.nombre_caso, pec.dolar_politica, pec.factor_conversion,
+                  pec.descuento_1, pec.descuento_2, pec.descuento_3, pec.descuento_4,
+                  pec.genera_lpc03_lpc04,
+                  COUNT(pl.id)::int AS n_skus
+           FROM precio_evento_caso pec
+           LEFT JOIN precio_lista pl
+                  ON pl.caso_id = pec.id AND pl.evento_id = pec.evento_id
+           WHERE pec.evento_id = :eid
+           GROUP BY pec.id, pec.nombre_caso, pec.dolar_politica, pec.factor_conversion,
+                    pec.descuento_1, pec.descuento_2, pec.descuento_3, pec.descuento_4,
+                    pec.genera_lpc03_lpc04
+           ORDER BY pec.id""",
+        {"eid": evento_id},
+    )
+    casos: list[dict] = []
+    confirmados: dict[str, int] = {}
+    if df is None or df.empty:
+        return {"casos": casos, "confirmados": confirmados, "total_skus": 0}
+
+    for i, row in df.iterrows():
+        casos.append({
+            "nombre_caso": row["nombre_caso"],
+            "dolar_politica": float(row["dolar_politica"] or 0),
+            "factor_conversion": float(row["factor_conversion"] or 0),
+            "descuento_1": row["descuento_1"],
+            "descuento_2": row["descuento_2"],
+            "descuento_3": row["descuento_3"],
+            "descuento_4": row["descuento_4"],
+            "genera_lpc03_lpc04": bool(row.get("genera_lpc03_lpc04", True)),
+            "regla_redondeo": "centena",
+        })
+        confirmados[f"caso_{i}"] = int(row["n_skus"] or 0)
+
+    return {
+        "casos": casos,
+        "confirmados": confirmados,
+        "total_skus": int(df["n_skus"].sum()),
+    }
+
+
+def ir_a_paso4_validacion(evento_id: int) -> dict | None:
+    """Marca evento validado y devuelve pack sesión Paso 4, o None si no hay precio_lista."""
+    resumen = resumen_paso3_evento(evento_id)
+    if resumen["n_precio_lista"] <= 0:
+        return None
+    pack = hidratar_paso4_desde_bd(evento_id)
+    if not pack["casos"]:
+        return None
+    estado = (resumen.get("estado") or "").lower()
+    if estado not in ("validado", "cerrado"):
+        avanzar_estado_evento(evento_id, "validado")
+    return pack
 
 
 # ─────────────────────────────────────────────────────────────────────────────

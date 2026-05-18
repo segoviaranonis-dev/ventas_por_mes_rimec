@@ -5,9 +5,12 @@ Flujo: Paso 0 (carga) → 1 (memoria) → 2 (casos) → 3 (preview/cálculo) →
 """
 
 import random
+import time
+
 import streamlit as st
 import pandas as pd
 from datetime import date
+from sqlalchemy import text
 
 from core.ux_celebrate import celebrate_save, celebrate_step
 from modules.rimec_engine.ui_proceso import proceso_largo, cache_lineas_proveedor
@@ -38,6 +41,10 @@ from modules.rimec_engine.logic import (
     parse_marcas_array,
     guardar_precio_lista,
     avanzar_estado_evento,
+    resumen_paso3_evento,
+    hidratar_paso4_desde_bd,
+    ir_a_paso4_validacion,
+    contar_skus_procesados,
     cerrar_evento_y_activar,
     registrar_auditoria,
     get_ultimo_evento_cerrado,
@@ -995,10 +1002,50 @@ def _paso_3_preview():
 
     casos_bib = {row["nombre_caso"]: row.to_dict() for _, row in df_evento.iterrows()}
 
+    if evento_id:
+        res_bd = resumen_paso3_evento(evento_id)
+        n_bd = int(res_bd.get("n_precio_lista") or 0)
+        if n_bd > 0:
+            st.success(
+                f"**Cálculo ya guardado en base de datos:** {n_bd:,} filas en `precio_lista` "
+                f"(estado evento: **{res_bd.get('estado') or '—'}**). "
+                "Si el paso no avanzó solo tras muchos minutos en Streamlit Cloud, usá el botón de abajo."
+            )
+            if st.button(
+                "➡ Continuar al Paso 4 — Validación",
+                type="primary",
+                key="motor_paso3_ir_paso4",
+            ):
+                pack = ir_a_paso4_validacion(evento_id)
+                if pack:
+                    st.session_state["re_casos"] = pack["casos"]
+                    st.session_state["re_skus_por_caso"] = pack["confirmados"]
+                    st.session_state["re_paso"] = 4
+                    celebrate_step(
+                        "Paso 3 (recuperado)",
+                        f"{pack['total_skus']:,} precios ya en BD",
+                        modulo="Motor de Precios",
+                        handoff="Validación (Paso 4)",
+                    )
+                    st.rerun()
+                else:
+                    st.error("No se pudo reconstruir el resumen desde la base de datos.")
+
     st.markdown(f"Se procesarán **{len(skus_resueltos)}** SKUs de forma automatizada.")
 
+    calc_ok = False
+    total_guardados = 0
     if st.button("✅ Iniciar Cálculo de todos los SKUs", type="primary"):
-        with st.spinner("Calculando y guardando precios en base de datos..."):
+        total_skus_btn = len(skus_resueltos)
+        with proceso_largo(
+            "Cálculo de precios",
+            f"Procesando **{total_skus_btn}** SKUs (pilares + precio_lista).",
+            aviso_espera=(
+                "Cada SKU puede requerir consultas a Supabase. "
+                "Verás el avance **1/N, 2/N…** abajo. No recargues la pestaña."
+            ),
+        ) as avanzar:
+            from core.database import engine
             from modules.rimec_engine.ley_genero import (
                 validar_ley_genero_importacion,
                 texto_ley_genero_resumen,
@@ -1007,6 +1054,18 @@ def _paso_3_preview():
             from modules.rimec_engine.lr_schema import mensaje_si_falta_migracion_042
             from modules.rimec_engine.pillar_fk import asegurar_pilares_para_listado
 
+            avanzar(0.02, "Verificando conexión a Supabase…")
+            t_db = time.perf_counter()
+            try:
+                with engine.connect() as conn:
+                    conn.execute(text("SELECT 1"))
+                ms_db = int((time.perf_counter() - t_db) * 1000)
+                avanzar(0.05, f"DB conectada ({ms_db} ms)")
+            except Exception as exc:
+                st.error(f"No se pudo conectar a Supabase: {exc}")
+                return
+
+            avanzar(0.08, "Preparando pilares y reglas…")
             mig42 = mensaje_si_falta_migracion_042()
             if mig42:
                 st.warning(mig42 + " El listado puede continuar; los códigos denormalizados en linea_referencia quedarán pendientes.")
@@ -1070,17 +1129,19 @@ def _paso_3_preview():
                 )
                 return
 
+            avanzar(0.12, "Cargando caché de pilares en memoria…")
             cache = build_pillar_cache(proveedor_id)
             grupos = skus_resueltos.groupby("caso_asignado")
-            
+
             casos_procesados = []
             skus_omitidos_total = 0
             confirmados = {}
-            
+
             total_skus = len(skus_resueltos)
             skus_procesados = 0
-            progress_bar = st.progress(0, text="Iniciando cálculo de precios...")
-            
+            pct_base = 0.15
+            pct_span = 0.80
+
             for i, (nombre_caso, skus_grupo) in enumerate(grupos):
                 print(f"[ENGINE] Iniciando cálculo de caso: '{nombre_caso}' ({len(skus_grupo)} SKUs)")
                 if nombre_caso not in casos_bib:
@@ -1135,6 +1196,13 @@ def _paso_3_preview():
                 filas = []
                 skus_omitidos = 0
                 for _, row in skus_grupo.iterrows():
+                    skus_procesados += 1
+                    pct = pct_base + (skus_procesados / total_skus) * pct_span
+                    avanzar(
+                        pct,
+                        f"SKU {skus_procesados}/{total_skus} — caso {nombre_caso}",
+                    )
+
                     fob  = float(row["fob_fabrica"])
                     calc = calcular_precios_caso(fob, caso_db)
 
@@ -1184,14 +1252,17 @@ def _paso_3_preview():
                         "nombre_caso_ap": caso_db["nombre_caso"],
                     })
 
+                avanzar(
+                    min(0.98, pct_base + (skus_procesados / total_skus) * pct_span + 0.01),
+                    f"Guardando {len(filas)} filas en precio_lista — caso {nombre_caso}",
+                )
                 guardar_precio_lista(filas)
                 skus_omitidos_total += skus_omitidos
                 confirmados[f"caso_{i}"] = len(filas)
-                
-                skus_procesados += len(skus_grupo)
-                pct = int((skus_procesados / total_skus) * 100) if total_skus > 0 else 100
-                progress_bar.progress(pct, text=f"Calculado {skus_procesados}/{total_skus} SKUs ({pct}%) — Caso actual: {nombre_caso}")
-                print(f"[ENGINE] Completado caso '{nombre_caso}' ({len(skus_grupo)} SKUs procesados). Progreso: {pct}%")
+                print(
+                    f"[ENGINE] Completado caso '{nombre_caso}' "
+                    f"({len(skus_grupo)} SKUs, {len(filas)} guardados)."
+                )
 
             if stats_pilar.get("ley_genero_lineas"):
                 st.info(
@@ -1201,21 +1272,28 @@ def _paso_3_preview():
 
             if skus_omitidos_total:
                 st.warning(f"⚠️ {skus_omitidos_total} SKU(s) omitidos por pilares nulos. Revisar Excel.")
-            
-            # Preparar state para Paso 4
+
+            total_guardados = sum(confirmados.values()) if confirmados else 0
+            calc_ok = total_guardados > 0
+
+        if calc_ok:
             st.session_state["re_casos"] = casos_procesados
             st.session_state["re_skus_por_caso"] = confirmados
-            
             avanzar_estado_evento(evento_id, "validado")
-            total_guardados = sum(confirmados.values()) if confirmados else 0
+            st.session_state["re_paso"] = 4
+            st.session_state["re_paso3_evento_listo"] = evento_id
             celebrate_step(
                 "Paso 3",
                 f"{total_guardados:,} precios guardados en precio_lista",
                 modulo="Motor de Precios",
                 handoff="Validación (Paso 4)",
             )
-            st.session_state["re_paso"] = 4
             st.rerun()
+        elif evento_id and contar_skus_procesados(evento_id) > 0:
+            st.warning(
+                "El cálculo parece haber guardado datos en BD pero no se pudo cerrar el paso. "
+                "Usá **Continuar al Paso 4** arriba."
+            )
 
 
 # ── PASO 4 — Validación final ────────────────────────────────────────────────
@@ -1226,6 +1304,12 @@ def _paso_4_validacion():
     evento_id      = st.session_state.get("re_evento_id")
     nombre_evento  = st.session_state.get("re_nombre_evento", f"Evento #{evento_id}")
     casos          = st.session_state.get("re_casos", [])
+    if evento_id and not casos:
+        pack = hidratar_paso4_desde_bd(evento_id)
+        if pack.get("casos"):
+            st.session_state["re_casos"] = pack["casos"]
+            st.session_state["re_skus_por_caso"] = pack["confirmados"]
+            casos = pack["casos"]
 
     # ── Encabezado del evento (lista de precios) ──────────────────────────────
     st.markdown(
