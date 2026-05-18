@@ -1301,3 +1301,68 @@ def crear_caso_en_biblioteca_vacia(
             return (cid, "") if cid else (None, "Error al crear caso.")
     except Exception as e:
         return None, str(e)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BATCH - OT-519: agregar líneas a casos (unión, no reemplazo)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def agregar_lineas_a_casos_biblioteca(
+    caso_lineas_map: dict[int, list[str]]
+) -> tuple[bool, int]:
+    """
+    Agrega (unión) códigos de línea a múltiples casos de biblioteca en un lote.
+
+    Args:
+        caso_lineas_map: {caso_id: [codigo_proveedor, ...]}
+
+    Returns:
+        (ok, total_lineas_agregadas)
+
+    Usado en OT-519 para resolver gaps: línea sin caso → asignar a N casos seleccionados.
+    """
+    if not caso_lineas_map:
+        return True, 0
+
+    from core.database import get_dataframe
+    from sqlalchemy import text
+
+    total_agregadas = 0
+
+    try:
+        # Cargar lineas actuales de cada caso (una query)
+        caso_ids = list(caso_lineas_map.keys())
+        df = get_dataframe(
+            "SELECT id, lineas FROM caso_precio_biblioteca WHERE id = ANY(:ids)",
+            {"ids": caso_ids}
+        )
+        if df is None:
+            return False, 0
+
+        lineas_actuales = {int(row["id"]): row.get("lineas") or [] for _, row in df.iterrows()}
+
+        # Preparar updates con unión
+        updates = []
+        for caso_id, nuevas in caso_lineas_map.items():
+            actuales_set = set(lineas_actuales.get(caso_id, []))
+            nuevas_set = {str(c).strip() for c in nuevas if str(c).strip()}
+            union = sorted(actuales_set | nuevas_set, key=lambda x: int(x) if x.isdigit() else 999999)
+            agregadas = len(nuevas_set - actuales_set)
+            if agregadas > 0:
+                updates.append((caso_id, union))
+                total_agregadas += agregadas
+
+        # Batch update
+        if updates:
+            with engine.begin() as conn:
+                for caso_id, lineas_finales in updates:
+                    conn.execute(
+                        text("UPDATE caso_precio_biblioteca SET lineas = :lineas WHERE id = :id"),
+                        {"lineas": lineas_finales, "id": caso_id}
+                    )
+
+        return True, total_agregadas
+
+    except Exception as e:
+        DBInspector.log(f"[BIB] agregar_lineas_a_casos_biblioteca error: {e}", "ERROR")
+        return False, 0

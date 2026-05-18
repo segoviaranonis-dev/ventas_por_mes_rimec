@@ -8,6 +8,7 @@ import streamlit as st
 from core.ux_celebrate import celebrate_save, celebrate_step
 from modules.rimec_engine.biblioteca_maestro import (
     BibliotecaEditorState,
+    agregar_lineas_a_casos_biblioteca,
     aplicar_biblioteca_a_evento,
     cargar_biblioteca_editor_state,
     crear_biblioteca,
@@ -28,6 +29,10 @@ from modules.rimec_engine.biblioteca_maestro import (
 from modules.rimec_engine.pillar_fk import (
     provisionar_linea_pilar_clonando_inferior,
     provisionar_lineas_faltantes_en_pilar,
+)
+from modules.rimec_engine.biblioteca_compare import (
+    comparar_excel_vs_biblioteca,
+    get_casos_biblioteca,
 )
 from modules.rimec_engine.logic import hydrate_casos_evento_desde_db
 from modules.rimec_engine.ui_proceso import proceso_largo
@@ -85,7 +90,10 @@ def render_seleccion_biblioteca_post_carga(
     evento_id: int,
     nombre_evento: str,
 ) -> None:
-    """Paso intermedio tras cargar Excel: elegir biblioteca o continuar sin ella."""
+    """
+    OT-519: Flujo simplificado Biblioteca.
+    Select → Compare → if OK → Preview; if gaps → Resolve.
+    """
     inject_glass_styles()
     mig = mensaje_si_falta_migracion_biblioteca()
     if mig:
@@ -95,12 +103,10 @@ def render_seleccion_biblioteca_post_carga(
             _ir_a_paso_1()
         return
 
+    # Cargar bibliotecas disponibles
     cache_key = f"_bib_list_cache_{proveedor_id}"
     if cache_key not in st.session_state:
-        with proceso_largo(
-            "Cargando bibliotecas",
-            "Consultando plantillas del proveedor…",
-        ) as avanzar:
+        with proceso_largo("Cargando bibliotecas", "Consultando plantillas del proveedor…") as avanzar:
             avanzar(0.3, "Conectando…")
             st.session_state[cache_key] = listar_bibliotecas(proveedor_id)
             avanzar(1.0, "Listo")
@@ -108,13 +114,13 @@ def render_seleccion_biblioteca_post_carga(
 
     st.markdown(
         f'<div class="rimec-glass-panel">'
-        f'<div class="rimec-glass-title">Biblioteca de Casos</div>'
+        f'<div class="rimec-glass-title">Paso 1 — Biblioteca de Casos</div>'
         f'<div class="rimec-glass-sub">Listado: <b>{nombre_evento}</b></div>'
-        f'<p style="color:#e2e8f0;margin:0;">'
-        f'¿Deseás aplicar una <b>Biblioteca de Casos</b> ya armada?</p></div>',
+        f'<p style="color:#e2e8f0;margin:0;">Seleccioná biblioteca para comparar con el Excel cargado</p></div>',
         unsafe_allow_html=True,
     )
 
+    # Selectbox biblioteca
     opciones: list[tuple[str, int | None]] = [("— Sin biblioteca (armar manualmente) —", None)]
     if df_bib is not None and not df_bib.empty:
         for _, row in df_bib.iterrows():
@@ -129,52 +135,167 @@ def render_seleccion_biblioteca_post_carga(
     )
     biblioteca_id = next((o[1] for o in opciones if o[0] == sel_label), None)
 
-    c1, c2, c3 = st.columns(3)
-    if c1.button("▶️ Continuar sin biblioteca", type="primary", key="bib_skip"):
+    # Botones principales
+    col_skip, col_compare = st.columns([1, 2])
+
+    if col_skip.button("▶️ Sin biblioteca", key="bib_skip"):
         vincular_biblioteca_a_evento(evento_id, None)
+        st.session_state["re_biblioteca_ok"] = False
         _ir_a_paso_1()
         return
 
-    if biblioteca_id and c2.button("✅ Aplicar biblioteca", key="bib_apply"):
-        ok, msg, n = False, "", 0
-        with proceso_largo(
-            "Aplicando biblioteca al listado",
-            f"Copiando «{sel_label}» al evento…",
-        ) as avanzar:
-            avanzar(0.15, "Leyendo biblioteca…")
-            ok, msg, n = aplicar_biblioteca_a_evento(
-                evento_id, proveedor_id, biblioteca_id
-            )
-            avanzar(0.7, "Sincronizando matriz…")
-            if ok:
-                st.session_state["re_casos_evento"] = hydrate_casos_evento_desde_db(
-                    evento_id
-                )
-            avanzar(1.0, "Completado")
-        if not ok:
-            st.error(msg)
-            return
-        st.session_state["re_casos_evento_hydrated"] = evento_id
-        st.session_state["re_biblioteca_aplicada_id"] = biblioteca_id
-        celebrate_step(
-            "Biblioteca",
-            f"«{sel_label}» aplicada — {n} caso(s)",
-            modulo="Motor de Precios",
-        )
-        _ir_a_paso_1()
-        return
-
-    if biblioteca_id and c3.button("✏️ Editar antes de aplicar", key="bib_edit"):
-        with proceso_largo("Abriendo editor", "Cargando casos y líneas…") as avanzar:
-            avanzar(0.5, "Cargando…")
-            _abrir_editor_catalogo(proveedor_id, biblioteca_id)
-            st.session_state["re_paso"] = "bib_editor"
-            avanzar(1.0, "Listo")
+    if biblioteca_id and col_compare.button("🔍 Comparar con Excel", type="primary", key="bib_compare"):
+        st.session_state["re_biblioteca_comparando_id"] = biblioteca_id
+        st.session_state["re_biblioteca_comparando_nombre"] = sel_label
         st.rerun()
 
+    # Si ya se inició comparación, mostrar resultado
+    if st.session_state.get("re_biblioteca_comparando_id") == biblioteca_id:
+        _render_comparacion_y_resolucion(
+            proveedor_id, evento_id, biblioteca_id, sel_label, nombre_evento
+        )
+
     st.caption(
-        "Si aún no tenés biblioteca, crealá en **Contenedor / Catálogo → Catálogo de casos**."
+        "💡 **Consejo:** Si no tenés biblioteca, crealá en **Catálogo de casos** y volvé acá."
     )
+
+
+def _render_comparacion_y_resolucion(
+    proveedor_id: int,
+    evento_id: int,
+    biblioteca_id: int,
+    biblioteca_nombre: str,
+    nombre_evento: str,
+) -> None:
+    """OT-519: Muestra resultado comparación + resolución de gaps si es necesario."""
+
+    # Obtener SKUs cargados del Excel
+    re_skus = st.session_state.get("re_skus")
+    if re_skus is None or re_skus.empty:
+        st.error("No hay SKUs cargados del Excel.")
+        return
+
+    # Ejecutar comparación (caché en session_state para evitar re-cálculo)
+    comp_key = f"_comp_{biblioteca_id}_{evento_id}"
+    if comp_key not in st.session_state:
+        with proceso_largo("Comparando", "Excel vs Biblioteca vs Pilar…") as avanzar:
+            avanzar(0.5, "Analizando...")
+            comp = comparar_excel_vs_biblioteca(re_skus, proveedor_id, biblioteca_id)
+            st.session_state[comp_key] = comp
+            avanzar(1.0, "Listo")
+
+    comp = st.session_state[comp_key]
+
+    st.markdown("---")
+    st.markdown(f"### 📊 Resultado: **{biblioteca_nombre}**")
+
+    # Semáforo verde o ámbar
+    if comp.ok:
+        st.success(comp.resumen_texto())
+        st.markdown(f"**{len(comp.cubiertas)} líneas** del Excel están cubiertas por los casos de la biblioteca.")
+
+        if st.button("✅ Continuar a Preview", type="primary", key="bib_go_preview"):
+            # Aplicar biblioteca y avanzar a preview
+            with proceso_largo("Aplicando biblioteca", f"Copiando «{biblioteca_nombre}» al evento…") as avanzar:
+                avanzar(0.3, "Aplicando...")
+                ok, msg, n = aplicar_biblioteca_a_evento(evento_id, proveedor_id, biblioteca_id)
+                avanzar(0.7, "Sincronizando...")
+                if ok:
+                    st.session_state["re_casos_evento"] = hydrate_casos_evento_desde_db(evento_id)
+                avanzar(1.0, "Completado")
+
+            if not ok:
+                st.error(msg)
+                return
+
+            st.session_state["re_biblioteca_ok"] = True
+            st.session_state["re_biblioteca_aplicada_id"] = biblioteca_id
+            st.session_state["re_paso"] = 3  # Ir a Preview (paso 3, índice 2 en barra nueva)
+            celebrate_step(
+                "Biblioteca",
+                f"«{biblioteca_nombre}» aplicada — {n} caso(s)",
+                modulo="Motor de Precios",
+                handoff="Cálculo de precios"
+            )
+            st.rerun()
+
+    else:
+        # Hay gaps - mostrar tabla para resolución
+        st.warning(comp.resumen_texto())
+
+        st.markdown("#### 🔧 Resolver excepciones")
+
+        # Cargar casos disponibles de la biblioteca
+        casos_map = get_casos_biblioteca(biblioteca_id)
+        casos_opciones = list(casos_map.keys())
+
+        if not casos_opciones:
+            st.error("La biblioteca no tiene casos definidos. Editá la biblioteca primero.")
+            return
+
+        # Tabla: líneas sin caso
+        if comp.sin_caso:
+            st.markdown(f"**Sin caso ({len(comp.sin_caso)}):** líneas en pilar, en Excel, NO en biblioteca")
+
+            asignaciones = {}  # {linea: [caso_ids]}
+
+            for linea in comp.sin_caso:
+                col_linea, col_casos = st.columns([1, 3])
+                col_linea.code(linea)
+                selected = col_casos.multiselect(
+                    f"Casos para línea {linea}",
+                    casos_opciones,
+                    key=f"caso_asig_{linea}",
+                    label_visibility="collapsed"
+                )
+                if selected:
+                    asignaciones[linea] = [casos_map[c] for c in selected]
+
+            if asignaciones and st.button("💾 Agregar a biblioteca", key="add_to_bib"):
+                # Invertir: {caso_id: [lineas]}
+                caso_lineas = {}
+                for linea, caso_ids in asignaciones.items():
+                    for cid in caso_ids:
+                        caso_lineas.setdefault(cid, []).append(linea)
+
+                with proceso_largo("Guardando", "Agregando líneas a casos...") as avanzar:
+                    avanzar(0.5, "Actualizando biblioteca...")
+                    ok, n_agregadas = agregar_lineas_a_casos_biblioteca(caso_lineas)
+                    avanzar(1.0, "Listo")
+
+                if ok:
+                    st.success(f"✅ {n_agregadas} líneas agregadas a {len(caso_lineas)} caso(s)")
+                    # Limpiar caché y re-comparar
+                    st.session_state.pop(comp_key, None)
+                    st.rerun()
+                else:
+                    st.error("Error al agregar líneas a biblioteca")
+
+        # Tabla: líneas no en pilar
+        if comp.no_en_pilar:
+            st.markdown(f"**No en pilar ({len(comp.no_en_pilar)}):** líneas del Excel que aún no existen")
+
+            for linea in comp.no_en_pilar[:10]:  # Mostrar primeras 10
+                st.code(linea)
+
+            if len(comp.no_en_pilar) > 10:
+                st.caption(f"...y {len(comp.no_en_pilar) - 10} más")
+
+            if st.button("🔨 Crear en pilar (batch)", key="create_pilar"):
+                with proceso_largo("Creando líneas", f"Provisionando {len(comp.no_en_pilar)} líneas...") as avanzar:
+                    avanzar(0.3, "Iniciando...")
+                    codigos = [int(c) if c.isdigit() else 0 for c in comp.no_en_pilar]
+                    codigos = [c for c in codigos if c > 0]
+                    n_ok = provisionar_lineas_faltantes_en_pilar(proveedor_id, codigos)
+                    avanzar(1.0, f"Creadas: {n_ok}")
+
+                st.success(f"✅ {n_ok} líneas creadas en pilar")
+                # Limpiar caché y re-comparar
+                st.session_state.pop(comp_key, None)
+                st.rerun()
+
+        # Link a catálogo (casos complejos)
+        st.caption("💡 **¿Casos complejos?** Ir a **Catálogo de casos** para armar y volver.")
 
 
 def _ir_a_paso_1() -> None:

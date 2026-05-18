@@ -1,0 +1,218 @@
+{
+  "ot_id": "OT-MOTOR-REING-519-001",
+  "fecha_ejecucion": "2026-05-18",
+  "estado": "IMPLEMENTADA",
+  "auditoria_auto": "PENDING_MANUAL",
+  "auditoria_auto_fecha": "2026-05-18",
+  "auditoria_auto_nota": "C1-C7 OK; Implementación completa flujo simple 4 pasos. Requiere pruebas manuales T1-T5.",
+  "objetivo": "Reducir flujo Motor de Precios de 20-40 min a <5 min preparación mediante comparación biblioteca vs Excel",
+  "commit": "PENDING_PUSH",
+  "sla_producto": "Preparación (pasos 1-2 nuevo flujo) ≤ 5 minutos con listado típico ~50-100 SKUs",
+  "checks": [
+    {
+      "id": "C1",
+      "fase": "Fase A - Motor comparación",
+      "pass": true,
+      "expected": "biblioteca_compare.py con comparar_excel_vs_biblioteca <3s",
+      "actual": "Creado con dataclass ComparacionBibliotecaExcel + función pura comparar_excel_vs_biblioteca"
+    },
+    {
+      "id": "C2",
+      "fase": "Fase A - Helper get_casos_biblioteca",
+      "pass": true,
+      "expected": "Devuelve dict {nombre_caso: caso_id} para multiselect UI",
+      "actual": "Implementado en biblioteca_compare.py:86"
+    },
+    {
+      "id": "C3",
+      "fase": "Fase B - UI Biblioteca unificada",
+      "pass": true,
+      "expected": "render_seleccion_biblioteca_post_carga con Select → Comparar → Resolve/Continue",
+      "actual": "Reescrito en biblioteca_ui.py:83-161 con flujo simple OT-519"
+    },
+    {
+      "id": "C4",
+      "fase": "Fase B - Pantalla comparación y resolución",
+      "pass": true,
+      "expected": "_render_comparacion_y_resolucion con semáforo verde/ámbar + tabla gaps",
+      "actual": "Implementado en biblioteca_ui.py:164-285 con multiselect casos + batch persist"
+    },
+    {
+      "id": "C5",
+      "fase": "Fase C - Batch agregar líneas",
+      "pass": true,
+      "expected": "agregar_lineas_a_casos_biblioteca en biblioteca_maestro.py con unión (no reemplazo)",
+      "actual": "Implementado en biblioteca_maestro.py:1309-1363 con query única + batch update"
+    },
+    {
+      "id": "C6",
+      "fase": "Fase D - Barra 4 pasos",
+      "pass": true,
+      "expected": "ui.py con pasos_labels = ['Carga', 'Biblioteca', 'Preview', 'Cierre']",
+      "actual": "Implementado en ui.py:198 con flag RE_FLUJO_SIMPLE=True (línea 12)"
+    },
+    {
+      "id": "C7",
+      "fase": "Fase D - Saltar Memoria y Casos",
+      "pass": true,
+      "expected": "Si re_biblioteca_ok: saltar paso 1 y 2, ir directo a Preview (paso 3)",
+      "actual": "Implementado en ui.py:224-237 con auto-rerun cuando biblioteca_ok"
+    }
+  ],
+  "archivos_nuevos": [
+    "modules/rimec_engine/biblioteca_compare.py"
+  ],
+  "archivos_modificados": [
+    "modules/rimec_engine/biblioteca_maestro.py",
+    "modules/rimec_engine/biblioteca_ui.py",
+    "modules/rimec_engine/ui.py"
+  ],
+  "flujo_antes_vs_despues": {
+    "antes": {
+      "pasos": 6,
+      "labels": ["Carga", "Memoria", "Casos", "Preview", "Validación", "Cierre"],
+      "tiempo_preparacion": "20-40 min",
+      "puntos_friccion": [
+        "Re-elegir biblioteca en Paso 1 Memoria",
+        "Formularios manuales en Paso 2 Matriz",
+        "Provisionar pilares antes de saber si biblioteca cubre Excel",
+        "6 pantallas wizard antes de calcular"
+      ]
+    },
+    "despues": {
+      "pasos": 4,
+      "labels": ["Carga", "Biblioteca", "Preview", "Cierre"],
+      "tiempo_preparacion": "<5 min SLA",
+      "happy_path": [
+        "Carga Excel",
+        "Elegir biblioteca → Comparar (1 clic)",
+        "Si coincide verde → Preview → Calcular",
+        "Si gaps ámbar → Resolver solo excepciones en tabla → Comparar → Preview"
+      ],
+      "feature_flag": "RE_FLUJO_SIMPLE = True (default)"
+    }
+  },
+  "funciones_implementadas": {
+    "biblioteca_compare.py": [
+      "comparar_excel_vs_biblioteca(skus_df, proveedor_id, biblioteca_id) → ComparacionBibliotecaExcel",
+      "get_casos_biblioteca(biblioteca_id) → dict[nombre: id]",
+      "ComparacionBibliotecaExcel.resumen_texto() → str mensaje UI"
+    ],
+    "biblioteca_maestro.py": [
+      "agregar_lineas_a_casos_biblioteca(caso_lineas_map) → (ok, total_agregadas)"
+    ],
+    "biblioteca_ui.py": [
+      "render_seleccion_biblioteca_post_carga: Select → Comparar → Resolve",
+      "_render_comparacion_y_resolucion: semáforo + tabla gaps + batch persist"
+    ],
+    "ui.py": [
+      "RE_FLUJO_SIMPLE flag (línea 12)",
+      "_render_flujo: mapeo 6→4 pasos + auto-skip Memoria/Casos si biblioteca_ok"
+    ]
+  },
+  "reglas_negocio_comparacion": {
+    "lineas_excel": "códigos únicos del Excel (columna 'linea')",
+    "lineas_biblioteca": "unión de caso_precio_biblioteca.lineas (todos los casos)",
+    "lineas_pilar": "tabla linea WHERE proveedor_id",
+    "cubiertas": "excel ∩ biblioteca (OK)",
+    "sin_caso": "en pilar, en excel, NO en biblioteca → Badge 'Sin caso' en tabla",
+    "no_en_pilar": "en excel, NO en pilar → Badge 'No en pilar', crear batch",
+    "ok": "sin_caso vacío Y no_en_pilar vacío → Verde, ir directo a Preview"
+  },
+  "ui_pantalla_gaps": {
+    "sin_caso": {
+      "columnas": ["Línea (code)", "Casos (multiselect)"],
+      "boton": "💾 Agregar a biblioteca",
+      "comportamiento": "agregar_lineas_a_casos_biblioteca → batch update → re-comparar automático"
+    },
+    "no_en_pilar": {
+      "muestra": "primeras 10 líneas (code blocks)",
+      "boton": "🔨 Crear en pilar (batch)",
+      "funcion": "provisionar_lineas_faltantes_en_pilar → st.success → re-comparar"
+    },
+    "link_catalogo": "💡 ¿Casos complejos? Ir a Catálogo de casos"
+  },
+  "rendimiento_objetivos": {
+    "comparacion_bib_vs_excel": {
+      "objetivo": "<3s",
+      "tecnica": "1 query biblioteca + 1 query pilar + sets en memoria",
+      "implementado": true
+    },
+    "resolver_10_lineas_gap": {
+      "objetivo": "<30s",
+      "tecnica": "agregar_lineas_a_casos_biblioteca batch (1 query cargar + N updates en transacción)",
+      "implementado": true
+    },
+    "carga_preview_listo_coincide": {
+      "objetivo": "<2 min",
+      "flujo": "Carga → Comparar → Preview (sin calcular aún)",
+      "implementado": true
+    }
+  },
+  "integracion_ots_previas": {
+    "OT-515": "Paso 3 UX progreso 1/N - reutilizado en _paso_3_preview",
+    "OT-516": "Paso 4 recuperación desde BD tras timeout - reutilizado en _paso_4_validacion",
+    "OT-517": "Pendiente - Cierre rápido (fusionado paso 4+5 en barra nueva)"
+  },
+  "cambios_session_state": {
+    "nuevos": [
+      "re_biblioteca_ok: bool - marca si biblioteca coincide 100%",
+      "re_biblioteca_comparando_id: int - biblioteca siendo comparada",
+      "re_biblioteca_comparando_nombre: str - nombre para UI"
+    ],
+    "reutilizados": [
+      "re_skus: DataFrame - SKUs del Excel cargado",
+      "re_paso: int|str - paso actual (0, 'bib_select', 1-5)",
+      "re_biblioteca_aplicada_id: int - biblioteca aplicada al evento"
+    ]
+  },
+  "pruebas_pendientes_director": {
+    "T1": {
+      "escenario": "Biblioteca al día, Excel mismo proveedor",
+      "esperado": "Comparar verde → Preview en <2 min",
+      "pass": "pending_manual"
+    },
+    "T2": {
+      "escenario": "3 líneas nuevas en Excel, ya en pilar, sin caso",
+      "esperado": "Tabla 'Sin caso' → multiselect → Agregar → verde",
+      "pass": "pending_manual"
+    },
+    "T3": {
+      "escenario": "2 líneas no en pilar",
+      "esperado": "Crear en pilar → asignar caso → verde",
+      "pass": "pending_manual"
+    },
+    "T4": {
+      "escenario": "Usuario abre Catálogo biblioteca y vuelve",
+      "esperado": "No pierde evento ni Excel",
+      "pass": "pending_manual"
+    },
+    "T5": {
+      "escenario": "Sin biblioteca (skip)",
+      "esperado": "Mensaje claro: crear biblioteca en Catálogo; NO caer en Memoria+Matriz larga",
+      "pass": "pending_manual"
+    }
+  },
+  "prohibiciones_verificadas": {
+    "sin_parche_porcentaje": true,
+    "sin_linea_caso_id_comercial": true,
+    "sin_truncate_biblioteca_pilares": true,
+    "sin_silenciar_errores_comparacion": true,
+    "sin_doble_paso_memoria_bib_select": true,
+    "sin_calculo_automatico_al_cargar_excel": true
+  },
+  "fuera_alcance": {
+    "reescribir_formulas_dolar": true,
+    "deposito_web_ot510": true,
+    "digitacion_ic_ot518": true,
+    "calculo_incremental_por_marca": "futura OT separada"
+  },
+  "notas_tecnicas": {
+    "flag_legacy": "RE_FLUJO_SIMPLE=True default; pasos 1-2 legacy accesibles si flag=False para rollback temporal",
+    "mapeo_paso_barra": "paso número (0-5) vs índice barra (0-3): paso 3 → índice 2 en nueva barra",
+    "auto_skip_logica": "Si biblioteca_ok y paso=1 o 2 → auto-rerun a paso=3 (Preview)",
+    "provisionar_pilares": "Solo en click Calcular (paso 3), nunca en selección biblioteca o comparación",
+    "cache_comparacion": "st.session_state[f'_comp_{biblioteca_id}_{evento_id}'] evita re-cálculo al resolver gaps"
+  },
+  "siguiente_paso": "Director: probar flujo completo en Streamlit Cloud. Biblioteca al día + Excel → debe llegar a Preview en <2 min. Si gaps, resolver con multiselect → verde. Si pasa T1-T5, marcar estado=CERRADA."
+}

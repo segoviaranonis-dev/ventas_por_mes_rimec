@@ -1,11 +1,15 @@
 """
 RIMEC ENGINE — ui.py
 Interfaz del motor de gestión de eventos de precio.
-Flujo: Paso 0 (carga) → 1 (memoria) → 2 (casos) → 3 (preview/cálculo) → 4 (validación) → 5 (cierre)
+OT-519: Flujo simplificado 4 pasos: Carga → Biblioteca → Preview → Cierre
+Legacy: Paso 0 (carga) → 1 (memoria) → 2 (casos) → 3 (preview/cálculo) → 4 (validación) → 5 (cierre)
 """
 
 import random
 import time
+
+# OT-519: Feature flag flujo simple (default True)
+RE_FLUJO_SIMPLE = True
 
 import streamlit as st
 import pandas as pd
@@ -187,10 +191,39 @@ def _indice_paso_barra(paso) -> int:
 
 def _render_flujo():
     paso = st.session_state.get("re_paso", 0)
-    paso_idx = _indice_paso_barra(paso)
+    biblioteca_ok = st.session_state.get("re_biblioteca_ok", False)
+
+    # OT-519: Flujo simple vs legacy
+    if RE_FLUJO_SIMPLE:
+        # Nuevo flujo 4 pasos: Carga | Biblioteca | Preview | Cierre
+        pasos_labels = ["Carga", "Biblioteca", "Preview", "Cierre"]
+
+        # Mapear paso actual a índice de barra
+        if paso == 0 or paso == "bib_select" or paso == "bib_editor":
+            paso_idx = 0 if paso == 0 else 1
+        elif paso == 1 or paso == 2:
+            # Pasos legacy 1-2 (Memoria/Casos) mapeados a Biblioteca
+            paso_idx = 1
+        elif paso == 3:
+            # Preview
+            paso_idx = 2
+        elif paso == 4 or paso == 5:
+            # Validación/Cierre → Cierre
+            paso_idx = 3
+        else:
+            paso_idx = 0
+
+        # Si biblioteca OK, saltar memoria y casos automáticamente
+        if biblioteca_ok and paso == 1:
+            st.session_state["re_paso"] = 3  # Saltar a Preview
+            st.rerun()
+
+    else:
+        # Legacy flow: 6 pasos
+        pasos_labels = ["Carga", "Memoria", "Casos", "Preview", "Validación", "Cierre"]
+        paso_idx = _indice_paso_barra(paso)
 
     # Barra de progreso
-    pasos_labels = ["Carga", "Memoria", "Casos", "Preview", "Validación", "Cierre"]
     cols_prog = st.columns(len(pasos_labels))
     for i, label in enumerate(pasos_labels):
         color = "#D4AF37" if i == paso_idx else ("#10B981" if i < paso_idx else "#334155")
@@ -203,6 +236,7 @@ def _render_flujo():
 
     st.markdown("<div style='margin-top:24px;'></div>", unsafe_allow_html=True)
 
+    # Render paso actual
     if paso == 0:
         _paso_0_carga()
     elif paso == "bib_select":
@@ -210,9 +244,19 @@ def _render_flujo():
     elif paso == "bib_editor":
         _paso_biblioteca_editor()
     elif paso == 1:
-        _paso_1_memoria()
+        if RE_FLUJO_SIMPLE and biblioteca_ok:
+            # Saltar memoria, ir a preview
+            st.session_state["re_paso"] = 3
+            st.rerun()
+        else:
+            _paso_1_memoria()
     elif paso == 2:
-        _paso_2_casos()
+        if RE_FLUJO_SIMPLE and biblioteca_ok:
+            # Saltar casos, ir a preview
+            st.session_state["re_paso"] = 3
+            st.rerun()
+        else:
+            _paso_2_casos()
     elif paso == 3:
         _paso_3_preview()
     elif paso == 4:
@@ -1440,8 +1484,37 @@ def _paso_5_cierre():
         placeholder="Ej: Precios ajustados por nueva temporada de invierno 2026"
     )
 
+    sync_pilares = st.checkbox(
+        "Re-sincronizar pilares al cerrar (lento en Streamlit Cloud; "
+        "dejar desmarcado si ya calculaste en Paso 3)",
+        value=False,
+        key="re_cerrar_sync_pilar",
+    )
+
     if st.button("🔒 Cerrar y activar precios", type="primary"):
-        n_m = cerrar_evento_y_activar(evento_id, str(date.today()))
+        with proceso_largo(
+            "Cierre del listado",
+            "Activando precios vigentes y marcando evento CERRADO.",
+            aviso_espera="El cierre SQL suele tardar unos segundos. No recargues la pestaña.",
+        ) as avanzar:
+            from modules.rimec_engine.logic import (
+                cerrar_evento_sql,
+                sincronizar_marca_linea_desde_evento,
+            )
+
+            avanzar(0.15, "Desactivando listados anteriores…")
+            avanzar(0.35, "Activando precios de este evento…")
+            cerrar_evento_sql(evento_id, str(date.today()))
+            avanzar(0.55, "Evento marcado CERRADO en base de datos…")
+
+            n_m = 0
+            if sync_pilares:
+                avanzar(0.65, "Sincronizando pilares (puede tardar varios minutos)…")
+                n_m = sincronizar_marca_linea_desde_evento(evento_id)
+            else:
+                avanzar(0.85, "Pilares: sin re-sync (ya provisionados en Paso 3)")
+            avanzar(1.0, "Cierre completado")
+
         if justificacion:
             registrar_auditoria(
                 evento_id, "precio_evento", "estado",
@@ -1455,6 +1528,7 @@ def _paso_5_cierre():
             toast=True,
             balloons=True,
         )
+        st.session_state["re_paso"] = 0
         _reset_flujo()
         st.rerun()
 
