@@ -27,6 +27,7 @@
 
 | OT | Título | Resultado | Evidencia |
 |----|--------|-----------|-----------|
+| [OT-STREAMLIT-SCRIPTS-LIB-513-001](../OT-STREAMLIT-SCRIPTS-LIB-513-001.md) | Fix `scripts.lib.import_heartbeat` faltante en Git | **CERRADA** | `OT-STREAMLIT-SCRIPTS-LIB-513-001-EVIDENCIA.json` |
 | [OT-RESET-TRANSACCIONAL-511-001](../OT-RESET-TRANSACCIONAL-511-001.md) | Vaciar operativa; pilares + biblioteca + diccionario intactos | **CERRADA** | `OT-RESET-TRANSACCIONAL-511-001-EVIDENCIA.json` |
 
 Post-reset: `linea=1452`, biblioteca `5807` líneas-caso, `caso_precio_web_regla=6`, Sales Report `107570` sin cambio.

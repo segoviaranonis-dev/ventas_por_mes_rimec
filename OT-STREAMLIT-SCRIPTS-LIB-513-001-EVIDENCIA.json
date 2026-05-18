@@ -1,0 +1,58 @@
+{
+  "ot_id": "OT-STREAMLIT-SCRIPTS-LIB-513-001",
+  "fecha_ejecucion": "2026-05-18",
+  "estado": "CERRADA",
+  "causa_raiz": ".gitignore pattern 'lib/' caught scripts/lib/, package never committed despite being documented",
+  "fix_aplicado": "git add -f scripts/lib/ to bypass .gitignore",
+  "commit": "ccfc675",
+  "checks": [
+    {
+      "id": "C1",
+      "fase": "Import verification",
+      "pass": true,
+      "expected": "scripts.lib.import_heartbeat imports OK",
+      "actual": "python -c 'from scripts.lib.import_heartbeat import start_import_heartbeat, stop_import_heartbeat; print(\"OK\")' → OK"
+    },
+    {
+      "id": "C2",
+      "fase": "Git push",
+      "pass": true,
+      "expected": "git push main",
+      "actual": "commit ccfc675 pushed to https://github.com/segoviaranonis-dev/ventas_por_mes_rimec.git"
+    },
+    {
+      "id": "C3",
+      "fase": "Streamlit Cloud",
+      "pass": "pending_redeploy",
+      "expected": "Admin líneas sin ModuleNotFoundError",
+      "nota": "Streamlit Cloud redeploya automáticamente al detectar push en main (1-2 min). Verificar manualmente que Motor de Precios → Admin líneas carga sin traceback."
+    }
+  ],
+  "archivos_agregados": [
+    "scripts/__init__.py",
+    "scripts/lib/__init__.py",
+    "scripts/lib/import_heartbeat.py",
+    "OT-STREAMLIT-SCRIPTS-LIB-513-001.md"
+  ],
+  "causa_detallada": {
+    "problema": "ModuleNotFoundError: No module named 'scripts.lib' en Streamlit Cloud",
+    "trigger": "modules/rimec_engine/ui.py:1583 → from scripts.import_pilares_linea_lr_excel import run_import_pilares → from scripts.lib.import_heartbeat import ...",
+    "raiz": "scripts/lib/ estaba en .gitignore (pattern 'lib/' para virtual envs), nunca se commiteó a pesar de estar documentado en .cursor/rules/import-heartbeat.mdc",
+    "local_ok": "Los archivos existían en disco local pero no en Git, por eso funcionaba localmente pero fallaba en Streamlit Cloud"
+  },
+  "verificacion_streamlit": {
+    "url_app": "COMPLETAR_DESPUES_DE_REDEPLOY",
+    "pasos": [
+      "1. Esperar 1-2 min para que Streamlit Cloud detecte push y redeploy",
+      "2. Abrir app Streamlit",
+      "3. Ir a Motor de Precios → Admin líneas",
+      "4. Verificar que carga sin ModuleNotFoundError",
+      "5. Opcional: abrir expander 'Importar pilares desde Excel' (debe abrir sin crash)"
+    ]
+  },
+  "prevencion_futura": {
+    "opcion_1": "Agregar !scripts/lib/ a .gitignore para excepcionar este directorio",
+    "opcion_2": "Usar git add -f cuando sea necesario añadir lib/ de scripts",
+    "recomendacion": "Documentar en README que scripts/lib/ está exceptuado de .gitignore"
+  }
+}
