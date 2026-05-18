@@ -544,6 +544,25 @@ def cargar_pilar_lineas(proveedor_id: int, *, usar_cache: bool = True) -> list[s
     return codigos
 
 
+def lineas_union_biblioteca(biblioteca_id: int) -> set[str]:
+    """Unión de códigos de línea de la biblioteca (bcl + fallback columna lineas)."""
+    out: set[str] = set()
+    for codes in _lineas_por_caso_biblioteca(biblioteca_id).values():
+        out.update(str(c).strip() for c in codes if str(c).strip())
+    if out:
+        return out
+    df = get_dataframe(
+        """SELECT DISTINCT unnest(lineas) AS linea_cod
+           FROM caso_precio_biblioteca
+           WHERE biblioteca_id = :bid AND lineas IS NOT NULL""",
+        {"bid": biblioteca_id},
+    )
+    if df is not None and not df.empty:
+        for val in df["linea_cod"].dropna():
+            out.add(str(val).strip())
+    return out
+
+
 def _lineas_por_caso_biblioteca(biblioteca_id: int) -> dict[int, list[str]]:
     if not _tabla_biblioteca_precio_existe():
         return {}

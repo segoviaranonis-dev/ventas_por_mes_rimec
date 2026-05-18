@@ -1093,15 +1093,65 @@ def guardar_lineas_excepcion(
     """Inserta excepciones línea→caso del evento (contenedor FK, sin duplicar)."""
     if evento_id is None:
         evento_id = _evento_id_de_caso(caso_id)
-    n = 0
+    codigos: list[int] = []
     for cod in linea_codigos:
         try:
             cod_int = int(cod)
         except (ValueError, TypeError):
             continue
-        if _insert_linea_en_contenedor(caso_id, proveedor_id, cod_int, evento_id):
-            n += 1
-    return n
+        if cod_int > 0:
+            codigos.append(cod_int)
+    if not codigos:
+        return 0
+    return _insert_lineas_contenedor_bulk(caso_id, proveedor_id, codigos, evento_id)
+
+
+def _insert_lineas_contenedor_bulk(
+    caso_id: int,
+    proveedor_id: int,
+    codigos: list[int],
+    evento_id: int | None,
+) -> int:
+    """INSERT masivo línea→caso (1 round-trip vs N inserts)."""
+    if not codigos:
+        return 0
+    params = {"cid": caso_id, "pid": proveedor_id, "codes": codigos}
+    if evento_id is not None:
+        params["eid"] = evento_id
+        sql = """
+            INSERT INTO precio_evento_linea_excepcion (caso_id, linea_id, evento_id)
+            SELECT :cid, l.id, :eid
+            FROM linea l
+            WHERE l.proveedor_id = :pid
+              AND l.codigo_proveedor = ANY(:codes)
+              AND NOT EXISTS (
+                  SELECT 1 FROM precio_evento_linea_excepcion x
+                  WHERE x.caso_id = :cid AND x.linea_id = l.id
+              )
+        """
+    else:
+        sql = """
+            INSERT INTO precio_evento_linea_excepcion (caso_id, linea_id)
+            SELECT :cid, l.id
+            FROM linea l
+            WHERE l.proveedor_id = :pid
+              AND l.codigo_proveedor = ANY(:codes)
+              AND NOT EXISTS (
+                  SELECT 1 FROM precio_evento_linea_excepcion x
+                  WHERE x.caso_id = :cid AND x.linea_id = l.id
+              )
+        """
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(text(sql), params)
+            return int(result.rowcount or 0)
+    except Exception as e:
+        DBInspector.log(f"[ENGINE] bulk contenedor caso {caso_id}: {e}", "ERROR")
+        n = 0
+        for cod_int in codigos:
+            if _insert_linea_en_contenedor(caso_id, proveedor_id, cod_int, evento_id):
+                n += 1
+        return n
 
 
 def reemplazar_lineas_excepcion(
@@ -1235,29 +1285,45 @@ def generar_maestro_lineas_desde_evento(evento_id: int):
     )
 
 
-def cerrar_evento_y_activar(evento_id: int, fecha_hasta: str) -> int:
+def cerrar_evento_sql(evento_id: int, fecha_hasta: str) -> None:
+    """Solo SQL de cierre/activación (rápido). Pilares aparte."""
     commit_query(
         """UPDATE precio_lista SET vigente = false
            WHERE evento_id IN (
                SELECT id FROM precio_evento
                WHERE estado = 'cerrado' AND id <> :eid
            )""",
-        {"eid": evento_id}
+        {"eid": evento_id},
     )
     commit_query(
         """UPDATE precio_evento
            SET fecha_vigencia_hasta = :fh
            WHERE estado = 'cerrado' AND id <> :eid""",
-        {"fh": fecha_hasta, "eid": evento_id}
+        {"fh": fecha_hasta, "eid": evento_id},
     )
     commit_query(
         "UPDATE precio_lista SET vigente = true WHERE evento_id = :eid",
-        {"eid": evento_id}
+        {"eid": evento_id},
     )
     commit_query(
         "UPDATE precio_evento SET estado = 'cerrado' WHERE id = :eid",
-        {"eid": evento_id}
+        {"eid": evento_id},
     )
+
+
+def cerrar_evento_y_activar(
+    evento_id: int,
+    fecha_hasta: str,
+    *,
+    sincronizar_pilares: bool = False,
+) -> int:
+    """
+    Cierra el evento y activa precio_lista.
+    sincronizar_pilares=False por defecto: Paso 3 ya provisionó; re-sync en Cloud tarda minutos.
+    """
+    cerrar_evento_sql(evento_id, fecha_hasta)
+    if not sincronizar_pilares:
+        return 0
     n_marca = sincronizar_marca_linea_desde_evento(evento_id)
     if n_marca:
         DBInspector.log(
@@ -1477,6 +1543,62 @@ def resolver_casos_skus(
     skus_df["caso_asignado"] = casos_asignados
     skus_df["estado_validacion"] = estados
     return skus_df, not hay_error, conflictos
+
+
+def preparar_evento_para_preview(
+    evento_id: int,
+    proveedor_id: int,
+    skus_df: pd.DataFrame,
+    casos_evento: list | None = None,
+) -> tuple[bool, str, pd.DataFrame | None, pd.DataFrame | None, bool, list]:
+    """
+    Tras aplicar biblioteca al evento: contenedor + resolver SKUs para Paso 3.
+    OT-519 omitía el Paso 2 manual; sin esto Preview queda sin re_skus_resueltos.
+    """
+    if skus_df is None or skus_df.empty:
+        return False, "No hay SKUs del Excel en sesión.", None, None, False, []
+
+    if casos_evento is None:
+        casos_evento = hydrate_casos_evento_desde_db(evento_id)
+    df_evento = casos_evento_to_dataframe(casos_evento)
+    if df_evento is None or df_evento.empty:
+        return False, "Matriz del listado vacía tras aplicar la biblioteca.", None, None, False, []
+
+    asegurar_contenedor_lineas_excel(evento_id, proveedor_id, skus_df, df_evento)
+    barrera = validar_barrera_contenedor_excel(evento_id, skus_df, df_evento)
+    if barrera:
+        return (
+            False,
+            f"{len(barrera)} línea(s) del Excel no están en el contenedor del listado.",
+            None,
+            df_evento,
+            False,
+            barrera,
+        )
+
+    skus_resueltos, ready_to_calc, conflictos = resolver_casos_skus(
+        skus_df, proveedor_id, df_evento, evento_id=evento_id
+    )
+    if conflictos:
+        return (
+            False,
+            f"La matriz tiene {len(conflictos)} conflicto(s) (línea/marca en dos casos).",
+            skus_resueltos,
+            df_evento,
+            False,
+            conflictos,
+        )
+    if not ready_to_calc:
+        return (
+            False,
+            "Hay SKUs sin caso asignado. Revisá la biblioteca o el Excel.",
+            skus_resueltos,
+            df_evento,
+            False,
+            conflictos,
+        )
+
+    return True, "", skus_resueltos, df_evento, ready_to_calc, conflictos
 
 
 def contar_skus_procesados(evento_id: int) -> int:

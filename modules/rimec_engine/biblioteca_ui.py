@@ -34,7 +34,10 @@ from modules.rimec_engine.biblioteca_compare import (
     comparar_excel_vs_biblioteca,
     get_casos_biblioteca,
 )
-from modules.rimec_engine.logic import hydrate_casos_evento_desde_db
+from modules.rimec_engine.logic import (
+    hydrate_casos_evento_desde_db,
+    preparar_evento_para_preview,
+)
 from modules.rimec_engine.ui_proceso import proceso_largo
 
 
@@ -195,27 +198,60 @@ def _render_comparacion_y_resolucion(
         st.markdown(f"**{len(comp.cubiertas)} líneas** del Excel están cubiertas por los casos de la biblioteca.")
 
         if st.button("✅ Continuar a Preview", type="primary", key="bib_go_preview"):
-            # Aplicar biblioteca y avanzar a preview
-            with proceso_largo("Aplicando biblioteca", f"Copiando «{biblioteca_nombre}» al evento…") as avanzar:
-                avanzar(0.3, "Aplicando...")
-                ok, msg, n = aplicar_biblioteca_a_evento(evento_id, proveedor_id, biblioteca_id)
-                avanzar(0.7, "Sincronizando...")
-                if ok:
-                    st.session_state["re_casos_evento"] = hydrate_casos_evento_desde_db(evento_id)
-                avanzar(1.0, "Completado")
+            ok, msg, n = False, "", 0
+            prep_ok, prep_msg = False, ""
+            skus_r, df_ev, ready = None, None, False
+            conflictos: list = []
+            re_skus = st.session_state.get("re_skus")
+
+            with proceso_largo(
+                "Aplicando biblioteca",
+                f"Copiando «{biblioteca_nombre}» al evento…",
+            ) as avanzar:
+                avanzar(0.2, "Copiando casos al listado…")
+                ok, msg, n = aplicar_biblioteca_a_evento(
+                    evento_id, proveedor_id, biblioteca_id
+                )
+                if not ok:
+                    avanzar(1.0, "Error al aplicar")
+                else:
+                    avanzar(0.55, "Hidratando matriz…")
+                    casos_ev = hydrate_casos_evento_desde_db(evento_id)
+                    st.session_state["re_casos_evento"] = casos_ev
+                    st.session_state["re_casos_evento_hydrated"] = evento_id
+                    avanzar(0.75, "Asignando SKUs a casos…")
+                    prep_ok, prep_msg, skus_r, df_ev, ready, conflictos = (
+                        preparar_evento_para_preview(
+                            evento_id,
+                            proveedor_id,
+                            re_skus,
+                            casos_evento=casos_ev,
+                        )
+                    )
+                    avanzar(1.0, "Listo")
 
             if not ok:
                 st.error(msg)
                 return
+            if not prep_ok:
+                st.error(prep_msg)
+                if conflictos:
+                    import pandas as pd
+                    st.dataframe(pd.DataFrame(conflictos), use_container_width=True)
+                return
 
+            st.session_state["re_skus_resueltos"] = skus_r
+            st.session_state["re_df_evento"] = df_ev
+            st.session_state["re_ready_to_calc"] = ready
+            st.session_state["re_conflictos"] = conflictos
             st.session_state["re_biblioteca_ok"] = True
             st.session_state["re_biblioteca_aplicada_id"] = biblioteca_id
-            st.session_state["re_paso"] = 3  # Ir a Preview (paso 3, índice 2 en barra nueva)
+            st.session_state["re_paso"] = 3
             celebrate_step(
                 "Biblioteca",
-                f"«{biblioteca_nombre}» aplicada — {n} caso(s)",
+                f"«{biblioteca_nombre}» — {n} caso(s), {len(skus_r)} SKUs listos",
                 modulo="Motor de Precios",
-                handoff="Cálculo de precios"
+                handoff="Cálculo de precios",
             )
             st.rerun()
 
@@ -286,10 +322,14 @@ def _render_comparacion_y_resolucion(
                     avanzar(0.3, "Iniciando...")
                     codigos = [int(c) if c.isdigit() else 0 for c in comp.no_en_pilar]
                     codigos = [c for c in codigos if c > 0]
-                    n_ok = provisionar_lineas_faltantes_en_pilar(proveedor_id, codigos)
-                    avanzar(1.0, f"Creadas: {n_ok}")
+                    ok_list, err_list = provisionar_lineas_faltantes_en_pilar(
+                        proveedor_id, [str(c) for c in codigos]
+                    )
+                    avanzar(1.0, f"Creadas: {len(ok_list)}")
 
-                st.success(f"✅ {n_ok} líneas creadas en pilar")
+                st.success(f"✅ {len(ok_list)} líneas creadas en pilar")
+                if err_list:
+                    st.warning("Algunas líneas no se crearon: " + "; ".join(err_list[:5]))
                 # Limpiar caché y re-comparar
                 st.session_state.pop(comp_key, None)
                 st.rerun()

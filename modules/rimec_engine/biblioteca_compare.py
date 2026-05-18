@@ -6,6 +6,7 @@ Comparación Excel vs Biblioteca vs Pilar para flujo rápido (<5 min).
 from dataclasses import dataclass
 import pandas as pd
 from core.database import get_dataframe
+from modules.rimec_engine.biblioteca_maestro import lineas_union_biblioteca
 
 
 @dataclass
@@ -64,17 +65,8 @@ def comparar_excel_vs_biblioteca(
             except (ValueError, TypeError):
                 continue
 
-    # 2. Cargar líneas de la biblioteca (unión de todos los casos)
-    lineas_biblioteca = set()
-    df_bib = get_dataframe(
-        """SELECT DISTINCT unnest(lineas) AS linea_cod
-           FROM caso_precio_biblioteca
-           WHERE biblioteca_id = :bid AND lineas IS NOT NULL""",
-        {"bid": biblioteca_id}
-    )
-    if df_bib is not None and not df_bib.empty:
-        for val in df_bib["linea_cod"].dropna():
-            lineas_biblioteca.add(str(val).strip())
+    # 2. Líneas de la biblioteca (biblioteca_caso_linea + fallback lineas[])
+    lineas_biblioteca = lineas_union_biblioteca(biblioteca_id)
 
     # 3. Cargar líneas del pilar (tabla linea del proveedor)
     lineas_pilar = set()

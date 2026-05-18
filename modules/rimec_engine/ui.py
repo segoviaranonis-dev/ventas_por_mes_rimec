@@ -1,15 +1,11 @@
 """
 RIMEC ENGINE — ui.py
 Interfaz del motor de gestión de eventos de precio.
-OT-519: Flujo simplificado 4 pasos: Carga → Biblioteca → Preview → Cierre
-Legacy: Paso 0 (carga) → 1 (memoria) → 2 (casos) → 3 (preview/cálculo) → 4 (validación) → 5 (cierre)
+Flujo: Paso 0 (carga) → 1 (memoria) → 2 (casos) → 3 (preview/cálculo) → 4 (validación) → 5 (cierre)
 """
 
 import random
 import time
-
-# OT-519: Feature flag flujo simple (default True)
-RE_FLUJO_SIMPLE = True
 
 import streamlit as st
 import pandas as pd
@@ -191,39 +187,10 @@ def _indice_paso_barra(paso) -> int:
 
 def _render_flujo():
     paso = st.session_state.get("re_paso", 0)
-    biblioteca_ok = st.session_state.get("re_biblioteca_ok", False)
-
-    # OT-519: Flujo simple vs legacy
-    if RE_FLUJO_SIMPLE:
-        # Nuevo flujo 4 pasos: Carga | Biblioteca | Preview | Cierre
-        pasos_labels = ["Carga", "Biblioteca", "Preview", "Cierre"]
-
-        # Mapear paso actual a índice de barra
-        if paso == 0 or paso == "bib_select" or paso == "bib_editor":
-            paso_idx = 0 if paso == 0 else 1
-        elif paso == 1 or paso == 2:
-            # Pasos legacy 1-2 (Memoria/Casos) mapeados a Biblioteca
-            paso_idx = 1
-        elif paso == 3:
-            # Preview
-            paso_idx = 2
-        elif paso == 4 or paso == 5:
-            # Validación/Cierre → Cierre
-            paso_idx = 3
-        else:
-            paso_idx = 0
-
-        # Si biblioteca OK, saltar memoria y casos automáticamente
-        if biblioteca_ok and paso == 1:
-            st.session_state["re_paso"] = 3  # Saltar a Preview
-            st.rerun()
-
-    else:
-        # Legacy flow: 6 pasos
-        pasos_labels = ["Carga", "Memoria", "Casos", "Preview", "Validación", "Cierre"]
-        paso_idx = _indice_paso_barra(paso)
+    paso_idx = _indice_paso_barra(paso)
 
     # Barra de progreso
+    pasos_labels = ["Carga", "Memoria", "Casos", "Preview", "Validación", "Cierre"]
     cols_prog = st.columns(len(pasos_labels))
     for i, label in enumerate(pasos_labels):
         color = "#D4AF37" if i == paso_idx else ("#10B981" if i < paso_idx else "#334155")
@@ -236,7 +203,6 @@ def _render_flujo():
 
     st.markdown("<div style='margin-top:24px;'></div>", unsafe_allow_html=True)
 
-    # Render paso actual
     if paso == 0:
         _paso_0_carga()
     elif paso == "bib_select":
@@ -244,19 +210,9 @@ def _render_flujo():
     elif paso == "bib_editor":
         _paso_biblioteca_editor()
     elif paso == 1:
-        if RE_FLUJO_SIMPLE and biblioteca_ok:
-            # Saltar memoria, ir a preview
-            st.session_state["re_paso"] = 3
-            st.rerun()
-        else:
-            _paso_1_memoria()
+        _paso_1_memoria()
     elif paso == 2:
-        if RE_FLUJO_SIMPLE and biblioteca_ok:
-            # Saltar casos, ir a preview
-            st.session_state["re_paso"] = 3
-            st.rerun()
-        else:
-            _paso_2_casos()
+        _paso_2_casos()
     elif paso == 3:
         _paso_3_preview()
     elif paso == 4:
@@ -1040,8 +996,37 @@ def _paso_3_preview():
     if df_evento is None or df_evento.empty:
         df_evento = casos_evento_to_dataframe(st.session_state.get("re_casos_evento", []))
 
-    if skus_resueltos.empty or df_evento.empty:
-        st.error("No hay SKUs resueltos o matriz del listado vacía. Volvé al Paso 2.")
+    if (skus_resueltos is None or skus_resueltos.empty or df_evento.empty) and evento_id and proveedor_id:
+        re_skus = st.session_state.get("re_skus")
+        casos_ev = st.session_state.get("re_casos_evento", [])
+        if re_skus is not None and not re_skus.empty and casos_ev:
+            from modules.rimec_engine.logic import preparar_evento_para_preview
+
+            with proceso_largo(
+                "Recuperando asignación",
+                "Preparando SKUs tras aplicar biblioteca…",
+            ) as avanzar:
+                avanzar(0.5, "Resolviendo casos…")
+                prep_ok, prep_msg, skus_r, df_ev, ready, conflictos = preparar_evento_para_preview(
+                    evento_id, proveedor_id, re_skus, casos_evento=casos_ev
+                )
+                avanzar(1.0, "Listo")
+            if prep_ok:
+                st.session_state["re_skus_resueltos"] = skus_r
+                st.session_state["re_df_evento"] = df_ev
+                st.session_state["re_ready_to_calc"] = ready
+                st.session_state["re_conflictos"] = conflictos
+                st.rerun()
+            st.error(prep_msg)
+            if conflictos:
+                st.dataframe(pd.DataFrame(conflictos), use_container_width=True)
+            return
+
+    if skus_resueltos is None or skus_resueltos.empty or df_evento.empty:
+        st.error(
+            "No hay SKUs resueltos o matriz del listado vacía. "
+            "Volvé a **Biblioteca** y pulsá **Continuar a Preview** de nuevo."
+        )
         return
 
     casos_bib = {row["nombre_caso"]: row.to_dict() for _, row in df_evento.iterrows()}
