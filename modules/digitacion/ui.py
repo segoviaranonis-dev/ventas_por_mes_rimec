@@ -6,6 +6,7 @@ Vista: PENDIENTES (ICs sin asignar) + EN PROCESO (PPs abiertos).
 
 import streamlit as st
 from modules.digitacion.logic import (
+    coerce_optional_int,
     get_ics_pendientes,
     get_pps_abiertos,
     get_ics_de_pp,
@@ -74,7 +75,10 @@ def _render_bandeja():
             if col_asig.button("Asignar →", key=f"asig_{ic_id}", type="primary",
                                use_container_width=True):
                 st.session_state["dg_ic_id"]  = ic_id
-                st.session_state["dg_ic_data"] = row.to_dict()
+                ic_data = row.to_dict()
+                peid = coerce_optional_int(ic_data.get("precio_evento_id"))
+                ic_data["precio_evento_id"] = peid
+                st.session_state["dg_ic_data"] = ic_data
                 st.session_state["dg_vista"]   = "asignacion"
                 st.rerun()
 
@@ -187,13 +191,13 @@ def _render_asignacion():
         for _, row in df_eventos.iterrows()
     }
 
-    # Pre-seleccionar el evento ya asignado a la IC si existe
-    ev_actual = ic.get("precio_evento_id")
+    # Pre-seleccionar el evento ya asignado a la IC si existe (NULL/NaN/'None' → sin preselección)
+    ev_actual = coerce_optional_int(ic.get("precio_evento_id"))
     idx_default = 0
-    if ev_actual:
+    if ev_actual is not None:
         ids_list = list(opciones_ev.values())
-        if int(ev_actual) in ids_list:
-            idx_default = ids_list.index(int(ev_actual))
+        if ev_actual in ids_list:
+            idx_default = ids_list.index(ev_actual)
 
     evento_label = st.selectbox(
         "Evento de precio (listado de precios)",

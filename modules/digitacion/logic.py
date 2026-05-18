@@ -11,6 +11,29 @@ from core.database import get_dataframe, engine, DBInspector
 from core.auditoria import log_flujo, A
 
 
+def coerce_optional_int(val) -> int | None:
+    """Convierte IDs de BD/Excel/session a int o None (NULL, NaN, 'None', '')."""
+    if val is None:
+        return None
+    try:
+        if pd.isna(val):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(val, str):
+        s = val.strip()
+        if not s or s.lower() in ("none", "nan", "null"):
+            return None
+        try:
+            return int(float(s))
+        except (ValueError, TypeError):
+            return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # LECTURAS
 # ─────────────────────────────────────────────────────────────────────────────
