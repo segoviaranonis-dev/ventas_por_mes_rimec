@@ -1266,6 +1266,98 @@ def guardar_precio_lista(filas: list[dict]):
         DBInspector.log(f"[ENGINE] Bulk INSERT falló: {e}", "ERROR")
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CÁLCULO SQL MASIVO (OT-520)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def cargar_staging_precio_lista(filas: list[dict]):
+    """
+    Carga SKUs pre-resueltos en precio_lista_staging para cálculo SQL masivo.
+    Requiere: evento_id, caso_id, marca, linea_id, referencia_id, material_id, fob_fabrica
+    """
+    if not filas:
+        return 0
+
+    try:
+        with engine.begin() as conn:
+            filas_staging = []
+            for f in filas:
+                filas_staging.append({
+                    "evento_id": f.get("eid") or f.get("evento_id"),
+                    "caso_id": f.get("cid") or f.get("caso_id"),
+                    "marca": f.get("marca", ""),
+                    "linea_id": f.get("linea_id_fk") or f.get("linea_id"),
+                    "referencia_id": f.get("ref_id_fk") or f.get("referencia_id"),
+                    "material_id": f.get("mat_id_fk") or f.get("material_id"),
+                    "fob_fabrica": f.get("fob") or f.get("fob_fabrica"),
+                    "linea_codigo": f.get("lc", ""),
+                    "ref_codigo": f.get("rc", ""),
+                    "material_desc": f.get("md", ""),
+                })
+
+            conn.execute(
+                text("""INSERT INTO precio_lista_staging
+                        (evento_id, caso_id, marca, linea_id, referencia_id, material_id,
+                         fob_fabrica, linea_codigo, ref_codigo, material_desc)
+                        VALUES (:evento_id, :caso_id, :marca, :linea_id, :referencia_id, :material_id,
+                                :fob_fabrica, :linea_codigo, :ref_codigo, :material_desc)"""),
+                filas_staging,
+            )
+            DBInspector.log(f"[ENGINE-SQL] Staging cargado: {len(filas)} SKUs", "SUCCESS")
+            return len(filas)
+    except Exception as e:
+        DBInspector.log(f"[ENGINE-SQL] Staging carga falló: {e}", "ERROR")
+        return 0
+
+
+def calcular_precio_lista_sql(evento_id: int) -> dict:
+    """
+    Ejecuta cálculo masivo SQL para evento_id.
+    Retorna: {"total": int, "duracion_ms": float, "error": str|None}
+    """
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(
+                text("SELECT * FROM calcular_precio_lista_evento_sql(:eid)"),
+                {"eid": evento_id}
+            )
+            row = result.fetchone()
+            if row:
+                total = int(row[0])
+                duracion_ms = float(row[1])
+                DBInspector.log(
+                    f"[ENGINE-SQL] Cálculo masivo completado: {total} filas en {duracion_ms:.0f}ms",
+                    "SUCCESS"
+                )
+                return {"total": total, "duracion_ms": duracion_ms, "error": None}
+            else:
+                return {"total": 0, "duracion_ms": 0, "error": "Sin resultado"}
+    except Exception as e:
+        error_msg = str(e)
+        DBInspector.log(f"[ENGINE-SQL] Cálculo SQL falló: {error_msg}", "ERROR")
+        return {"total": 0, "duracion_ms": 0, "error": error_msg}
+
+
+def limpiar_staging_precio_lista(evento_id: int = None):
+    """
+    Limpia precio_lista_staging. Si evento_id es None, limpia todo.
+    """
+    try:
+        if evento_id:
+            commit_query(
+                "DELETE FROM precio_lista_staging WHERE evento_id = :eid",
+                {"eid": evento_id}
+            )
+            DBInspector.log(f"[ENGINE-SQL] Staging limpiado para evento {evento_id}", "SUCCESS")
+        else:
+            commit_query("TRUNCATE precio_lista_staging")
+            DBInspector.log("[ENGINE-SQL] Staging limpiado completamente", "SUCCESS")
+    except Exception as e:
+        DBInspector.log(f"[ENGINE-SQL] Limpieza staging falló: {e}", "ERROR")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
 def avanzar_estado_evento(evento_id: int, estado: str):
     commit_query(
         "UPDATE precio_evento SET estado = :e WHERE id = :id",

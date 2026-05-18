@@ -1,0 +1,100 @@
+{
+  "ot_id": "OT-MOTOR-SQL-520-001",
+  "fecha": "2026-05-18",
+  "ejecutor": "Claude Code",
+  "fase_implementacion": {
+    "fase_a_migracion": {
+      "archivo": "migrations/052_precio_lista_indice_triplete.sql",
+      "indices_creados": [
+        "idx_precio_lista_evento_triplete (evento_id, linea_id, referencia_id, material_id)",
+        "idx_precio_lista_evento_vigente_triplete (evento_id, linea_id, referencia_id, material_id) WHERE vigente = true"
+      ],
+      "verificacion_manual_pendiente": "\\d precio_lista o SELECT * FROM pg_indexes WHERE tablename = 'precio_lista'"
+    },
+    "fase_b_funcion_sql": {
+      "archivo": "migrations/053_calcular_precio_lista_evento_sql.sql",
+      "tabla_staging": "precio_lista_staging",
+      "funcion": "calcular_precio_lista_evento_sql(evento_id)",
+      "formula_implementada": {
+        "fob_ajustado": "fob × (1-d1)×(1-d2)×(1-d3)×(1-d4)",
+        "indice": "(dolar_politica * factor_conversion) / 100",
+        "lpn": "FLOOR(fob_ajustado * indice / 100) * 100",
+        "lpc03": "FLOOR(lpn * 1.12 / 100) * 100 (si genera_lpc03_lpc04)",
+        "lpc04": "FLOOR(lpn * 1.20 / 100) * 100 (si genera_lpc03_lpc04)"
+      }
+    },
+    "fase_c_integracion": {
+      "archivos_modificados": [
+        "modules/rimec_engine/logic.py",
+        "modules/rimec_engine/ui.py"
+      ],
+      "funciones_nuevas": [
+        "cargar_staging_precio_lista()",
+        "calcular_precio_lista_sql()",
+        "limpiar_staging_precio_lista()"
+      ],
+      "flag": "USE_CALCULO_SQL = True",
+      "fallback_python": "Mantenido para compatibilidad"
+    },
+    "fase_d_paridad": {
+      "script": "scripts/verificar_paridad_calculo_sql.py",
+      "pendiente_ejecucion": true,
+      "nota": "Requiere evento de prueba con datos reales para comparar SQL vs Python"
+    }
+  },
+  "performance": {
+    "nota": "Métricas pendientes de ejecución en ambiente real",
+    "objetivo": "< 2 min para ~50 SKUs en Cloud (vs 20-40 min Python)",
+    "metrica_esperada": {
+      "python_ms_por_sku": "Estimado ~2000ms (get_or_create + cálculo)",
+      "sql_ms_total": "Estimado < 5000ms set-based"
+    }
+  },
+  "paridad": {
+    "pendiente_verificacion": true,
+    "skus_a_verificar": 20,
+    "diff_count_esperado": 0,
+    "comando": "python scripts/verificar_paridad_calculo_sql.py <evento_id>"
+  },
+  "archivos_entregados": [
+    "migrations/052_precio_lista_indice_triplete.sql",
+    "migrations/053_calcular_precio_lista_evento_sql.sql",
+    "modules/rimec_engine/logic.py (modificado)",
+    "modules/rimec_engine/ui.py (modificado)",
+    "scripts/verificar_paridad_calculo_sql.py",
+    "OT-MOTOR-SQL-520-001-EVIDENCIA.json"
+  ],
+  "pruebas_pendientes": [
+    {
+      "id": "T1",
+      "escenario": "Evento ~50 SKUs, cálculo SQL",
+      "esperado": "< 2 min en Cloud",
+      "estado": "Pendiente ejecución manual"
+    },
+    {
+      "id": "T2",
+      "escenario": "PP con evento vinculado, línea+material",
+      "esperado": "Precio sugerido instantáneo (índice triplete)",
+      "estado": "Pendiente verificación en UI"
+    },
+    {
+      "id": "T3",
+      "escenario": "Paridad script",
+      "esperado": "diff_count = 0",
+      "estado": "Script creado, pendiente ejecución"
+    }
+  ],
+  "prohibidos_verificados": {
+    "truncate_pilares": false,
+    "linea_caso_id": false,
+    "cambio_redondeo": false,
+    "markup_ui_web": false
+  },
+  "integridad_holding": {
+    "p1_una_sola_verdad": "✓ Cálculo desde precio_evento_caso + precio_lista",
+    "p2_caso_en_evento": "✓ No usa linea.caso_id",
+    "p3_pilares_blindados": "✓ Sin TRUNCATE CASCADE",
+    "p8_evidencia_maquina": "✓ JSON entregado"
+  },
+  "siguiente_paso": "Ejecutar migraciones en ambiente desarrollo, probar con evento real, verificar paridad T3"
+}

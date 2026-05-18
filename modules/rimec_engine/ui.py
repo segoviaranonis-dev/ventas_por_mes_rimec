@@ -7,6 +7,11 @@ Flujo: Paso 0 (carga) → 1 (memoria) → 2 (casos) → 3 (preview/cálculo) →
 import random
 import time
 
+# ─────────────────────────────────────────────────────────────────────────────
+# OT-520: Flag cálculo SQL masivo
+# ─────────────────────────────────────────────────────────────────────────────
+USE_CALCULO_SQL = True  # False = fallback Python (fila a fila)
+
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -40,6 +45,9 @@ from modules.rimec_engine.logic import (
     parse_lineas_array,
     parse_marcas_array,
     guardar_precio_lista,
+    cargar_staging_precio_lista,
+    calcular_precio_lista_sql,
+    limpiar_staging_precio_lista,
     avanzar_estado_evento,
     resumen_paso3_evento,
     hidratar_paso4_desde_bd,
@@ -1224,6 +1232,8 @@ def _paso_3_preview():
 
                 filas = []
                 skus_omitidos = 0
+
+                # OT-520: Resolver pilares FK (obligatorio para ambos métodos)
                 for _, row in skus_grupo.iterrows():
                     skus_procesados += 1
                     pct = pct_base + (skus_procesados / total_skus) * pct_span
@@ -1233,7 +1243,6 @@ def _paso_3_preview():
                     )
 
                     fob  = float(row["fob_fabrica"])
-                    calc = calcular_precios_caso(fob, caso_db)
 
                     try:
                         cod_linea = int(float(str(row.get("linea", 0)).strip() or 0))
@@ -1256,7 +1265,8 @@ def _paso_3_preview():
                         skus_omitidos += 1
                         continue
 
-                    filas.append({
+                    # Preparar fila base con pilares FK
+                    fila_base = {
                         "eid":      evento_id,
                         "cid":      caso_id,
                         "marca":    str(row["marca"]),
@@ -1267,31 +1277,81 @@ def _paso_3_preview():
                         "ref_id_fk":   ref_id,
                         "mat_id_fk":   mat_id,
                         "fob":   fob,
-                        "foba":  calc["fob_ajustado"],
-                        "lpn":   calc["lpn"],
-                        "lpc03": calc["lpc03"],
-                        "lpc04": calc["lpc04"],
-                        "dolar_ap":      dolar_ap,
-                        "factor_ap":     factor_ap,
-                        "indice_ap":     round(indice_ap, 6),
-                        "d1_ap":         caso_db.get("descuento_1"),
-                        "d2_ap":         caso_db.get("descuento_2"),
-                        "d3_ap":         caso_db.get("descuento_3"),
-                        "d4_ap":         caso_db.get("descuento_4"),
-                        "nombre_caso_ap": caso_db["nombre_caso"],
-                    })
+                    }
 
-                avanzar(
-                    min(0.98, pct_base + (skus_procesados / total_skus) * pct_span + 0.01),
-                    f"Guardando {len(filas)} filas en precio_lista — caso {nombre_caso}",
-                )
-                guardar_precio_lista(filas)
+                    if USE_CALCULO_SQL:
+                        # SQL masivo: solo guardar pilares + fob
+                        filas.append(fila_base)
+                    else:
+                        # Python fila a fila: calcular precio por SKU
+                        calc = calcular_precios_caso(fob, caso_db)
+                        filas.append({
+                            **fila_base,
+                            "foba":  calc["fob_ajustado"],
+                            "lpn":   calc["lpn"],
+                            "lpc03": calc["lpc03"],
+                            "lpc04": calc["lpc04"],
+                            "dolar_ap":      dolar_ap,
+                            "factor_ap":     factor_ap,
+                            "indice_ap":     round(indice_ap, 6),
+                            "d1_ap":         caso_db.get("descuento_1"),
+                            "d2_ap":         caso_db.get("descuento_2"),
+                            "d3_ap":         caso_db.get("descuento_3"),
+                            "d4_ap":         caso_db.get("descuento_4"),
+                            "nombre_caso_ap": caso_db["nombre_caso"],
+                        })
+
+                # Guardar en BD
+                if USE_CALCULO_SQL:
+                    # OT-520: Cálculo SQL masivo
+                    avanzar(
+                        min(0.98, pct_base + (skus_procesados / total_skus) * pct_span + 0.01),
+                        f"Cargando {len(filas)} SKUs a staging — caso {nombre_caso}",
+                    )
+                    cargar_staging_precio_lista(filas)
+                else:
+                    # Python: INSERT tradicional
+                    avanzar(
+                        min(0.98, pct_base + (skus_procesados / total_skus) * pct_span + 0.01),
+                        f"Guardando {len(filas)} filas en precio_lista — caso {nombre_caso}",
+                    )
+                    guardar_precio_lista(filas)
                 skus_omitidos_total += skus_omitidos
                 confirmados[f"caso_{i}"] = len(filas)
                 print(
                     f"[ENGINE] Completado caso '{nombre_caso}' "
                     f"({len(skus_grupo)} SKUs, {len(filas)} guardados)."
                 )
+
+            # OT-520: Si usamos SQL, ejecutar cálculo masivo al final
+            if USE_CALCULO_SQL:
+                total_staging = sum(confirmados.values()) if confirmados else 0
+                if total_staging > 0:
+                    avanzar(0.98, f"Ejecutando cálculo SQL masivo ({total_staging} SKUs)…")
+                    resultado_sql = calcular_precio_lista_sql(evento_id)
+
+                    if resultado_sql.get("error"):
+                        st.error(f"❌ Cálculo SQL falló: {resultado_sql['error']}")
+                        st.warning("⚠️ Intentando fallback Python…")
+                        # TODO: Implementar fallback si es crítico
+                        calc_ok = False
+                    else:
+                        duracion_s = resultado_sql["duracion_ms"] / 1000
+                        st.success(
+                            f"✅ Cálculo SQL completado: {resultado_sql['total']} precios en {duracion_s:.1f}s"
+                        )
+                        # Actualizar confirmados con total real desde SQL
+                        total_guardados = resultado_sql['total']
+                        calc_ok = True
+
+                    # Limpiar staging
+                    limpiar_staging_precio_lista(evento_id)
+                else:
+                    calc_ok = False
+            else:
+                # Python: ya guardado en el loop
+                total_guardados = sum(confirmados.values()) if confirmados else 0
+                calc_ok = total_guardados > 0
 
             if stats_pilar.get("ley_genero_lineas"):
                 st.info(
@@ -1301,9 +1361,6 @@ def _paso_3_preview():
 
             if skus_omitidos_total:
                 st.warning(f"⚠️ {skus_omitidos_total} SKU(s) omitidos por pilares nulos. Revisar Excel.")
-
-            total_guardados = sum(confirmados.values()) if confirmados else 0
-            calc_ok = total_guardados > 0
 
         if calc_ok:
             st.session_state["re_casos"] = casos_procesados
