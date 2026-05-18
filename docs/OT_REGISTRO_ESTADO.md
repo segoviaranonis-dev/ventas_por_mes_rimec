@@ -9,7 +9,7 @@
 
 | OT | Título | Estado | Nota |
 |----|--------|--------|------|
-| [OT-DEPLOY-GIT-VERCEL-512-001](../OT-DEPLOY-GIT-VERCEL-512-001.md) | Git 4 repos + Vercel ×3 + Streamlit Nexus | **PENDIENTE** | Claude Code — **siguiente** |
+| [OT-DEPLOY-GIT-VERCEL-512-001](../OT-DEPLOY-GIT-VERCEL-512-001.md) | Git 4 repos + Vercel ×3 + Streamlit Nexus | **PARCIAL** | Fase 0+1 OK → docs `DEPLOY_*_512.md` para usuario |
 | [OT-DEPOSITO-WEB-510-001](../OT-DEPOSITO-WEB-510-001.md) | Depósito Web: LPN + Precio venta = Bazar | **EN PAUSA** | Tras nueva carga con stock |
 
 ## Recomendado (prevención)

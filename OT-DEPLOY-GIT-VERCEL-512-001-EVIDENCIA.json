@@ -1,0 +1,112 @@
+{
+  "ot_id": "OT-DEPLOY-GIT-VERCEL-512-001",
+  "fecha_ejecucion": "2026-05-18",
+  "estado": "PARCIAL",
+  "nota": "Fase 0 (seguridad) + Fase 1 (Git) completadas. Fases 2-3 (Vercel/Streamlit) requieren login del usuario — instrucciones documentadas.",
+  "commits": {
+    "ventas_por_mes_rimec": "0746cf6",
+    "rimec-web": "f351e0d",
+    "bazzar-web": "cb33393",
+    "report": "84da2a3"
+  },
+  "repos_github": {
+    "ventas_por_mes_rimec": "https://github.com/segoviaranonis-dev/ventas_por_mes_rimec.git",
+    "rimec-web": "https://github.com/segoviaranonis-dev/rimec-web.git",
+    "bazzar-web": "https://github.com/segoviaranonis-dev/bazzar-web.git",
+    "report": "https://github.com/segoviaranonis-dev/report.git"
+  },
+  "urls": {
+    "streamlit_nexus": "PENDIENTE_DEPLOY_USUARIO",
+    "vercel_rimec_web": "PENDIENTE_DEPLOY_USUARIO",
+    "vercel_bazzar_web": "PENDIENTE_DEPLOY_USUARIO",
+    "vercel_report": "PENDIENTE_DEPLOY_USUARIO"
+  },
+  "checks": [
+    {
+      "id": "C0-SEC",
+      "fase": "Seguridad (Fase 0)",
+      "pass": true,
+      "detalles": [
+        ".env.example creado para rimec-web",
+        "URL real en bazzar-web/.env.example reemplazada por placeholder",
+        ".streamlit/secrets.toml detectado y removido de staging rimec-web",
+        "0 archivos .env* o secrets en git status de los 4 repos"
+      ]
+    },
+    {
+      "id": "C1",
+      "fase": "Git (Fase 1)",
+      "pass": true,
+      "expected": "4 repos push main OK",
+      "detalles": "ventas_por_mes_rimec (0746cf6), rimec-web (f351e0d), bazzar-web (cb33393), report (84da2a3)"
+    },
+    {
+      "id": "C2",
+      "fase": "Git (Fase 1)",
+      "pass": true,
+      "expected": "0 archivos .env en git ls-files",
+      "detalles": "Verificado con git status | Select-String .env para cada repo — 0 matches"
+    },
+    {
+      "id": "C5",
+      "fase": "Build local (Fase 0)",
+      "pass": true,
+      "expected": "npm run build local OK x3",
+      "detalles": [
+        "rimec-web: ✅ (TypeScript fixes: marcas prop removed, NonNullable typeof, .env.example created)",
+        "bazzar-web: ✅ (Array.from(Set) fix, .env.example placeholder)",
+        "report: ✅ (Recharts formatter fixes, ResponsiveContainer height wrapper, cascada property, rimec-view-utils type assertion)"
+      ]
+    },
+    {
+      "id": "C3",
+      "fase": "Vercel (Fase 2)",
+      "pass": false,
+      "blocked": "auth",
+      "expected": "3 builds Vercel green",
+      "nota": "Requiere login usuario. Instrucciones completas en docs/DEPLOY_VERCEL_512.md"
+    },
+    {
+      "id": "C4",
+      "fase": "Streamlit Cloud (Fase 3)",
+      "pass": false,
+      "blocked": "auth",
+      "expected": "Streamlit app live",
+      "nota": "Requiere login usuario. Instrucciones completas en docs/DEPLOY_STREAMLIT_512.md"
+    }
+  ],
+  "fixes_typescript": {
+    "rimec-web": [
+      "app/CatalogoGrid.tsx:571 — removed unused 'marcas' prop (dead parameter, type mismatch FilterItem[] vs string[])",
+      "app/page.tsx:219 — removed marcas={todasMarcas} from CatalogoGrid call",
+      "lib/controlStock/fetchControl.ts:139 — NonNullable<typeof lrRows>[number] type fix",
+      ".env.example created (missing per OT-512 task X2)"
+    ],
+    "bazzar-web": [
+      "lib/filtros.ts:27 — Array.from(new Set(...)) instead of [...new Set(...)] (downlevelIteration issue)",
+      ".env.example:4 — replaced real Supabase URL with placeholder https://TU_REF.supabase.co"
+    ],
+    "report": [
+      "src/app/rimec/components/MundoClientes.tsx:254,316 — formatter type inference fix (removed explicit type annotation, added typeof check)",
+      "src/app/rimec/components/MundoDashboard.tsx:291 — same formatter fix",
+      "src/app/rimec/components/MundoMarcas.tsx:131 — same formatter fix",
+      "src/app/rimec/components/MundoMarcas.tsx:39 — TooltipProps destructuring → props.active/props.payload (type changed to any)",
+      "src/app/rimec/components/MundoMarcas.tsx:157 — ResponsiveContainer height calc() wrapper div fix",
+      "src/app/rimec/rimec-view-utils.ts:57 — (r as any).cliente type assertion for enriched PivotRow",
+      "src/lib/rimec/build-full-snapshot.ts:323 — added missing cascada property to FullSnapshotResponse return"
+    ]
+  },
+  "documentacion_generada": [
+    "docs/DEPLOY_VERCEL_512.md — pasos deploy 3 proyectos Vercel + env vars",
+    "docs/DEPLOY_STREAMLIT_512.md — pasos deploy Streamlit Cloud + secrets TOML",
+    "docs/DEPLOY_MAPA_URLS.md — tabla única con URLs producción + repos GitHub"
+  ],
+  "pasos_pendientes_usuario": [
+    "1. Login Vercel → import 3 repos → configurar env vars según DEPLOY_VERCEL_512.md",
+    "2. Login Streamlit Cloud → new app ventas_por_mes_rimec → configurar secrets según DEPLOY_STREAMLIT_512.md",
+    "3. Verificar 3 builds Vercel green + Streamlit app live",
+    "4. Actualizar docs/DEPLOY_MAPA_URLS.md con URLs reales",
+    "5. Actualizar este JSON con URLs y marcar checks C3/C4 como pass=true",
+    "6. Marcar OT-512 CERRADA en docs/OT_REGISTRO_ESTADO.md"
+  ]
+}
