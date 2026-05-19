@@ -31,25 +31,13 @@ from modules.rimec_engine.biblioteca_maestro import (
 )
 from modules.rimec_engine.logic import (
     leer_excel_proveedor,
-    calcular_precios_caso,
     get_preview_skus,
     get_proveedores,
-    build_pillar_cache,
-    resolver_pilares_evento_sql,
-    prefetch_materiales_para_listado,
-    get_or_create_linea_cached,
-    get_or_create_referencia_cached,
-    get_or_create_material_cached,
     crear_evento,
-    crear_caso,
     guardar_lineas_excepcion,
     reemplazar_lineas_excepcion,
     parse_lineas_array,
     parse_marcas_array,
-    guardar_precio_lista,
-    cargar_staging_precio_lista,
-    calcular_precio_lista_sql,
-    limpiar_staging_precio_lista,
     avanzar_estado_evento,
     resumen_paso3_evento,
     hidratar_paso4_desde_bd,
@@ -1041,408 +1029,227 @@ def _paso_3_preview():
 
     casos_bib = {row["nombre_caso"]: row.to_dict() for _, row in df_evento.iterrows()}
 
+    n_bd = 0
     if evento_id:
         res_bd = resumen_paso3_evento(evento_id)
         n_bd = int(res_bd.get("n_precio_lista") or 0)
-        if n_bd > 0:
-            st.success(
-                f"**Cálculo ya guardado en base de datos:** {n_bd:,} filas en `precio_lista` "
-                f"(estado evento: **{res_bd.get('estado') or '—'}**). "
-                "Si el paso no avanzó solo tras muchos minutos en Streamlit Cloud, usá el botón de abajo."
-            )
-            if st.button(
-                "➡ Continuar al Paso 4 — Validación",
-                type="primary",
-                key="motor_paso3_ir_paso4",
-            ):
-                pack = ir_a_paso4_validacion(evento_id)
-                if pack:
-                    st.session_state["re_casos"] = pack["casos"]
-                    st.session_state["re_skus_por_caso"] = pack["confirmados"]
-                    st.session_state["re_paso"] = 4
-                    celebrate_step(
-                        "Paso 3 (recuperado)",
-                        f"{pack['total_skus']:,} precios ya en BD",
-                        modulo="Motor de Precios",
-                        handoff="Validación (Paso 4)",
-                    )
-                    st.rerun()
-                else:
-                    st.error("No se pudo reconstruir el resumen desde la base de datos.")
 
     st.markdown(f"Se procesarán **{len(skus_resueltos)}** SKUs de forma automatizada.")
 
-    # OT-FINAL-001 Fase D: Insignia motor + UX
     if USE_CALCULO_SQL:
-        st.info("⚡ **MOTOR ULTRA-RÁPIDO** (SQL en Postgres) — Rendimiento optimizado")
+        st.info("⚡ **MOTOR ULTRA-RÁPIDO** (SQL en Postgres) — requiere migraciones 052–054 en Supabase.")
     else:
-        st.warning("🐢 **MOTOR TRADICIONAL** (Python) — Considerar actualizar a SQL")
+        st.warning("🐢 **MOTOR TRADICIONAL** (Python en cliente)")
 
-    # Warning anti-recarga
-    st.warning("⚠️ **IMPORTANTE**: No recargar la pestaña durante el cálculo (puede causar inconsistencias en Cloud)")
-
-    # Verificar si ya hay precios calculados
-    n_bd = 0
-    try:
-        from core.database import get_dataframe
-        df_count = get_dataframe(
-            "SELECT COUNT(*) as n FROM precio_lista WHERE evento_id = :eid",
-            {"eid": evento_id}
-        )
-        if df_count is not None and not df_count.empty:
-            n_bd = int(df_count.iloc[0]["n"])
-    except:
-        pass
+    st.warning(
+        "⚠️ **No recargues la pestaña** durante el cálculo. En Streamlit Cloud el proceso sigue en el servidor "
+        "y puede generar bloqueos temporales en la base de datos."
+    )
 
     calc_ok = False
     total_guardados = 0
+    lanzar_calculo = False
 
-    # Si ya hay precios, destacar Paso 4
     if n_bd > 0:
-        st.success(f"✓ Ya existen **{n_bd}** precios calculados para este evento")
-        st.markdown("### 👉 Continuar al Paso 4")
+        st.success(
+            f"**Cálculo ya guardado:** {n_bd:,} filas en `precio_lista` "
+            f"(estado: **{res_bd.get('estado') if evento_id else '—'}**)."
+        )
+        if st.button(
+            "➡ Continuar al Paso 4 — Validación",
+            type="primary",
+            key="motor_paso3_ir_paso4",
+        ):
+            pack = ir_a_paso4_validacion(evento_id)
+            if pack:
+                st.session_state["re_casos"] = pack["casos"]
+                st.session_state["re_skus_por_caso"] = pack["confirmados"]
+                st.session_state["re_paso"] = 4
+                celebrate_step(
+                    "Paso 3 (recuperado)",
+                    f"{pack['total_skus']:,} precios ya en BD",
+                    modulo="Motor de Precios",
+                    handoff="Validación (Paso 4)",
+                )
+                st.rerun()
+            st.error("No se pudo reconstruir el resumen desde la base de datos.")
         with st.expander("⚙️ Recalcular (sobrescribirá precios existentes)", expanded=False):
-            if st.button("🔄 Recalcular todos los SKUs", type="secondary"):
-                pass  # El código del cálculo va aquí abajo
-            else:
-                return
+            lanzar_calculo = st.button(
+                "🔄 Recalcular todos los SKUs",
+                type="secondary",
+                key="motor_paso3_recalcular",
+            )
     else:
-        if not st.button("✅ Iniciar Cálculo de todos los SKUs", type="primary"):
-            return
+        lanzar_calculo = st.button(
+            "✅ Iniciar Cálculo de todos los SKUs",
+            type="primary",
+            key="motor_paso3_iniciar",
+        )
 
-    # Bloque de cálculo (ejecuta siempre si llegó aquí)
-    total_skus_btn = len(skus_resueltos)
-    with proceso_largo(
-            "Cálculo de precios",
-            f"Procesando **{total_skus_btn}** SKUs (pilares + precio_lista).",
-            aviso_espera=(
-                "Pilares y caché van por códigos del listado (no todo el catálogo). "
-                "Verás el avance **1/N, 2/N…** abajo. No recargues la pestaña."
-            ),
-        ) as avanzar:
-            from core.database import engine
-            from modules.rimec_engine.ley_genero import (
-                validar_ley_genero_importacion,
-                texto_ley_genero_resumen,
+    if not lanzar_calculo:
+        return
+
+    from modules.rimec_engine.ley_genero import (
+        validar_ley_genero_importacion,
+        texto_ley_genero_resumen,
+    )
+    from modules.rimec_engine.lr_schema import mensaje_si_falta_migracion_042
+    from modules.rimec_engine.paso3_pipeline import (
+        ejecutar_pipeline_paso3,
+        verificar_conexion_db,
+    )
+    from modules.rimec_engine.pillar_fk import asegurar_pilares_para_listado
+    from modules.rimec_engine.ui_paso3_live import Paso3LivePanel, Paso3Metrics, make_tick
+
+    calc_ok = False
+    total_guardados = 0
+    casos_procesados: list = []
+    confirmados: dict = {}
+    stats_pilar: dict = {}
+
+    # ── Fase A: validaciones (sin spinner global; panel reactivo después) ──
+    ok_db, err_db = verificar_conexion_db()
+    if not ok_db:
+        st.error(f"No se pudo conectar a Supabase: {err_db}")
+        return
+
+    mig42 = mensaje_si_falta_migracion_042()
+    if mig42:
+        st.warning(
+            mig42
+            + " El listado puede continuar; los códigos denormalizados en linea_referencia quedarán pendientes."
+        )
+
+    metrics = Paso3Metrics(fase="Pilares y reglas", skus_total=len(skus_resueltos))
+    panel = Paso3LivePanel()
+    panel.tick(metrics)
+
+    stats_pilar = asegurar_pilares_para_listado(
+        proveedor_id, skus_resueltos, evento_id=evento_id
+    )
+    if stats_pilar.get("error_deadlock"):
+        st.error(
+            "El pilar se está actualizando en otra operación (deadlock). "
+            "Cerrá otras pestañas de la app, esperá 5 s y pulsá de nuevo."
+        )
+        return
+    if stats_pilar.get("lineas_alta_automatica"):
+        st.info(
+            f"Pilar: **{stats_pilar['lineas_alta_automatica']}** línea(s) creadas "
+            f"por herencia desde línea inferior."
+        )
+    if stats_pilar.get("lineas_alta_errores"):
+        st.warning(
+            "Algunas líneas no se pudieron crear en pilar: "
+            + "; ".join(stats_pilar["lineas_alta_errores"][:4])
+        )
+
+    marcas_imp = skus_resueltos["marca"].dropna().unique().tolist()
+    ley = validar_ley_genero_importacion(marcas_imp)
+    if not ley["ok"]:
+        st.error("**Ley de género:** importación bloqueada.")
+        if ley["marcas_rechazadas"]:
+            st.error("Marcas no permitidas: " + ", ".join(ley["marcas_rechazadas"]))
+        if ley["generos_faltantes_bd"]:
+            st.error("Géneros faltantes en BD: " + ", ".join(ley["generos_faltantes_bd"]))
+        st.markdown(texto_ley_genero_resumen())
+        return
+
+    if stats_pilar.get("ley_genero_rechazadas") or stats_pilar.get("genero_bd_faltante"):
+        st.warning(
+            "Ley de género (algunas filas del Excel): "
+            + ", ".join(stats_pilar.get("ley_genero_rechazadas", []))
+            + " ".join(stats_pilar.get("genero_bd_faltante", []))
+            + " — se intentó alta por herencia de línea inferior."
+        )
+    if stats_pilar.get("marcas_no_encontradas"):
+        st.error(
+            "Marcas sin FK en **marca_v2** (nombre de hoja Excel): "
+            + ", ".join(stats_pilar["marcas_no_encontradas"])
+            + ". Corregí el catálogo o el nombre de la hoja antes de continuar."
+        )
+        return
+    if stats_pilar.get("lineas_marca_conflicto"):
+        st.error(
+            "La misma línea aparece en hojas con marcas distintas: "
+            + ", ".join(str(x) for x in stats_pilar["lineas_marca_conflicto"][:20])
+        )
+        return
+
+    metrics.log("Pilares validados — iniciando pipeline por casos")
+    metrics.fase = "Pipeline Paso 3"
+    tick = make_tick(panel)
+
+    # ── Fase B: pipeline (negocio) + logs dinámicos (UI) desacoplados ──
+    pipe = ejecutar_pipeline_paso3(
+        tick=tick,
+        metrics=metrics,
+        evento_id=evento_id,
+        proveedor_id=proveedor_id,
+        skus_resueltos=skus_resueltos,
+        df_evento=df_evento,
+        casos_bib=casos_bib,
+        stats_pilar=stats_pilar,
+        usar_sql=USE_CALCULO_SQL,
+    )
+
+    casos_procesados = pipe.casos_procesados
+    confirmados = pipe.confirmados
+    skus_omitidos_total = pipe.skus_omitidos_total
+    total_guardados = pipe.total_guardados
+    calc_ok = pipe.ok
+    resultado_sql = pipe.resultado_sql
+
+    if pipe.error and not calc_ok:
+        st.error(f"❌ {pipe.error}")
+        if resultado_sql and resultado_sql.get("staging_sin_caso"):
+            st.error(
+                f"Staging: **{resultado_sql.get('staging_sin_caso')}** fila(s) con "
+                "`caso_id` inexistente en `precio_evento_caso`."
             )
-            from modules.rimec_engine.logic import asegurar_contenedor_lineas_excel
-            from modules.rimec_engine.lr_schema import mensaje_si_falta_migracion_042
-            from modules.rimec_engine.pillar_fk import asegurar_pilares_para_listado
-
-            # Fase 1: Validación políticas
-            avanzar(0.02, "Fase 1/5: Validación de políticas comerciales…")
-            t_db = time.perf_counter()
-            try:
-                with engine.connect() as conn:
-                    conn.execute(text("SELECT 1"))
-                ms_db = int((time.perf_counter() - t_db) * 1000)
-                avanzar(0.05, f"Fase 1/5: Conexión servidor validada ({ms_db} ms)")
-            except Exception as exc:
-                st.error(f"No se pudo conectar a Supabase: {exc}")
-                return
-
-            avanzar(0.08, "Fase 1/5: Preparando estructura de precios…")
-            mig42 = mensaje_si_falta_migracion_042()
-            if mig42:
-                st.warning(mig42 + " El listado puede continuar; los códigos denormalizados en linea_referencia quedarán pendientes.")
-
-            stats_pilar = asegurar_pilares_para_listado(
-                proveedor_id, skus_resueltos, evento_id=evento_id
+        if resultado_sql and resultado_sql.get("caso_ids_staging"):
+            st.code(
+                "caso_id en staging: "
+                + ", ".join(str(x) for x in resultado_sql["caso_ids_staging"])
             )
-            if stats_pilar.get("error_deadlock"):
-                st.error(
-                    "El pilar se está actualizando en otra operación (deadlock). "
-                    "Cerrá otras pestañas de la app, esperá 5 s y pulsá de nuevo."
-                )
-                return
-            n_auto_cont = asegurar_contenedor_lineas_excel(
-                evento_id, proveedor_id, skus_resueltos, df_evento
-            )
-            if n_auto_cont:
-                st.info(
-                    f"Alta automática: **{n_auto_cont}** línea(s) agregadas al contenedor del listado."
-                )
-            if stats_pilar.get("lineas_alta_automatica"):
-                st.info(
-                    f"Pilar: **{stats_pilar['lineas_alta_automatica']}** línea(s) creadas "
-                    f"por herencia desde línea inferior."
-                )
-            if stats_pilar.get("lineas_alta_errores"):
-                st.warning(
-                    "Algunas líneas no se pudieron crear en pilar: "
-                    + "; ".join(stats_pilar["lineas_alta_errores"][:4])
-                )
-
-            marcas_imp = skus_resueltos["marca"].dropna().unique().tolist()
-            ley = validar_ley_genero_importacion(marcas_imp)
-            if not ley["ok"]:
-                st.error("**Ley de género:** importación bloqueada.")
-                if ley["marcas_rechazadas"]:
-                    st.error("Marcas no permitidas: " + ", ".join(ley["marcas_rechazadas"]))
-                if ley["generos_faltantes_bd"]:
-                    st.error("Géneros faltantes en BD: " + ", ".join(ley["generos_faltantes_bd"]))
-                st.markdown(texto_ley_genero_resumen())
-                return
-
-            if stats_pilar.get("ley_genero_rechazadas") or stats_pilar.get("genero_bd_faltante"):
-                st.warning(
-                    "Ley de género (algunas filas del Excel): "
-                    + ", ".join(stats_pilar.get("ley_genero_rechazadas", []))
-                    + " ".join(stats_pilar.get("genero_bd_faltante", []))
-                    + " — se intentó alta por herencia de línea inferior."
-                )
-            if stats_pilar.get("marcas_no_encontradas"):
-                st.error(
-                    "Marcas sin FK en **marca_v2** (nombre de hoja Excel): "
-                    + ", ".join(stats_pilar["marcas_no_encontradas"])
-                    + ". Corregí el catálogo o el nombre de la hoja antes de continuar."
-                )
-                return
-            if stats_pilar.get("lineas_marca_conflicto"):
-                st.error(
-                    "La misma línea aparece en hojas con marcas distintas: "
-                    + ", ".join(str(x) for x in stats_pilar["lineas_marca_conflicto"][:20])
-                )
-                return
-
-            # Fase 2: Sincronización catálogo
-            # OT-FINAL-001: Resolver pilares SQL si está activo y disponible
-            if USE_CALCULO_SQL:
-                avanzar(0.12, f"Fase 2/5: Sincronización de catálogo ({total_skus_btn} SKUs)…")
-                cache = resolver_pilares_evento_sql(proveedor_id, skus_resueltos)
-
-                if cache is None:
-                    # Fallback a método tradicional si SQL falla
-                    st.warning("[WARN] SQL pilares no disponible, usando método tradicional")
-                    avanzar(0.12, f"Fase 2/5: Sincronización catálogo (modo tradicional)…")
-                    cache = build_pillar_cache(proveedor_id, skus_resueltos)
-                    avanzar(0.14, "Fase 2/5: Verificación de materiales…")
-                    prefetch_materiales_para_listado(cache, proveedor_id, skus_resueltos)
-            else:
-                # Método tradicional (hotfix 522)
-                avanzar(0.12, f"Fase 2/5: Sincronización catálogo ({total_skus_btn} SKUs)…")
-                cache = build_pillar_cache(proveedor_id, skus_resueltos)
-                avanzar(0.14, "Fase 2/5: Verificación de materiales…")
-                prefetch_materiales_para_listado(cache, proveedor_id, skus_resueltos)
-
-            grupos = skus_resueltos.groupby("caso_asignado")
-
-            casos_procesados = []
-            skus_omitidos_total = 0
-            confirmados = {}
-
-            total_skus = len(skus_resueltos)
-            skus_procesados = 0
-            pct_base = 0.15
-            pct_span = 0.80
-
-            n_grupos = max(len(grupos), 1)
-            for i, (nombre_caso, skus_grupo) in enumerate(grupos):
-                avanzar(
-                    0.15 + (i / n_grupos) * 0.02,
-                    f"Fase 3/5: Configurando caso «{nombre_caso}» ({len(skus_grupo)} SKUs)…",
-                )
-                print(f"[ENGINE] Iniciando cálculo de caso: '{nombre_caso}' ({len(skus_grupo)} SKUs)")
-                if nombre_caso not in casos_bib:
-                    st.error(f"Error crítico: Caso '{nombre_caso}' no está en la matriz del listado.")
-                    continue
-                
-                caso_params = casos_bib[nombre_caso]
-                marcas_ev = parse_marcas_array(caso_params.get("marcas"))
-                lineas_ev = parse_lineas_array(caso_params.get("lineas"))
-                caso_db = {
-                    "nombre_caso":        caso_params["nombre_caso"],
-                    "dolar_politica":     _to_float(caso_params.get("dolar_politica")) or 8000.0,
-                    "factor_conversion":  _to_float(caso_params.get("factor_conversion")) or 180.0,
-                    "descuento_1":        _to_float(caso_params.get("descuento_1")),
-                    "descuento_2":        _to_float(caso_params.get("descuento_2")),
-                    "descuento_3":        _to_float(caso_params.get("descuento_3")),
-                    "descuento_4":        _to_float(caso_params.get("descuento_4")),
-                    "genera_lpc03_lpc04": bool(caso_params.get("genera_lpc03_lpc04", True)),
-                    "regla_redondeo":     "centena",
-                    "marcas":             marcas_ev if marcas_ev else None,
-                    "lineas":             lineas_ev,
-                    "referencias":        [],
-                    "alcance_tipo":       str(caso_params.get("alcance_tipo") or "marcas"),
-                }
-
-                caso_db_id = caso_params.get("caso_db_id")
-                if caso_db_id is not None and not (
-                    isinstance(caso_db_id, float) and pd.isna(caso_db_id)
-                ):
-                    caso_id = int(caso_db_id)
-                    if not actualizar_caso_evento(caso_id, caso_db):
-                        st.error(f"Fallo al actualizar caso {nombre_caso}.")
-                        continue
-                else:
-                    caso_id = crear_caso(evento_id, caso_db)
-                    if not caso_id:
-                        st.error(f"Fallo al guardar configuración del caso {nombre_caso}.")
-                        continue
-
-                if lineas_ev:
-                    n_exc = reemplazar_lineas_excepcion(
-                        caso_id, lineas_ev, proveedor_id, evento_id
-                    )
-                    print(f"[ENGINE] Contenedor línea→caso '{nombre_caso}': {n_exc} filas")
-
-                casos_procesados.append(caso_db)
-                
-                dolar_ap  = float(caso_db["dolar_politica"])
-                factor_ap = float(caso_db["factor_conversion"])
-                indice_ap = (dolar_ap * factor_ap) / 100
-
-                filas = []
-                skus_omitidos = 0
-
-                # OT-520: Resolver pilares FK (obligatorio para ambos métodos)
-                for _, row in skus_grupo.iterrows():
-                    skus_procesados += 1
-                    pct = pct_base + (skus_procesados / total_skus) * pct_span
-                    avanzar(
-                        pct,
-                        f"Fase 3/5: Cálculo SKU {skus_procesados}/{total_skus} — caso {nombre_caso}",
-                    )
-
-                    fob  = float(row["fob_fabrica"])
-
-                    try:
-                        cod_linea = int(float(str(row.get("linea", 0)).strip() or 0))
-                        cod_ref   = int(float(str(row["referencia"]).strip()))
-                        cod_mat   = int(float(str(row.get("material", 0)).strip() or 0))
-                    except (ValueError, TypeError):
-                        cod_linea = cod_ref = cod_mat = 0
-
-                    descp = str(row.get("descripcion", "")).strip()
-
-                    if not cod_linea or not cod_ref or not cod_mat:
-                        skus_omitidos += 1
-                        continue
-
-                    linea_id = get_or_create_linea_cached(cache, proveedor_id, cod_linea)
-                    ref_id   = get_or_create_referencia_cached(cache, proveedor_id, linea_id, cod_ref) if linea_id else None
-                    mat_id   = get_or_create_material_cached(cache, proveedor_id, cod_mat, descp)
-
-                    if not linea_id or not ref_id or not mat_id:
-                        skus_omitidos += 1
-                        continue
-
-                    # Preparar fila base con pilares FK
-                    fila_base = {
-                        "eid":      evento_id,
-                        "cid":      caso_id,
-                        "marca":    str(row["marca"]),
-                        "lc":       str(cod_linea),
-                        "rc":       str(cod_ref),
-                        "md":       descp or str(cod_mat),
-                        "linea_id_fk": linea_id,
-                        "ref_id_fk":   ref_id,
-                        "mat_id_fk":   mat_id,
-                        "fob":   fob,
-                    }
-
-                    if USE_CALCULO_SQL:
-                        # SQL masivo: solo guardar pilares + fob
-                        filas.append(fila_base)
-                    else:
-                        # Python fila a fila: calcular precio por SKU
-                        calc = calcular_precios_caso(fob, caso_db)
-                        filas.append({
-                            **fila_base,
-                            "foba":  calc["fob_ajustado"],
-                            "lpn":   calc["lpn"],
-                            "lpc03": calc["lpc03"],
-                            "lpc04": calc["lpc04"],
-                            "dolar_ap":      dolar_ap,
-                            "factor_ap":     factor_ap,
-                            "indice_ap":     round(indice_ap, 6),
-                            "d1_ap":         caso_db.get("descuento_1"),
-                            "d2_ap":         caso_db.get("descuento_2"),
-                            "d3_ap":         caso_db.get("descuento_3"),
-                            "d4_ap":         caso_db.get("descuento_4"),
-                            "nombre_caso_ap": caso_db["nombre_caso"],
-                        })
-
-                # Guardar en BD
-                if USE_CALCULO_SQL:
-                    # OT-520: Cálculo SQL masivo
-                    avanzar(
-                        min(0.98, pct_base + (skus_procesados / total_skus) * pct_span + 0.01),
-                        f"Fase 4/5: Resguardo servidor — cargando {len(filas)} SKUs (caso {nombre_caso})",
-                    )
-                    cargar_staging_precio_lista(filas)
-                else:
-                    # Python: INSERT tradicional
-                    avanzar(
-                        min(0.98, pct_base + (skus_procesados / total_skus) * pct_span + 0.01),
-                        f"Fase 4/5: Resguardo servidor — guardando {len(filas)} precios (caso {nombre_caso})",
-                    )
-                    guardar_precio_lista(filas)
-                skus_omitidos_total += skus_omitidos
-                confirmados[f"caso_{i}"] = len(filas)
-                print(
-                    f"[ENGINE] Completado caso '{nombre_caso}' "
-                    f"({len(skus_grupo)} SKUs, {len(filas)} guardados)."
-                )
-
-            # OT-520: Si usamos SQL, ejecutar cálculo masivo al final
-            if USE_CALCULO_SQL:
-                total_staging = sum(confirmados.values()) if confirmados else 0
-                if total_staging > 0:
-                    avanzar(0.98, f"Fase 4/5: Ejecución cálculo masivo en servidor ({total_staging} SKUs)…")
-                    resultado_sql = calcular_precio_lista_sql(evento_id)
-
-                    if resultado_sql.get("error"):
-                        st.error(f"❌ Cálculo SQL falló: {resultado_sql['error']}")
-                        st.warning("⚠️ Intentando fallback Python…")
-                        # TODO: Implementar fallback si es crítico
-                        calc_ok = False
-                    else:
-                        duracion_s = resultado_sql["duracion_ms"] / 1000
-                        st.success(
-                            f"✅ Cálculo SQL completado: {resultado_sql['total']} precios en {duracion_s:.1f}s"
-                        )
-                        # Actualizar confirmados con total real desde SQL
-                        total_guardados = resultado_sql['total']
-                        calc_ok = True
-
-                    # Limpiar staging
-                    limpiar_staging_precio_lista(evento_id)
-                else:
-                    calc_ok = False
-            else:
-                # Python: ya guardado en el loop
-                total_guardados = sum(confirmados.values()) if confirmados else 0
-                calc_ok = total_guardados > 0
-
-            if stats_pilar.get("ley_genero_lineas"):
-                st.info(
-                    f"Ley de género: **{stats_pilar['ley_genero_lineas']}** líneas con "
-                    f"`genero_id` FK en el pilar."
-                )
-
-            if skus_omitidos_total:
-                st.warning(f"⚠️ {skus_omitidos_total} SKU(s) omitidos por pilares nulos. Revisar Excel.")
-
-        if calc_ok:
-            avanzar(0.99, f"Fase 5/5: Consolidación — finalizando {total_guardados:,} precios calculados…")
-            st.session_state["re_casos"] = casos_procesados
-            st.session_state["re_skus_por_caso"] = confirmados
-            avanzar_estado_evento(evento_id, "validado")
-            st.session_state["re_paso"] = 4
-            st.session_state["re_paso3_evento_listo"] = evento_id
-            celebrate_step(
-                "Paso 3",
-                f"{total_guardados:,} precios guardados en precio_lista",
-                modulo="Motor de Precios",
-                handoff="Validación (Paso 4)",
-            )
-            st.rerun()
-        elif evento_id and contar_skus_procesados(evento_id) > 0:
+        if USE_CALCULO_SQL:
             st.warning(
-                "El cálculo parece haber guardado datos en BD pero no se pudo cerrar el paso. "
-                "Usá **Continuar al Paso 4** arriba."
+                "Staging **no** se borró. Podés auditar con: "
+                f"`python scripts/auditar_staging_casos.py --evento {evento_id}`"
             )
+    elif calc_ok and USE_CALCULO_SQL and resultado_sql:
+        duracion_s = float(resultado_sql.get("duracion_ms") or 0) / 1000
+        st.success(
+            f"✅ Cálculo SQL completado: {total_guardados:,} precios en {duracion_s:.1f}s"
+        )
+
+    if stats_pilar.get("ley_genero_lineas"):
+        st.info(
+            f"Ley de género: **{stats_pilar['ley_genero_lineas']}** líneas con "
+            f"`genero_id` FK en el pilar."
+        )
+
+    if skus_omitidos_total:
+        st.warning(f"⚠️ {skus_omitidos_total} SKU(s) omitidos por pilares nulos. Revisar Excel.")
+
+    if calc_ok:
+        st.session_state["re_casos"] = casos_procesados
+        st.session_state["re_skus_por_caso"] = confirmados
+        avanzar_estado_evento(evento_id, "validado")
+        st.session_state["re_paso"] = 4
+        st.session_state["re_paso3_evento_listo"] = evento_id
+        celebrate_step(
+            "Paso 3",
+            f"{total_guardados:,} precios guardados en precio_lista",
+            modulo="Motor de Precios",
+            handoff="Validación (Paso 4)",
+        )
+        st.rerun()
+    elif evento_id and contar_skus_procesados(evento_id) > 0:
+        st.warning(
+            "El cálculo parece haber guardado datos en BD pero no se pudo cerrar el paso. "
+            "Usá **Continuar al Paso 4** arriba."
+        )
 
 
 # ── PASO 4 — Validación final ────────────────────────────────────────────────

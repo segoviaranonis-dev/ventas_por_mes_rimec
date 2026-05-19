@@ -9,6 +9,7 @@ import math
 import zipfile
 from io import BytesIO
 from datetime import date as date_type
+from typing import Callable
 
 import pandas as pd
 from core.database import get_dataframe, commit_query, engine, DBInspector
@@ -368,48 +369,70 @@ def build_pillar_cache(proveedor_id: int, skus_df: pd.DataFrame | None = None) -
         return {"linea": {}, "referencia": {}, "material": {}}
 
 
+def _normalizar_codigos_skus(skus_df: pd.DataFrame) -> pd.DataFrame:
+    """Columnas cod_linea / cod_ref / cod_mat en memoria (sin round-trips)."""
+    df = skus_df.copy()
+    for src, dst in (("linea", "cod_linea"), ("referencia", "cod_ref"), ("material", "cod_mat")):
+        if src in df.columns:
+            df[dst] = df[src].map(_parse_codigo_pilar)
+        else:
+            df[dst] = 0
+    if "descripcion" in df.columns:
+        df["descripcion"] = df["descripcion"].fillna("").astype(str).str.strip()
+    else:
+        df["descripcion"] = ""
+    if "fob_fabrica" in df.columns:
+        df["fob_fabrica"] = pd.to_numeric(df["fob_fabrica"], errors="coerce").fillna(0.0)
+    else:
+        df["fob_fabrica"] = 0.0
+    return df
+
+
 def prefetch_materiales_para_listado(
     cache: dict, proveedor_id: int, skus_df: pd.DataFrame
 ) -> int:
     """
-    Alta en lote de materiales faltantes (un viaje a BD por código nuevo).
+    Alta en lote de materiales faltantes (1 SELECT + N INSERT en una transacción).
     Evita 1 round-trip por SKU en get_or_create_material_cached.
     """
     if skus_df is None or skus_df.empty:
         return 0
+    norm = _normalizar_codigos_skus(skus_df)
     pending: dict[int, str] = {}
-    for _, row in skus_df.iterrows():
-        cod = _parse_codigo_pilar(row.get("material"))
+    for cod, desc in zip(norm["cod_mat"], norm["descripcion"]):
+        cod = int(cod or 0)
         if not cod or cod in cache["material"]:
             continue
-        desc = str(row.get("descripcion", "")).strip()
-        if cod not in pending or (desc and not pending[cod]):
-            pending[cod] = desc
+        d = str(desc or "").strip()
+        if cod not in pending or (d and not pending[cod]):
+            pending[cod] = d
     if not pending:
         return 0
     creados = 0
     try:
         with engine.begin() as conn:
-            for cod, desc in pending.items():
-                row = conn.execute(
-                    text(
-                        """
-                        SELECT id, descripcion FROM material
-                        WHERE proveedor_id = :pid AND codigo_proveedor = :cod
-                        LIMIT 1
-                        """
-                    ),
-                    {"pid": proveedor_id, "cod": cod},
-                ).fetchone()
-                if row:
-                    mat_id = int(row[0])
-                    cache["material"][cod] = mat_id
-                    if desc and (row[1] is None or str(row[1]).strip() == ""):
-                        conn.execute(
-                            text("UPDATE material SET descripcion = :desc WHERE id = :mid"),
-                            {"desc": desc, "mid": mat_id},
-                        )
-                    continue
+            existentes = conn.execute(
+                text(
+                    """
+                    SELECT codigo_proveedor, id, descripcion
+                    FROM material
+                    WHERE proveedor_id = :pid
+                      AND codigo_proveedor = ANY(:codes)
+                    """
+                ),
+                {"pid": proveedor_id, "codes": list(pending.keys())},
+            ).fetchall()
+            for cod_prov, mat_id, desc_bd in existentes:
+                cod = int(cod_prov)
+                cache["material"][cod] = int(mat_id)
+                desc = pending.get(cod, "")
+                if desc and (desc_bd is None or str(desc_bd).strip() == ""):
+                    conn.execute(
+                        text("UPDATE material SET descripcion = :desc WHERE id = :mid"),
+                        {"desc": desc, "mid": int(mat_id)},
+                    )
+            faltan = [c for c in pending if c not in cache["material"]]
+            for cod in faltan:
                 row = conn.execute(
                     text(
                         """
@@ -417,7 +440,11 @@ def prefetch_materiales_para_listado(
                         VALUES (:pid, :cod, :desc) RETURNING id
                         """
                     ),
-                    {"pid": proveedor_id, "cod": cod, "desc": desc or None},
+                    {
+                        "pid": proveedor_id,
+                        "cod": cod,
+                        "desc": pending[cod] or None,
+                    },
                 ).fetchone()
                 if row:
                     cache["material"][cod] = int(row[0])
@@ -432,6 +459,162 @@ def prefetch_materiales_para_listado(
     except Exception as e:
         DBInspector.log(f"[ENGINE] prefetch_materiales falló: {e}", "ERROR")
         return 0
+
+
+def prefetch_pilares_faltantes_listado(
+    cache: dict, proveedor_id: int, skus_df: pd.DataFrame
+) -> dict:
+    """
+    Completa caché de línea/referencia solo para códigos únicos faltantes (no por SKU).
+    Tras asegurar_pilares + build_pillar_cache + prefetch_materiales.
+    """
+    stats = {"lineas": 0, "referencias": 0}
+    if skus_df is None or skus_df.empty:
+        return stats
+    norm = _normalizar_codigos_skus(skus_df)
+    faltan_lineas = {
+        int(c)
+        for c in norm.loc[norm["cod_linea"] > 0, "cod_linea"].unique()
+        if int(c) not in cache["linea"]
+    }
+    for cod in faltan_lineas:
+        lid = get_or_create_linea(proveedor_id, cod)
+        if lid:
+            cache["linea"][cod] = lid
+            stats["lineas"] += 1
+
+    pares_ref: set[tuple[int, int]] = set()
+    for cod_ln, cod_ref in zip(norm["cod_linea"], norm["cod_ref"]):
+        ln, rf = int(cod_ln or 0), int(cod_ref or 0)
+        if not ln or not rf:
+            continue
+        lid = cache["linea"].get(ln)
+        if not lid:
+            continue
+        if (int(lid), rf) not in cache["referencia"]:
+            pares_ref.add((int(lid), rf))
+
+    for lid, rf in pares_ref:
+        rid = get_or_create_referencia(proveedor_id, lid, rf)
+        if rid:
+            cache["referencia"][(lid, rf)] = rid
+            stats["referencias"] += 1
+
+    if stats["lineas"] or stats["referencias"]:
+        DBInspector.log(
+            f"[ENGINE] Prefetch pilares faltantes: +{stats['lineas']} líneas, "
+            f"+{stats['referencias']} referencias",
+            "SUCCESS",
+        )
+    return stats
+
+
+def preparar_filas_staging_bulk(
+    skus_df: pd.DataFrame,
+    *,
+    evento_id: int,
+    caso_id: int,
+    cache: dict,
+    caso_db: dict | None = None,
+    usar_sql: bool = True,
+    on_progress: Callable[[dict], None] | None = None,
+) -> tuple[list[dict], int]:
+    """
+    Resuelve FK pilares en memoria (caché) y arma filas para staging o precio_lista.
+    Sin barra de progreso ni consultas por SKU.
+    """
+    if skus_df is None or skus_df.empty:
+        return [], 0
+
+    def _prog(phase: str, **kw) -> None:
+        if on_progress:
+            on_progress({"phase": phase, "caso_id": caso_id, **kw})
+
+    _prog("normalize", total=len(skus_df))
+    df = _normalizar_codigos_skus(skus_df)
+    df["linea_id"] = df["cod_linea"].map(cache["linea"])
+    df["ref_id"] = [
+        cache["referencia"].get((int(lid), int(rc)))
+        if pd.notna(lid) and lid and rc
+        else None
+        for lid, rc in zip(df["linea_id"], df["cod_ref"])
+    ]
+    df["mat_id"] = df["cod_mat"].map(cache["material"])
+
+    valid = (
+        (df["cod_linea"] > 0)
+        & (df["cod_ref"] > 0)
+        & (df["cod_mat"] > 0)
+        & df["linea_id"].notna()
+        & pd.notna(df["ref_id"])
+        & df["mat_id"].notna()
+    )
+    omitidos = int((~valid).sum())
+    validos = int(valid.sum())
+    _prog("resolve_fk", validos=validos, omitidos=omitidos)
+    if not valid.any():
+        return [], omitidos
+
+    df_ok = df.loc[valid]
+    filas: list[dict] = []
+
+    if usar_sql:
+        for rec in df_ok.to_dict("records"):
+            filas.append(
+                {
+                    "eid": evento_id,
+                    "cid": caso_id,
+                    "marca": str(rec.get("marca", "")),
+                    "lc": str(int(rec["cod_linea"])),
+                    "rc": str(int(rec["cod_ref"])),
+                    "md": rec["descripcion"] or str(int(rec["cod_mat"])),
+                    "linea_id_fk": int(rec["linea_id"]),
+                    "ref_id_fk": int(rec["ref_id"]),
+                    "mat_id_fk": int(rec["mat_id"]),
+                    "fob": float(rec["fob_fabrica"]),
+                }
+            )
+        _prog("build_rows", filas=len(filas), validos=validos, omitidos=omitidos)
+        return filas, omitidos
+
+    if not caso_db:
+        return [], omitidos + len(df_ok)
+
+    dolar_ap = float(caso_db["dolar_politica"])
+    factor_ap = float(caso_db["factor_conversion"])
+    indice_ap = round((dolar_ap * factor_ap) / 100, 6)
+
+    for rec in df_ok.to_dict("records"):
+        fob = float(rec["fob_fabrica"])
+        calc = calcular_precios_caso(fob, caso_db)
+        filas.append(
+            {
+                "eid": evento_id,
+                "cid": caso_id,
+                "marca": str(rec.get("marca", "")),
+                "lc": str(int(rec["cod_linea"])),
+                "rc": str(int(rec["cod_ref"])),
+                "md": rec["descripcion"] or str(int(rec["cod_mat"])),
+                "linea_id_fk": int(rec["linea_id"]),
+                "ref_id_fk": int(rec["ref_id"]),
+                "mat_id_fk": int(rec["mat_id"]),
+                "fob": fob,
+                "foba": calc["fob_ajustado"],
+                "lpn": calc["lpn"],
+                "lpc03": calc["lpc03"],
+                "lpc04": calc["lpc04"],
+                "dolar_ap": dolar_ap,
+                "factor_ap": factor_ap,
+                "indice_ap": indice_ap,
+                "d1_ap": caso_db.get("descuento_1"),
+                "d2_ap": caso_db.get("descuento_2"),
+                "d3_ap": caso_db.get("descuento_3"),
+                "d4_ap": caso_db.get("descuento_4"),
+                "nombre_caso_ap": caso_db["nombre_caso"],
+            }
+        )
+    _prog("build_rows", filas=len(filas), validos=validos, omitidos=omitidos)
+    return filas, omitidos
 
 
 def get_or_create_linea_cached(cache: dict, proveedor_id: int, codigo_proveedor: int) -> int | None:
@@ -1196,22 +1379,49 @@ def _insert_linea_en_contenedor(
     cod_int: int,
     evento_id: int | None,
 ) -> bool:
-    """INSERT en contenedor; compatible con BD sin columna evento_id (pre-043)."""
+    """INSERT en contenedor; compatible con BD sin índice único 043 (DELETE + INSERT)."""
     if evento_id is not None:
-        ok = commit_query(
-            """INSERT INTO precio_evento_linea_excepcion (caso_id, linea_id, evento_id)
-               SELECT :cid, id, :eid FROM linea
-               WHERE proveedor_id = :pid AND codigo_proveedor = :cod
-                 AND NOT EXISTS (
-                     SELECT 1 FROM precio_evento_linea_excepcion x
-                     WHERE x.caso_id = :cid AND x.linea_id = linea.id
-                 )
-               LIMIT 1""",
-            {"cid": caso_id, "pid": proveedor_id, "cod": cod_int, "eid": evento_id},
-            show_error=False,
-        )
-        if ok:
-            return True
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        """DELETE FROM precio_evento_linea_excepcion pele
+                           USING linea l
+                           WHERE pele.evento_id = :eid
+                             AND pele.linea_id = l.id
+                             AND l.proveedor_id = :pid
+                             AND l.codigo_proveedor = :cod
+                             AND pele.caso_id <> :cid"""
+                    ),
+                    {
+                        "cid": caso_id,
+                        "pid": proveedor_id,
+                        "cod": cod_int,
+                        "eid": evento_id,
+                    },
+                )
+                r = conn.execute(
+                    text(
+                        """INSERT INTO precio_evento_linea_excepcion (caso_id, linea_id, evento_id)
+                           SELECT :cid, l.id, :eid FROM linea l
+                           WHERE l.proveedor_id = :pid AND l.codigo_proveedor = :cod
+                             AND NOT EXISTS (
+                                 SELECT 1 FROM precio_evento_linea_excepcion x
+                                 WHERE x.caso_id = :cid AND x.linea_id = l.id
+                             )
+                           LIMIT 1"""
+                    ),
+                    {
+                        "cid": caso_id,
+                        "pid": proveedor_id,
+                        "cod": cod_int,
+                        "eid": evento_id,
+                    },
+                )
+                return int(r.rowcount or 0) > 0
+        except Exception as e:
+            DBInspector.log(f"[ENGINE] contenedor línea {cod_int}: {e}", "ERROR")
+            return False
     return commit_query(
         """INSERT INTO precio_evento_linea_excepcion (caso_id, linea_id)
            SELECT :cid, id FROM linea
@@ -1260,9 +1470,18 @@ def _insert_lineas_contenedor_bulk(
     params = {"cid": caso_id, "pid": proveedor_id, "codes": codigos}
     if evento_id is not None:
         params["eid"] = evento_id
+        sql_delete_otros_casos = """
+            DELETE FROM precio_evento_linea_excepcion pele
+            USING linea l
+            WHERE pele.evento_id = :eid
+              AND pele.linea_id = l.id
+              AND l.proveedor_id = :pid
+              AND l.codigo_proveedor = ANY(:codes)
+              AND pele.caso_id <> :cid
+        """
         sql = """
             INSERT INTO precio_evento_linea_excepcion (caso_id, linea_id, evento_id)
-            SELECT :cid, l.id, :eid
+            SELECT DISTINCT ON (l.id) :cid, l.id, :eid
             FROM linea l
             WHERE l.proveedor_id = :pid
               AND l.codigo_proveedor = ANY(:codes)
@@ -1270,6 +1489,7 @@ def _insert_lineas_contenedor_bulk(
                   SELECT 1 FROM precio_evento_linea_excepcion x
                   WHERE x.caso_id = :cid AND x.linea_id = l.id
               )
+            ORDER BY l.id
         """
     else:
         sql = """
@@ -1285,15 +1505,13 @@ def _insert_lineas_contenedor_bulk(
         """
     try:
         with engine.begin() as conn:
+            if evento_id is not None:
+                conn.execute(text(sql_delete_otros_casos), params)
             result = conn.execute(text(sql), params)
             return int(result.rowcount or 0)
     except Exception as e:
         DBInspector.log(f"[ENGINE] bulk contenedor caso {caso_id}: {e}", "ERROR")
-        n = 0
-        for cod_int in codigos:
-            if _insert_linea_en_contenedor(caso_id, proveedor_id, cod_int, evento_id):
-                n += 1
-        return n
+        return 0
 
 
 def reemplazar_lineas_excepcion(
@@ -1412,13 +1630,70 @@ def guardar_precio_lista(filas: list[dict]):
 # CÁLCULO SQL MASIVO (OT-520)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def cargar_staging_precio_lista(filas: list[dict]):
+def diagnostico_staging_evento(conn, evento_id: int) -> dict:
+    """Auditoría staging vs precio_evento_caso (detecta INNER JOIN vacío en 053b)."""
+    out = {
+        "staging_total": 0,
+        "sin_caso_fk": 0,
+        "caso_otro_evento": 0,
+        "caso_ids_staging": [],
+        "caso_ids_invalidos": [],
+    }
+    row = conn.execute(
+        text("SELECT COUNT(*) FROM precio_lista_staging WHERE evento_id = :eid"),
+        {"eid": evento_id},
+    ).fetchone()
+    out["staging_total"] = int(row[0]) if row else 0
+
+    rows = conn.execute(
+        text(
+            """SELECT DISTINCT s.caso_id::text,
+                      c.id IS NOT NULL AS ok,
+                      c.evento_id
+               FROM precio_lista_staging s
+               LEFT JOIN precio_evento_caso c ON s.caso_id = c.id
+               WHERE s.evento_id = :eid
+               ORDER BY 1"""
+        ),
+        {"eid": evento_id},
+    ).fetchall()
+    for caso_id, ok, caso_evento in rows:
+        out["caso_ids_staging"].append(caso_id)
+        if not ok:
+            out["sin_caso_fk"] += 1
+            out["caso_ids_invalidos"].append(caso_id)
+        elif caso_evento is not None and int(caso_evento) != int(evento_id):
+            out["caso_otro_evento"] += 1
+
+    sin_fk = conn.execute(
+        text(
+            """SELECT COUNT(*) FROM precio_lista_staging s
+               LEFT JOIN precio_evento_caso c ON s.caso_id = c.id
+               WHERE s.evento_id = :eid AND c.id IS NULL"""
+        ),
+        {"eid": evento_id},
+    ).scalar()
+    out["sin_caso_fk"] = int(sin_fk or 0)
+    return out
+
+
+def cargar_staging_precio_lista(filas: list[dict], evento_id: int | None = None):
     """
     Carga SKUs pre-resueltos en precio_lista_staging para cálculo SQL masivo.
     Requiere: evento_id, caso_id, marca, linea_id, referencia_id, material_id, fob_fabrica
     """
     if not filas:
         return 0
+
+    caso_ids_py = sorted(
+        {int(f.get("cid") or f.get("caso_id")) for f in filas if f.get("cid") or f.get("caso_id")}
+    )
+    eid_log = evento_id or filas[0].get("eid") or filas[0].get("evento_id")
+    DBInspector.log(
+        f"[DEBUG-SQL] Pre-staging evento={eid_log} filas={len(filas)} "
+        f"caso_ids Python={caso_ids_py}",
+        "INFO",
+    )
 
     try:
         with engine.begin() as conn:
@@ -1445,8 +1720,20 @@ def cargar_staging_precio_lista(filas: list[dict]):
                                 :fob_fabrica, :linea_codigo, :ref_codigo, :material_desc)"""),
                 filas_staging,
             )
-            DBInspector.log(f"[ENGINE-SQL] Staging cargado: {len(filas)} SKUs", "SUCCESS")
-            return len(filas)
+            n = len(filas)
+            eid = int(eid_log) if eid_log is not None else int(filas_staging[0]["evento_id"])
+            diag = diagnostico_staging_evento(conn, eid)
+            DBInspector.log(
+                f"[ENGINE-SQL] Staging cargado: {n} SKUs | en BD={diag['staging_total']} "
+                f"| sin FK caso={diag['sin_caso_fk']}",
+                "SUCCESS" if diag["sin_caso_fk"] == 0 else "ERROR",
+            )
+            if diag["sin_caso_fk"] > 0:
+                DBInspector.log(
+                    f"[DEBUG-SQL] caso_id inválidos en staging: {diag['caso_ids_invalidos']}",
+                    "ERROR",
+                )
+            return n
     except Exception as e:
         DBInspector.log(f"[ENGINE-SQL] Staging carga falló: {e}", "ERROR")
         return 0
@@ -1455,29 +1742,105 @@ def cargar_staging_precio_lista(filas: list[dict]):
 def calcular_precio_lista_sql(evento_id: int) -> dict:
     """
     Ejecuta cálculo masivo SQL para evento_id.
-    Retorna: {"total": int, "duracion_ms": float, "error": str|None}
+    Retorna: total, duracion_ms, error, diagnostico staging (053b col error = row[2]).
     """
+    base = {
+        "total": 0,
+        "duracion_ms": 0.0,
+        "error": None,
+        "staging_total": 0,
+        "staging_sin_caso": 0,
+        "caso_ids_staging": [],
+    }
     try:
         with engine.begin() as conn:
+            diag_antes = diagnostico_staging_evento(conn, evento_id)
+            base.update(
+                {
+                    "staging_total": diag_antes["staging_total"],
+                    "staging_sin_caso": diag_antes["sin_caso_fk"],
+                    "caso_ids_staging": diag_antes["caso_ids_staging"],
+                }
+            )
+            DBInspector.log(
+                f"[DEBUG-SQL] Pre-cálculo evento={evento_id} staging={diag_antes['staging_total']} "
+                f"sin_caso_fk={diag_antes['sin_caso_fk']} casos={diag_antes['caso_ids_staging']}",
+                "INFO",
+            )
+            if diag_antes["staging_total"] == 0:
+                return {
+                    **base,
+                    "error": "precio_lista_staging vacío para este evento antes del cálculo SQL.",
+                }
+            if diag_antes["sin_caso_fk"] > 0:
+                return {
+                    **base,
+                    "error": (
+                        f"{diag_antes['sin_caso_fk']} fila(s) en staging con caso_id que no existe "
+                        f"en precio_evento_caso: {diag_antes['caso_ids_invalidos']}"
+                    ),
+                }
+
             result = conn.execute(
                 text("SELECT * FROM calcular_precio_lista_evento_sql(:eid)"),
-                {"eid": evento_id}
+                {"eid": evento_id},
             )
             row = result.fetchone()
-            if row:
-                total = int(row[0])
-                duracion_ms = float(row[1])
-                DBInspector.log(
-                    f"[ENGINE-SQL] Cálculo masivo completado: {total} filas en {duracion_ms:.0f}ms",
-                    "SUCCESS"
+            if not row:
+                return {**base, "error": "La función SQL no devolvió filas."}
+
+            total = int(row[0] or 0)
+            duracion_ms = float(row[1] or 0)
+            sql_err = None
+            if len(row) > 2 and row[2] is not None and str(row[2]).strip():
+                sql_err = str(row[2]).strip()
+
+            if sql_err:
+                DBInspector.log(f"[ENGINE-SQL] Función reportó error: {sql_err}", "ERROR")
+                return {
+                    **base,
+                    "total": total,
+                    "duracion_ms": duracion_ms,
+                    "error": sql_err,
+                }
+
+            if total == 0:
+                joinable = conn.execute(
+                    text(
+                        """SELECT COUNT(*) FROM precio_lista_staging s
+                           INNER JOIN precio_evento_caso c ON s.caso_id = c.id
+                           WHERE s.evento_id = :eid"""
+                    ),
+                    {"eid": evento_id},
+                ).scalar()
+                msg = (
+                    "calcular_precio_lista_evento_sql insertó 0 filas. "
+                    f"Staging={diag_antes['staging_total']}, "
+                    f"filas que pasan INNER JOIN caso={int(joinable or 0)}. "
+                    "Revisá migración 053b y caso_id en staging."
                 )
-                return {"total": total, "duracion_ms": duracion_ms, "error": None}
-            else:
-                return {"total": 0, "duracion_ms": 0, "error": "Sin resultado"}
+                DBInspector.log(f"[ENGINE-SQL] {msg}", "ERROR")
+                return {
+                    **base,
+                    "total": 0,
+                    "duracion_ms": duracion_ms,
+                    "error": msg,
+                }
+
+            DBInspector.log(
+                f"[ENGINE-SQL] Cálculo masivo OK: {total} filas en {duracion_ms:.0f}ms",
+                "SUCCESS",
+            )
+            return {
+                **base,
+                "total": total,
+                "duracion_ms": duracion_ms,
+                "error": None,
+            }
     except Exception as e:
         error_msg = str(e)
         DBInspector.log(f"[ENGINE-SQL] Cálculo SQL falló: {error_msg}", "ERROR")
-        return {"total": 0, "duracion_ms": 0, "error": error_msg}
+        return {**base, "error": error_msg}
 
 
 def limpiar_staging_precio_lista(evento_id: int = None):
@@ -1496,106 +1859,6 @@ def limpiar_staging_precio_lista(evento_id: int = None):
             DBInspector.log("[ENGINE-SQL] Staging limpiado completamente", "SUCCESS")
     except Exception as e:
         DBInspector.log(f"[ENGINE-SQL] Limpieza staging falló: {e}", "ERROR")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# RESOLUCION FK PILARES SQL MASIVO (OT-524 / FINAL-001)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def resolver_pilares_evento_sql(proveedor_id: int, skus_df: pd.DataFrame) -> dict:
-    """
-    Resolución FK pilares set-based SQL (migración 054).
-    Reemplaza build_pillar_cache + loops get_or_create.
-
-    Returns: {"linea": {cod: id}, "referencia": {(linea_id, cod): id}, "material": {cod: id}}
-    """
-    if skus_df is None or skus_df.empty:
-        return {"linea": {}, "referencia": {}, "material": {}}
-
-    # Extraer códigos únicos del DataFrame
-    linea_codes = set()
-    ref_codes = set()
-    ref_linea_map = {}  # {cod_ref: cod_linea}
-    mat_codes = set()
-    mat_descs = {}  # {cod_mat: descripcion}
-
-    for _, row in skus_df.iterrows():
-        try:
-            cod_linea = int(float(str(row.get("linea", 0)).strip() or 0))
-            cod_ref = int(float(str(row.get("referencia", "0")).strip() or 0))
-            cod_mat = int(float(str(row.get("material", 0)).strip() or 0))
-            desc_mat = str(row.get("descripcion", "")).strip()
-
-            if cod_linea > 0:
-                linea_codes.add(cod_linea)
-            if cod_ref > 0:
-                ref_codes.add(cod_ref)
-                ref_linea_map[cod_ref] = cod_linea
-            if cod_mat > 0:
-                mat_codes.add(cod_mat)
-                if desc_mat and cod_mat not in mat_descs:
-                    mat_descs[cod_mat] = desc_mat
-        except (ValueError, TypeError):
-            continue
-
-    if not (linea_codes or ref_codes or mat_codes):
-        return {"linea": {}, "referencia": {}, "material": {}}
-
-    # Preparar arrays para SQL
-    linea_arr = list(linea_codes) if linea_codes else [0]
-    ref_arr = list(ref_codes) if ref_codes else [0]
-    ref_linea_arr = [ref_linea_map.get(r, 0) for r in ref_arr] if ref_codes else [0]
-    mat_arr = list(mat_codes) if mat_codes else [0]
-    mat_desc_arr = [mat_descs.get(m, "") for m in mat_arr] if mat_codes else [""]
-
-    try:
-        with engine.connect() as conn:
-            result = conn.execute(
-                text("""
-                    SELECT tipo, codigo_proveedor, pilar_id, linea_id_ref
-                    FROM resolver_pilares_sql(
-                        :prov_id,
-                        :linea_codes::int[],
-                        :ref_codes::int[],
-                        :ref_linea_codes::int[],
-                        :mat_codes::int[],
-                        :mat_descs::text[]
-                    )
-                """),
-                {
-                    "prov_id": proveedor_id,
-                    "linea_codes": linea_arr,
-                    "ref_codes": ref_arr,
-                    "ref_linea_codes": ref_linea_arr,
-                    "mat_codes": mat_arr,
-                    "mat_descs": mat_desc_arr
-                }
-            )
-
-            cache = {"linea": {}, "referencia": {}, "material": {}}
-
-            for row in result:
-                tipo, codigo, pilar_id, linea_id_ref = row
-
-                if tipo == "linea":
-                    cache["linea"][int(codigo)] = int(pilar_id)
-                elif tipo == "referencia":
-                    cache["referencia"][(int(linea_id_ref), int(codigo))] = int(pilar_id)
-                elif tipo == "material":
-                    cache["material"][int(codigo)] = int(pilar_id)
-
-            DBInspector.log(
-                f"[ENGINE-SQL] Pilares FK resueltos: {len(cache['linea'])} lineas, "
-                f"{len(cache['referencia'])} refs, {len(cache['material'])} mats",
-                "SUCCESS"
-            )
-
-            return cache
-
-    except Exception as e:
-        DBInspector.log(f"[ENGINE-SQL] resolver_pilares_evento_sql falló: {e}", "ERROR")
-        # Fallback a None para que ui.py use método tradicional
-        return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2469,6 +2732,15 @@ def purgar_solo_eventos_precio() -> tuple[bool, dict]:
     )
     try:
         with engine.begin() as conn:
+            reg_stg = conn.execute(
+                text("SELECT to_regclass('public.precio_lista_staging')")
+            ).scalar()
+            staging_antes = 0
+            if reg_stg:
+                staging_antes = int(
+                    conn.execute(text("SELECT COUNT(*) FROM precio_lista_staging")).fetchone()[0]
+                )
+
             antes = {
                 "eventos": int(
                     conn.execute(text("SELECT COUNT(*) FROM precio_evento")).fetchone()[0]
@@ -2484,6 +2756,7 @@ def purgar_solo_eventos_precio() -> tuple[bool, dict]:
                         text("SELECT COUNT(*) FROM precio_evento_linea_excepcion")
                     ).fetchone()[0]
                 ),
+                "staging": staging_antes,
             }
 
             conn.execute(
@@ -2508,6 +2781,11 @@ def purgar_solo_eventos_precio() -> tuple[bool, dict]:
                         text(f"TRUNCATE TABLE public.{tbl} RESTART IDENTITY CASCADE")
                     )
 
+            if reg_stg:
+                conn.execute(
+                    text("TRUNCATE TABLE public.precio_lista_staging RESTART IDENTITY")
+                )
+
             despues = {
                 "eventos": int(
                     conn.execute(text("SELECT COUNT(*) FROM precio_evento")).fetchone()[0]
@@ -2528,6 +2806,7 @@ def purgar_solo_eventos_precio() -> tuple[bool, dict]:
             "casos_evento_eliminados": antes["casos_evento"],
             "skus_eliminados": antes["skus"],
             "lineas_contenedor_eliminadas": antes["lineas_contenedor"],
+            "staging_eliminados": antes["staging"],
             "eventos_restantes": despues["eventos"],
             "linea_pilares": despues["linea"],
             "referencia_pilares": despues["referencia"],
