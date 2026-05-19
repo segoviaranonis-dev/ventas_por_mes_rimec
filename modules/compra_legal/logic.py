@@ -67,8 +67,8 @@ def _get_next_traspaso_num_conn(conn, anio: int) -> str:
 
 def _resolve_combinacion_id(
     conn,
-    linea_cod:    str,
-    ref_cod:      str,
+    linea_codigo_proveedor:    str,
+    referencia_codigo_proveedor: str,
     descp_material: str,
     descp_color:    str,
     talla_cod:    str,       # "33", "34", …, "40"
@@ -93,8 +93,8 @@ def _resolve_combinacion_id(
         JOIN color      col ON col.id = c.color_id     AND col.nombre         = :col
         LIMIT 1
     """), {
-        "linea": str(linea_cod).strip(),
-        "ref":   str(ref_cod).strip(),
+        "linea": str(linea_codigo_proveedor).strip(),
+        "ref":   str(referencia_codigo_proveedor).strip(),
         "talla": str(talla_cod).strip(),
         "mat":   str(descp_material).strip(),
         "col":   str(descp_color).strip(),
@@ -124,8 +124,8 @@ def _resolve_combinacion_id(
           AND tl.talla_etiqueta  = :talla
         LIMIT 1
     """), {
-        "linea": str(linea_cod).strip(),
-        "ref":   str(ref_cod).strip(),
+        "linea": str(linea_codigo_proveedor).strip(),
+        "ref":   str(referencia_codigo_proveedor).strip(),
         "mat":   str(descp_material).strip(),
         "col":   str(descp_color).strip(),
         "talla": str(talla_cod).strip(),

@@ -1,0 +1,45 @@
+---
+description: P0 — Nomenclatura única de pilares (FK, código proveedor, descripción). Ley obligatoria en todo Nexus.
+alwaysApply: true
+---
+
+# P0 — Nomenclatura única de pilares
+
+**Prioridad máxima.** Un solo proyecto = un solo léxico. Si el Director dice «línea», en código es `linea` con las reglas de abajo — no inventar sinónimos.
+
+Doc canónico: `control_central/docs/RIMEC_NOMENCLATURA_PILARES.md`  
+OT de normalización: `ot/en_curso/OT-NOMENCLATURA-PILARES-001.md`
+
+## Los tres datos de cada pilar
+
+| Concepto | Nombre canónico | Tipo | Ejemplo |
+|----------|-----------------|------|---------|
+| ID Nexus (PK / FK) | `id` en catálogo · `{pilar}_id` en tablas hijas | `bigint` | `linea.id`, `precio_lista.linea_id` |
+| Código del proveedor | `codigo_proveedor` | `bigint` (entero; ley STYLE) | `1184` en `1184.100` |
+| Texto humano | `descp_{concepto}` o columna documentada del pilar | `text` | `linea_referencia.descp_tipo_1` |
+
+Pilares: `linea`, `referencia`, `material`, `color`, `talla` (grada).
+
+## Reglas obligatorias
+
+1. **FK siempre** `{pilar}_id` → `linea_id`, `referencia_id`, `material_id`, `color_id`, `talla_id`.  
+   JOIN: `l.id = pl.linea_id` — **nunca** `l.id::text = pl.linea_codigo`.
+
+2. **Código proveedor** en tabla catálogo: solo `codigo_proveedor`.  
+   **Prohibido** en código nuevo: `codigo_linea`, `codi_linea`, `id_linea`, `linea_cod`, `ref_cod` sueltos.
+
+3. **Copia denormalizada** (staging, `precio_lista`, JSON): `{pilar}_codigo_proveedor` (`bigint`).  
+   Legacy `linea_codigo` / `referencia_codigo` en vistas: no usar en Python/SQL nuevo; migrar en OT-NOMENCLATURA.
+
+4. **Excel STYLE** `1184.100` → parsear con `pillar_parse.parsear_linea_referencia` → enteros `1184` y `100` (no float).
+
+5. **UI español** puede decir «Línea» / «Ref.»; variables, columnas SQL y dict keys = nombres canónicos.
+
+6. **Cambio de nombre** = migración SQL + actualizar doc + una fase del OT; no mezclar dos nombres en el mismo PR sin plan.
+
+## Checklist antes de merge
+
+- [ ] ¿FK usa `{pilar}_id`?
+- [ ] ¿Código proveedor es `codigo_proveedor` o `{pilar}_codigo_proveedor` denormalizado?
+- [ ] ¿Sin alias nuevos tipo `codigo_linea`?
+- [ ] ¿JOINs alineados a `RIMEC_NOMENCLATURA_PILARES.md`?

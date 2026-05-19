@@ -34,8 +34,8 @@ CANON = (
     "origen_tienda",
     "tipo_movimiento",
     "fecha_mov",
-    "linea_code",
-    "referencia_code",
+    "linea_codigo_proveedor",
+    "referencia_codigo_proveedor",
     "material_id",
     "color_id",
     "grada",
@@ -114,33 +114,33 @@ def map_header_to_canon(col: str) -> str | None:
         "fecha doc": "fecha_mov",
         "f mov": "fecha_mov",
         # Línea / referencia
-        "linea": "linea_code",
-        "línea": "linea_code",
-        "linea codigo": "linea_code",
-        "línea codigo": "linea_code",
-        "cod linea": "linea_code",
-        "cod. linea": "linea_code",
-        "código linea": "linea_code",
-        "codigo linea": "linea_code",
-        "cod línea": "linea_code",
-        "nro linea": "linea_code",
-        "n° linea": "linea_code",
-        "nº linea": "linea_code",
-        "linea cod": "linea_code",
-        "codigo de linea": "linea_code",
-        "referencia": "referencia_code",
-        "ref": "referencia_code",
-        "ref.": "referencia_code",
-        "referencia codigo": "referencia_code",
-        "referencia código": "referencia_code",
-        "cod referencia": "referencia_code",
-        "cod. referencia": "referencia_code",
-        "cod ref": "referencia_code",
-        "cod. ref": "referencia_code",
-        "código referencia": "referencia_code",
-        "nro referencia": "referencia_code",
-        "n° referencia": "referencia_code",
-        "nº referencia": "referencia_code",
+        "linea": "linea_codigo_proveedor",
+        "línea": "linea_codigo_proveedor",
+        "linea codigo": "linea_codigo_proveedor",
+        "línea codigo": "linea_codigo_proveedor",
+        "cod linea": "linea_codigo_proveedor",
+        "cod. linea": "linea_codigo_proveedor",
+        "código linea": "linea_codigo_proveedor",
+        "codigo linea": "linea_codigo_proveedor",
+        "cod línea": "linea_codigo_proveedor",
+        "nro linea": "linea_codigo_proveedor",
+        "n° linea": "linea_codigo_proveedor",
+        "nº linea": "linea_codigo_proveedor",
+        "linea cod": "linea_codigo_proveedor",
+        "codigo de linea": "linea_codigo_proveedor",
+        "referencia": "referencia_codigo_proveedor",
+        "ref": "referencia_codigo_proveedor",
+        "ref.": "referencia_codigo_proveedor",
+        "referencia codigo": "referencia_codigo_proveedor",
+        "referencia código": "referencia_codigo_proveedor",
+        "cod referencia": "referencia_codigo_proveedor",
+        "cod. referencia": "referencia_codigo_proveedor",
+        "cod ref": "referencia_codigo_proveedor",
+        "cod. ref": "referencia_codigo_proveedor",
+        "código referencia": "referencia_codigo_proveedor",
+        "nro referencia": "referencia_codigo_proveedor",
+        "n° referencia": "referencia_codigo_proveedor",
+        "nº referencia": "referencia_codigo_proveedor",
         # Material / color (códigos proveedor)
         "material": "material_id",
         "material id": "material_id",
@@ -215,12 +215,12 @@ def map_header_to_canon(col: str) -> str | None:
         (re.compile(r"tipo\s*mov|movimiento|tipo\s*de\s*mov", re.I), "tipo_movimiento"),
         (re.compile(r"^(fecha|f\.?)\b.*(mov|doc|oper)", re.I), "fecha_mov"),
         (re.compile(r"^(fecha)\b$", re.I), "fecha_mov"),
-        (re.compile(r"(cod|nro|n°|nº|#).*\blinea", re.I), "linea_code"),
-        (re.compile(r"\blinea\b.*(cod|nro|n°|id)\b", re.I), "linea_code"),
-        (re.compile(r"^linea$", re.I), "linea_code"),
-        (re.compile(r"(cod|nro|n°|nº|#).*\brefer", re.I), "referencia_code"),
-        (re.compile(r"\bref(erencia)?\b.*(cod|nro|n°|id)\b", re.I), "referencia_code"),
-        (re.compile(r"^ref$", re.I), "referencia_code"),
+        (re.compile(r"(cod|nro|n°|nº|#).*\blinea", re.I), "linea_codigo_proveedor"),
+        (re.compile(r"\blinea\b.*(cod|nro|n°|id)\b", re.I), "linea_codigo_proveedor"),
+        (re.compile(r"^linea$", re.I), "linea_codigo_proveedor"),
+        (re.compile(r"(cod|nro|n°|nº|#).*\brefer", re.I), "referencia_codigo_proveedor"),
+        (re.compile(r"\bref(erencia)?\b.*(cod|nro|n°|id)\b", re.I), "referencia_codigo_proveedor"),
+        (re.compile(r"^ref$", re.I), "referencia_codigo_proveedor"),
         (re.compile(r"(cod|id).*\bmat", re.I), "material_id"),
         (re.compile(r"\bmat(er)?\b.*(cod|id)\b", re.I), "material_id"),
         (re.compile(r"(cod|id).*\bcol", re.I), "color_id"),
@@ -435,7 +435,7 @@ def normalize_excel_dataframe(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[str
     if df["fecha_mov"].isna().any():
         errors.append("Hay fechas no parseables (use DD/MM/YYYY).")
 
-    for col in ("linea_code", "referencia_code"):
+    for col in ("linea_codigo_proveedor", "referencia_codigo_proveedor"):
         df[col] = df[col].map(_cell_str)
 
     def _grada_str(v: Any) -> str:
@@ -504,8 +504,8 @@ def insert_batch(
     _progress("Preparando y ordenando filas del Excel…", 0.08)
     # Vista de negocio: recorrer el lote con línea descendente (mayor código primero).
     # La resolución de FK y el alta en pilares reordenan internamente donde hace falta.
-    df["_sort_lc"] = pd.to_numeric(df["linea_code"], errors="coerce")
-    df["_sort_rc"] = pd.to_numeric(df["referencia_code"], errors="coerce")
+    df["_sort_lc"] = pd.to_numeric(df["linea_codigo_proveedor"], errors="coerce")
+    df["_sort_rc"] = pd.to_numeric(df["referencia_codigo_proveedor"], errors="coerce")
     df = df.sort_values(by=["_sort_lc", "_sort_rc"], ascending=[False, True], kind="mergesort")
     df = df.drop(columns=["_sort_lc", "_sort_rc"]).reset_index(drop=True)
 
@@ -529,8 +529,8 @@ def insert_batch(
         "origen_tienda",
         "tipo_movimiento",
         "fecha_mov",
-        "linea_code",
-        "referencia_code",
+        "linea_codigo_proveedor",
+        "referencia_codigo_proveedor",
         "material_id",
         "color_id",
         "excel_material_code",
@@ -630,7 +630,7 @@ def refresh_batch_fks(engine, batch_id: str, *, proveedor_id: int | None = None)
     """
     q = text(
         """
-        SELECT id, linea_code, referencia_code, material_id, color_id
+        SELECT id, linea_codigo_proveedor, referencia_codigo_proveedor, material_id, color_id
         FROM public.retail_multitienda_staging
         WHERE batch_id = CAST(:b AS uuid)
         ORDER BY id
@@ -640,7 +640,7 @@ def refresh_batch_fks(engine, batch_id: str, *, proveedor_id: int | None = None)
         df = pd.read_sql(q, c, params={"b": batch_id})
     if df.empty:
         return 0
-    work = df[["linea_code", "referencia_code", "material_id", "color_id"]].copy()
+    work = df[["linea_codigo_proveedor", "referencia_codigo_proveedor", "material_id", "color_id"]].copy()
     resolved, warns = resolve_retail_fks(engine, work, proveedor_id=proveedor_id)
     n = len(df)
     with engine.begin() as conn:
@@ -680,8 +680,8 @@ def load_batch_df(engine, batch_id: str) -> pd.DataFrame:
             s.origen_tienda,
             s.tipo_movimiento,
             s.fecha_mov,
-            s.linea_code,
-            s.referencia_code,
+            s.linea_codigo_proveedor,
+            s.referencia_codigo_proveedor,
             s.material_id,
             s.color_id,
             s.grada,
@@ -895,9 +895,9 @@ def apply_retail_filters(
     s_mat = (material or "").strip()
     s_col = (color or "").strip()
     if s_linea not in _FILTER_SENTINEL:
-        out = out[out["linea_code"].astype(str) == s_linea]
+        out = out[out["linea_codigo_proveedor"].astype(str) == s_linea]
     if s_ref not in _FILTER_SENTINEL:
-        out = out[out["referencia_code"].astype(str) == s_ref]
+        out = out[out["referencia_codigo_proveedor"].astype(str) == s_ref]
     if s_mat not in _FILTER_SENTINEL:
         mv = pd.to_numeric(s_mat, errors="coerce")
         if pd.notna(mv):
@@ -921,8 +921,8 @@ def aggregate_top_skus(df: pd.DataFrame, top_n: int = 12) -> pd.DataFrame:
     agg_kw: dict[str, tuple] = {
         "venta_pares": ("cantidad", "sum"),
         "venta_gs": ("monto", "sum"),
-        "linea_code": ("linea_code", "first"),
-        "referencia_code": ("referencia_code", "first"),
+        "linea_codigo_proveedor": ("linea_codigo_proveedor", "first"),
+        "referencia_codigo_proveedor": ("referencia_codigo_proveedor", "first"),
         "material_id": ("material_id", "first"),
         "color_id": ("color_id", "first"),
     }
@@ -1014,9 +1014,9 @@ def desglose_linea_referencia(df_mov: pd.DataFrame, top: int = 45) -> pd.DataFra
     if df_mov.empty:
         return pd.DataFrame()
     d = df_mov.copy()
-    d["linea_code"] = d["linea_code"].map(_canon_codigo_pilar)
-    d["referencia_code"] = d["referencia_code"].map(_canon_codigo_pilar)
-    gkeys = ["linea_code", "referencia_code"]
+    d["linea_codigo_proveedor"] = d["linea_codigo_proveedor"].map(_canon_codigo_pilar)
+    d["referencia_codigo_proveedor"] = d["referencia_codigo_proveedor"].map(_canon_codigo_pilar)
+    gkeys = ["linea_codigo_proveedor", "referencia_codigo_proveedor"]
     agg_kw: dict[str, tuple] = {
         "pares": ("cantidad", "sum"),
         "monto_gs": ("monto", "sum"),
@@ -1030,7 +1030,7 @@ def desglose_linea_referencia(df_mov: pd.DataFrame, top: int = 45) -> pd.DataFra
         .sort_values("pares", ascending=False)
         .head(top)
     )
-    front = ["linea_code", "referencia_code"]
+    front = ["linea_codigo_proveedor", "referencia_codigo_proveedor"]
     mids = [c for c in ("marca", "genero", "estilo") if c in out.columns]
     tail = ["pares", "monto_gs"]
     return out[[c for c in front + mids + tail if c in out.columns]]
@@ -1041,8 +1041,8 @@ def representative_row_for_linea_ref(df: pd.DataFrame, linea: str, ref: str) -> 
     if df.empty:
         return None
     lc, rc = _canon_codigo_pilar(linea), _canon_codigo_pilar(ref)
-    lc_s = df["linea_code"].map(_canon_codigo_pilar)
-    rc_s = df["referencia_code"].map(_canon_codigo_pilar)
+    lc_s = df["linea_codigo_proveedor"].map(_canon_codigo_pilar)
+    rc_s = df["referencia_codigo_proveedor"].map(_canon_codigo_pilar)
     m = (lc_s == lc) & (rc_s == rc)
     chunk = df.loc[m]
     if chunk.empty:
@@ -1063,8 +1063,8 @@ def album_candidates_from_ventas(df: pd.DataFrame, top: int = 30) -> pd.DataFram
         return pd.DataFrame()
     agg_kw: dict[str, tuple] = {
         "venta_pares": ("cantidad", "sum"),
-        "linea_code": ("linea_code", "first"),
-        "referencia_code": ("referencia_code", "first"),
+        "linea_codigo_proveedor": ("linea_codigo_proveedor", "first"),
+        "referencia_codigo_proveedor": ("referencia_codigo_proveedor", "first"),
         "material_id": ("material_id", "first"),
         "color_id": ("color_id", "first"),
     }

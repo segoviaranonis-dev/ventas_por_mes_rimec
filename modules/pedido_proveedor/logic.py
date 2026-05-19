@@ -1190,19 +1190,27 @@ def parse_proforma(file_bytes: bytes) -> tuple[pd.DataFrame, int, str | None]:
       2. Fila de datos:      col A = número entero
       3. Fila de totales:    col L (PAIRS) = 'TOTAL'  →  fin
 
-    STYLE '2133.182' → linea_cod=2133, ref_cod=182  (via parsear_linea_referencia)
+    STYLE '2133.182' → linea 2133, ref 100 (pillar_parse; leer celda como texto)
     """
-    from modules.rimec_engine.hiedra import parsear_linea_referencia
+    from modules.rimec_engine.pillar_parse import parsear_linea_referencia
 
     GRADE_START = 14
 
     try:
         try:
-            df_raw = pd.read_excel(io.BytesIO(file_bytes), header=None,
-                                   engine="openpyxl")
+            df_raw = pd.read_excel(
+                io.BytesIO(file_bytes),
+                header=None,
+                engine="openpyxl",
+                dtype=object,
+            )
         except Exception:
-            df_raw = pd.read_excel(io.BytesIO(file_bytes), header=None,
-                                   engine="xlrd")
+            df_raw = pd.read_excel(
+                io.BytesIO(file_bytes),
+                header=None,
+                engine="xlrd",
+                dtype=object,
+            )
     except Exception as e:
         return pd.DataFrame(), 0, f"No se pudo leer el archivo: {e}"
 
@@ -1291,11 +1299,21 @@ def parse_proforma(file_bytes: bytes) -> tuple[pd.DataFrame, int, str | None]:
             continue
 
         # ── Fila de DATOS ────────────────────────────────────────────────
-        style_raw = str(row.iloc[col_style_idx]).strip() if len(row) > col_style_idx and pd.notna(row.iloc[col_style_idx]) else ""
+        style_raw = ""
+        if len(row) > col_style_idx and pd.notna(row.iloc[col_style_idx]):
+            sv = row.iloc[col_style_idx]
+            if isinstance(sv, float):
+                style_raw = f"{sv:.10f}".rstrip("0").rstrip(".")
+            else:
+                style_raw = str(sv).strip()
+        if style_raw.lower() in ("nan", "none", ""):
+            continue
         try:
             linea_cod, ref_cod = parsear_linea_referencia(style_raw)
         except ValueError:
             continue  # fila mal formada, saltar
+        if ref_cod is None:
+            continue  # STYLE sin referencia — no importar fila incompleta
 
         # Curva de tallas: {talla_label: cantidad}
         grades_json: dict[str, int] = {}
@@ -1315,8 +1333,8 @@ def parse_proforma(file_bytes: bytes) -> tuple[pd.DataFrame, int, str | None]:
             "item":          str(_safe_int(item_val)),
             "ncm":           str(row.iloc[1 + offset]).strip() if len(row) > 1 + offset and pd.notna(row.iloc[1 + offset]) else "",
             "style_code":    style_raw,                        # "2133.182" completo
-            "linea_cod":     str(linea_cod),                   # "2133"
-            "ref_cod":       str(ref_cod) if ref_cod is not None else "",  # "182"
+            "linea_codigo_proveedor":     str(linea_cod),
+            "referencia_codigo_proveedor": str(ref_cod),
             "name":          str(row.iloc[3 + offset]).strip() if len(row) > 3 + offset and pd.notna(row.iloc[3 + offset]) else "",
             "material_code": str(_safe_int(row.iloc[4 + offset])) if len(row) > 4 + offset else "0",
             "material":      str(row.iloc[5 + offset]).strip() if len(row) > 5 + offset and pd.notna(row.iloc[5 + offset]) else "",
@@ -1337,6 +1355,128 @@ def parse_proforma(file_bytes: bytes) -> tuple[pd.DataFrame, int, str | None]:
     df_result = pd.DataFrame(rows)
     total_pares = int(df_result["pairs"].sum())
     return df_result, total_pares, None
+
+
+def get_estado_borrado_importacion_pp(pp_id: int) -> dict:
+    """
+    Resume ventas del stock importado. Borrado total solo si vendido = 0.
+    """
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(sqlt("""
+                SELECT
+                    COUNT(ppd.id)::int AS n_articulos,
+                    COALESCE(SUM(ppd.cantidad_pares), 0)::bigint AS pares_total,
+                    COALESCE(SUM(ppd.pares_vendidos), 0)::bigint AS vendido_ppd,
+                    COALESCE((
+                        SELECT SUM(vt.cantidad_vendida)
+                        FROM venta_transito vt
+                        JOIN pedido_proveedor_detalle d
+                          ON d.id = vt.pedido_proveedor_detalle_id
+                        WHERE d.pedido_proveedor_id = :pp_id
+                    ), 0)::bigint AS vendido_vt,
+                    (SELECT COUNT(*)::int FROM factura_interna fi
+                     WHERE fi.pp_id = :pp_id) AS n_facturas
+                FROM pedido_proveedor_detalle ppd
+                WHERE ppd.pedido_proveedor_id = :pp_id
+            """), {"pp_id": pp_id}).fetchone()
+        if not row or int(row.n_articulos or 0) == 0:
+            return {
+                "n_articulos": 0,
+                "pares_total": 0,
+                "vendido": 0,
+                "n_facturas": 0,
+                "puede_borrar": False,
+                "motivo": "No hay importación cargada.",
+            }
+        vendido_vt = int(row.vendido_vt or 0)
+        vendido_ppd = int(row.vendido_ppd or 0)
+        vendido = max(vendido_vt, vendido_ppd)
+        n_fi = int(row.n_facturas or 0)
+        puede = vendido == 0
+        motivo = ""
+        if not puede:
+            motivo = (
+                f"Ya hay **{vendido:,} pares vendidos** en este PP. "
+                "No se puede borrar la importación."
+            )
+        return {
+            "n_articulos": int(row.n_articulos),
+            "pares_total": int(row.pares_total),
+            "vendido": vendido,
+            "n_facturas": n_fi,
+            "puede_borrar": puede,
+            "motivo": motivo,
+        }
+    except Exception as e:
+        DBInspector.log(f"[PP] get_estado_borrado_importacion_pp: {e}", "ERROR")
+        return {
+            "n_articulos": 0,
+            "pares_total": 0,
+            "vendido": 0,
+            "n_facturas": 0,
+            "puede_borrar": False,
+            "motivo": str(e),
+        }
+
+
+def borrar_importacion_pp(pp_id: int) -> tuple[bool, str]:
+    """
+    Elimina por completo el detalle importado (proforma/F9) del PP.
+    Sin archivo de borrado — una sola transacción rápida.
+    Solo permitido si ventas = 0 y sin facturas internas.
+    """
+    estado = get_estado_borrado_importacion_pp(pp_id)
+    if estado["n_articulos"] == 0:
+        return False, "No hay artículos importados."
+    if not estado["puede_borrar"]:
+        return False, estado.get("motivo") or "No se puede borrar esta importación."
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(sqlt("""
+                DELETE FROM venta_transito vt
+                USING pedido_proveedor_detalle ppd
+                WHERE vt.pedido_proveedor_detalle_id = ppd.id
+                  AND ppd.pedido_proveedor_id = :pp_id
+            """), {"pp_id": pp_id})
+
+            conn.execute(sqlt("""
+                DELETE FROM factura_interna_detalle fid
+                USING factura_interna fi
+                WHERE fid.factura_id = fi.id
+                  AND fi.pp_id = :pp_id
+            """), {"pp_id": pp_id})
+
+            conn.execute(sqlt(
+                "DELETE FROM factura_interna WHERE pp_id = :pp_id"
+            ), {"pp_id": pp_id})
+
+            conn.execute(sqlt(
+                "DELETE FROM snapshot_costos WHERE pp_id = :pp_id"
+            ), {"pp_id": pp_id})
+
+            del_row = conn.execute(sqlt("""
+                DELETE FROM pedido_proveedor_detalle
+                WHERE pedido_proveedor_id = :pp_id
+                RETURNING id
+            """), {"pp_id": pp_id})
+            n_del = len(del_row.fetchall())
+
+            conn.execute(sqlt("""
+                UPDATE pedido_proveedor
+                SET pares_comprometidos = 0
+                WHERE id = :pp_id
+            """), {"pp_id": pp_id})
+
+        DBInspector.log(
+            f"[PP] Importación borrada pp_id={pp_id}: {n_del} SKUs", "WARNING"
+        )
+        return True, f"Importación eliminada ({n_del} artículos). Podés cargar la proforma de nuevo."
+
+    except Exception as e:
+        DBInspector.log(f"[PP] borrar_importacion_pp {pp_id}: {e}", "ERROR")
+        return False, f"Error al borrar: {e}"
 
 
 def _calcular_fob_ajustado(fob: float, d1: float, d2: float,
@@ -1503,8 +1643,8 @@ def populate_pp_from_proforma(
                     "id_marca": id_marca,
                     "ncm":      r.get("ncm", "") or "",
                     "style":    r.get("style_code", "") or "",
-                    "linea":    r.get("linea_cod", "") or "",
-                    "ref":      r.get("ref_cod", "") or "",
+                    "linea":    r.get("linea_codigo_proveedor", "") or "",
+                    "ref":      r.get("referencia_codigo_proveedor", "") or "",
                     "nombre":   r.get("name", "") or "",
                     "id_mat":   id_mat,
                     "mat":      descp_mat,
@@ -1776,24 +1916,22 @@ def get_precios_stock_pp(pp_id: int, evento_id: int) -> pd.DataFrame:
                     pl.dolar_aplicado,
                     pl.indice_aplicado
                 FROM pedido_proveedor_detalle ppd
+                JOIN pedido_proveedor pp ON pp.id = ppd.pedido_proveedor_id
                 LEFT JOIN marca_v2  mv ON mv.id_marca = ppd.id_marca
                 LEFT JOIN venta_transito vt ON vt.pedido_proveedor_detalle_id = ppd.id
-                -- Traducir código proveedor → ID interno de linea
-                LEFT JOIN linea     l  ON l.codigo_proveedor::text = ppd.linea
-                -- Traducir código proveedor → ID interno de material
-                LEFT JOIN material  m  ON m.codigo_proveedor::text = ppd.material_code
-                -- Cruzar con precio_lista usando IDs internos
-                LEFT JOIN LATERAL (
-                    SELECT lpn, lpc02, lpc03, lpc04,
-                           nombre_caso_aplicado, dolar_aplicado, indice_aplicado
-                    FROM precio_lista
-                    WHERE evento_id          = :evento_id
-                      AND linea_id        = l.id
-                      AND material_id      = m.id
-                    LIMIT 1
-                ) pl ON true
+                LEFT JOIN linea l ON l.proveedor_id = pp.proveedor_importacion_id
+                                 AND l.codigo_proveedor::text = NULLIF(TRIM(ppd.linea), '')
+                LEFT JOIN referencia ref ON ref.linea_id = l.id
+                                 AND ref.codigo_proveedor::text = NULLIF(TRIM(ppd.referencia), '')
+                LEFT JOIN material m ON m.proveedor_id = pp.proveedor_importacion_id
+                                 AND m.codigo_proveedor::text = NULLIF(TRIM(ppd.material_code), '')
+                LEFT JOIN precio_lista pl ON pl.evento_id = :evento_id
+                                         AND pl.linea_id = l.id
+                                         AND pl.referencia_id = ref.id
+                                         AND pl.material_id = m.id
                 WHERE ppd.pedido_proveedor_id = :pp_id
-                  AND ppd.referencia IS NOT NULL
+                  AND NULLIF(TRIM(ppd.linea), '') IS NOT NULL
+                  AND NULLIF(TRIM(ppd.referencia), '') IS NOT NULL
                 GROUP BY ppd.id, mv.descp_marca, ppd.linea, ppd.referencia,
                          ppd.material_code, ppd.descp_material, ppd.descp_color,
                          ppd.grada, ppd.cantidad_pares,
@@ -2650,8 +2788,8 @@ def get_skus_con_precio_para_fi(pp_id: int, evento_id: int) -> pd.DataFrame:
     return get_dataframe("""
         SELECT
             ppd.id                  AS ppd_id,
-            ppd.linea               AS linea_cod,
-            ppd.referencia          AS ref_cod,
+            ppd.linea               AS linea_codigo_proveedor,
+            ppd.referencia          AS referencia_codigo_proveedor,
             ppd.descp_material      AS material,
             ppd.descp_color         AS color,
             ppd.cantidad_cajas,

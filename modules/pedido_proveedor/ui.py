@@ -40,6 +40,8 @@ from modules.pedido_proveedor.logic import (
     get_lista_precios_completa,
     parse_proforma,
     populate_pp_from_proforma,
+    get_estado_borrado_importacion_pp,
+    borrar_importacion_pp,
     pp_listado_precio_editable,
     vincular_listado_precio_a_pp,
     recalcular_facturas_internas_pp,
@@ -520,14 +522,14 @@ def _render_importar_proforma(pp_id: int):
             if d > 0: r *= (1 - d)
         return round(r, 4)
 
-    df_prev = df_p[["brand", "linea_cod", "ref_cod", "name",
+    df_prev = df_p[["brand", "linea_codigo_proveedor", "referencia_codigo_proveedor", "name",
                     "material_code", "material", "color_code", "color",
                     "boxes", "pairs", "unit_fob", "grade_range"]].copy()
     df_prev["fob_ajustado"] = df_prev["unit_fob"].apply(_fob_aj)
     df_prev = df_prev.rename(columns={
         "brand":        "Marca",
-        "linea_cod":    "Línea",
-        "ref_cod":      "Ref.",
+        "linea_codigo_proveedor":    "Línea",
+        "referencia_codigo_proveedor": "Ref.",
         "name":         "Descripción",
         "material_code":"Cód.Mat",
         "material":     "Material",
@@ -606,7 +608,7 @@ def _render_importar_proforma(pp_id: int):
             barra.progress(
                 pct,
                 text=f"Preparando artículo {i+1} de {total_arts} — "
-                     f"L{art.get('linea_cod','')}.{art.get('ref_cod','')}",
+                     f"L{art.get('linea_codigo_proveedor','')}.{art.get('referencia_codigo_proveedor','')}",
             )
         barra.empty()
 
@@ -862,6 +864,9 @@ def _render_hijo_mayor(pp_id: int, header: dict):
         f"{header['total_pares']:,} pares"
     )
     st.caption("Snapshot fijo del F9 (compra_inicial).")
+
+    _render_borrar_reimportar(pp_id)
+
     _render_ala_norte(pp_id)
 
     st.divider()
@@ -1418,8 +1423,8 @@ def _render_fi_fase_b(pp_id: int, header: dict):
         cajas_max = int(sku.get("cantidad_cajas", 0) or 0) if saldo >= int(sku.get("pares_inicial", 1) or 1) else max(1, saldo)
 
         c = st.columns([2, 2, 2, 1.5, 1.5, 1.5, 1.5])
-        c[0].caption(str(sku.get("linea_cod", "—")))
-        c[1].caption(str(sku.get("ref_cod", "—")))
+        c[0].caption(str(sku.get("linea_codigo_proveedor", sku.get("linea_cod", "—"))))
+        c[1].caption(str(sku.get("referencia_codigo_proveedor", sku.get("ref_cod", "—"))))
         c[2].caption(str(sku.get("material", "—"))[:30])
         c[3].write(str(saldo))
         n_cajas = c[4].number_input("", min_value=0, max_value=cajas_max,
@@ -1671,6 +1676,66 @@ def _render_enviar_a_compra(id_pp: int, numero_proforma: str):
             st.rerun()
         else:
             st.error(result)
+
+
+def _render_borrar_reimportar(pp_id: int):
+    """Borrado total de la importación si ventas = 0 — para corregir Excel mal cargado."""
+    estado = get_estado_borrado_importacion_pp(pp_id)
+    if estado["n_articulos"] == 0:
+        return
+
+    key_confirm = f"_pp_borrar_imp_confirm_{pp_id}"
+
+    st.markdown(
+        "<div style='background:#2a1215;border:1px solid #EF4444;"
+        "border-radius:8px;padding:12px 16px;margin:0 0 12px 0;'>"
+        "<span style='color:#FCA5A5;font-size:.85rem;font-weight:600;'>"
+        "Importación incorrecta</span><br>"
+        "<span style='color:#94A3B8;font-size:.78rem;'>"
+        "Si el Excel salió mal (Ref. vacía, nan, sin precios), podés borrar "
+        "<b>todo el stock importado</b> y cargar la proforma otra vez. "
+        "Solo si <b>ventas = 0</b>.</span></div>",
+        unsafe_allow_html=True,
+    )
+
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        st.caption(
+            f"{estado['n_articulos']} artículos · {estado['pares_total']:,} pares · "
+            f"vendidos: **{estado['vendido']:,}**"
+        )
+
+    if not estado["puede_borrar"]:
+        c2.caption(estado.get("motivo", "No disponible"))
+        return
+
+    if st.session_state.get(key_confirm):
+        c2.warning("¿Borrar todo?")
+        b_si, b_no = st.columns(2)
+        if b_si.button("Sí", key=f"_pp_borrar_si_{pp_id}", type="primary"):
+            ok, msg = borrar_importacion_pp(pp_id)
+            st.session_state.pop(key_confirm, None)
+            if ok:
+                st.session_state.pop(f"_pf_exito_{pp_id}", None)
+                celebrate_step(
+                    "Importación borrada",
+                    "Cargá la proforma de nuevo",
+                    modulo="Pedido Proveedor",
+                )
+                st.rerun()
+            else:
+                st.error(msg)
+        if b_no.button("No", key=f"_pp_borrar_no_{pp_id}"):
+            st.session_state.pop(key_confirm, None)
+            st.rerun()
+    else:
+        if c2.button(
+            "🗑️ Borrar y reimportar",
+            key=f"_pp_borrar_btn_{pp_id}",
+            help="Elimina todos los artículos importados (venta debe ser 0)",
+        ):
+            st.session_state[key_confirm] = True
+            st.rerun()
 
 
 def _render_ala_norte(id_pp: int):

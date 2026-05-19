@@ -166,9 +166,9 @@ def infer_proveedor_importacion_id(engine: Engine, df: pd.DataFrame) -> int:
     provs = _all_proveedor_importacion_ids(engine)
     if not provs:
         raise RuntimeError("proveedor_importacion vacío.")
-    sub = df[["linea_code", "referencia_code"]].copy()
-    sub["lc"] = sub["linea_code"].map(_canon_codigo_pilar)
-    sub["rc"] = sub["referencia_code"].map(_canon_codigo_pilar)
+    sub = df[["linea_codigo_proveedor", "referencia_codigo_proveedor"]].copy()
+    sub["lc"] = sub["linea_codigo_proveedor"].map(_canon_codigo_pilar)
+    sub["rc"] = sub["referencia_codigo_proveedor"].map(_canon_codigo_pilar)
     sub = sub.drop_duplicates(subset=["lc", "rc"], keep="first")
     if sub.empty:
         return provs[0]
@@ -945,7 +945,7 @@ def resolve_retail_fks(
     # Falta provisionar si NO hay fila en linea_referencia (aunque exista referencia hija de linea).
     missing_lr: set[str] = set()
     for _, row in df.iterrows():
-        k = _lr_key(row["linea_code"], row["referencia_code"])
+        k = _lr_key(row["linea_codigo_proveedor"], row["referencia_codigo_proveedor"])
         if k not in lr_explicit:
             missing_lr.add(k)
     if missing_lr:
@@ -979,7 +979,7 @@ def resolve_retail_fks(
     t1_ids: list[int] = []
 
     for _, row in out.iterrows():
-        key = _lr_key(row["linea_code"], row["referencia_code"])
+        key = _lr_key(row["linea_codigo_proveedor"], row["referencia_codigo_proveedor"])
         attrs = lr_map.get(key)
 
         if attrs is None:

@@ -1048,7 +1048,12 @@ def _paso_3_preview():
 
     calc_ok = False
     total_guardados = 0
-    lanzar_calculo = False
+
+    if "re_paso3_run" not in st.session_state:
+        st.session_state["re_paso3_run"] = False
+
+    def _fin_paso3_run() -> None:
+        st.session_state["re_paso3_run"] = False
 
     if n_bd > 0:
         st.success(
@@ -1074,19 +1079,23 @@ def _paso_3_preview():
                 st.rerun()
             st.error("No se pudo reconstruir el resumen desde la base de datos.")
         with st.expander("⚙️ Recalcular (sobrescribirá precios existentes)", expanded=False):
-            lanzar_calculo = st.button(
+            if st.button(
                 "🔄 Recalcular todos los SKUs",
                 type="secondary",
                 key="motor_paso3_recalcular",
-            )
+            ):
+                st.session_state["re_paso3_run"] = True
+                st.rerun()
     else:
-        lanzar_calculo = st.button(
+        if st.button(
             "✅ Iniciar Cálculo de todos los SKUs",
             type="primary",
             key="motor_paso3_iniciar",
-        )
+        ):
+            st.session_state["re_paso3_run"] = True
+            st.rerun()
 
-    if not lanzar_calculo:
+    if not st.session_state.get("re_paso3_run"):
         return
 
     from modules.rimec_engine.ley_genero import (
@@ -1107,31 +1116,48 @@ def _paso_3_preview():
     confirmados: dict = {}
     stats_pilar: dict = {}
 
-    # ── Fase A: validaciones (sin spinner global; panel reactivo después) ──
-    ok_db, err_db = verificar_conexion_db()
-    if not ok_db:
-        st.error(f"No se pudo conectar a Supabase: {err_db}")
-        return
-
-    mig42 = mensaje_si_falta_migracion_042()
-    if mig42:
-        st.warning(
-            mig42
-            + " El listado puede continuar; los códigos denormalizados en linea_referencia quedarán pendientes."
-        )
-
-    metrics = Paso3Metrics(fase="Pilares y reglas", skus_total=len(skus_resueltos))
+    metrics = Paso3Metrics(fase="Iniciando", skus_total=len(skus_resueltos))
     panel = Paso3LivePanel()
+    metrics.log("Motor Paso 3 — arranque (no recargues la pestaña)")
     panel.tick(metrics)
 
-    stats_pilar = asegurar_pilares_para_listado(
-        proveedor_id, skus_resueltos, evento_id=evento_id
-    )
+    try:
+        ok_db, err_db = verificar_conexion_db()
+        if not ok_db:
+            st.error(f"No se pudo conectar a Supabase: {err_db}")
+            _fin_paso3_run()
+            return
+
+        mig42 = mensaje_si_falta_migracion_042()
+        if mig42:
+            st.warning(
+                mig42
+                + " El listado puede continuar; los códigos denormalizados en linea_referencia quedarán pendientes."
+            )
+
+        metrics.fase = "Pilares y reglas"
+        metrics.log("Conectado a Supabase — provisionando pilares…")
+        panel.tick(metrics)
+
+        stats_pilar = asegurar_pilares_para_listado(
+            proveedor_id, skus_resueltos, evento_id=evento_id
+        )
+        metrics.log(
+            f"Pilares OK — líneas nuevas: {stats_pilar.get('lineas_alta_automatica', 0)}"
+        )
+        panel.tick(metrics)
+    except Exception as exc:
+        st.error("Error inesperado al preparar pilares:")
+        st.exception(exc)
+        _fin_paso3_run()
+        return
+
     if stats_pilar.get("error_deadlock"):
         st.error(
             "El pilar se está actualizando en otra operación (deadlock). "
             "Cerrá otras pestañas de la app, esperá 5 s y pulsá de nuevo."
         )
+        _fin_paso3_run()
         return
     if stats_pilar.get("lineas_alta_automatica"):
         st.info(
@@ -1153,6 +1179,7 @@ def _paso_3_preview():
         if ley["generos_faltantes_bd"]:
             st.error("Géneros faltantes en BD: " + ", ".join(ley["generos_faltantes_bd"]))
         st.markdown(texto_ley_genero_resumen())
+        _fin_paso3_run()
         return
 
     if stats_pilar.get("ley_genero_rechazadas") or stats_pilar.get("genero_bd_faltante"):
@@ -1168,12 +1195,14 @@ def _paso_3_preview():
             + ", ".join(stats_pilar["marcas_no_encontradas"])
             + ". Corregí el catálogo o el nombre de la hoja antes de continuar."
         )
+        _fin_paso3_run()
         return
     if stats_pilar.get("lineas_marca_conflicto"):
         st.error(
             "La misma línea aparece en hojas con marcas distintas: "
             + ", ".join(str(x) for x in stats_pilar["lineas_marca_conflicto"][:20])
         )
+        _fin_paso3_run()
         return
 
     metrics.log("Pilares validados — iniciando pipeline por casos")
@@ -1217,6 +1246,7 @@ def _paso_3_preview():
                 "Staging **no** se borró. Podés auditar con: "
                 f"`python scripts/auditar_staging_casos.py --evento {evento_id}`"
             )
+        _fin_paso3_run()
     elif calc_ok and USE_CALCULO_SQL and resultado_sql:
         duracion_s = float(resultado_sql.get("duracion_ms") or 0) / 1000
         st.success(
@@ -1233,6 +1263,7 @@ def _paso_3_preview():
         st.warning(f"⚠️ {skus_omitidos_total} SKU(s) omitidos por pilares nulos. Revisar Excel.")
 
     if calc_ok:
+        _fin_paso3_run()
         st.session_state["re_casos"] = casos_procesados
         st.session_state["re_skus_por_caso"] = confirmados
         avanzar_estado_evento(evento_id, "validado")
@@ -1246,6 +1277,7 @@ def _paso_3_preview():
         )
         st.rerun()
     elif evento_id and contar_skus_procesados(evento_id) > 0:
+        _fin_paso3_run()
         st.warning(
             "El cálculo parece haber guardado datos en BD pero no se pudo cerrar el paso. "
             "Usá **Continuar al Paso 4** arriba."
@@ -1974,8 +2006,8 @@ def _render_linea_referencia():
             lr.proveedor_id,
             pi.codigo::text                 AS proveedor_cod,
             l.id                            AS linea_id,
-            l.codigo_proveedor              AS linea_cod,
-            r.codigo_proveedor              AS ref_cod,
+            l.codigo_proveedor              AS linea_codigo_proveedor,
+            r.codigo_proveedor              AS referencia_codigo_proveedor,
             COALESCE(mv.descp_marca, '') AS marca,
             COALESCE(ge.descp_grupo_estilo, lr.descp_grupo_estilo) AS descp_grupo_estilo,
             COALESCE(t1.descp_tipo_1, lr.descp_tipo_1)             AS descp_tipo_1,
@@ -2005,13 +2037,16 @@ def _render_linea_referencia():
         # Vista rápida de solo lectura — sin widgets, carga instantánea
         st.dataframe(
             df[[
-                "proveedor_id", "proveedor_cod", "linea_id", "linea_cod", "ref_cod",
+                "proveedor_id", "proveedor_cod", "linea_id",
+                "linea_codigo_proveedor", "referencia_codigo_proveedor",
                 "marca", "descp_grupo_estilo", "descp_tipo_1",
             ]].rename(columns={
                 "proveedor_id": "prov_id",
                 "proveedor_cod": "Cód. prov.",
                 "linea_id": "linea_id",
-                "linea_cod": "Línea", "ref_cod": "Ref.", "marca": "Marca",
+                "linea_codigo_proveedor": "Línea",
+                "referencia_codigo_proveedor": "Ref.",
+                "marca": "Marca",
                 "descp_grupo_estilo": "Estilo", "descp_tipo_1": "Tipo 1",
             }),
             use_container_width=True,
@@ -2086,8 +2121,8 @@ def _render_linea_referencia():
         cur_t1  = row.get("tipo_1_id")
 
         c1, c2, c3, c4, c5, c6 = st.columns([1, 1, 2, 2, 2, 1])
-        c1.write(int(row["linea_cod"]))
-        c2.write(int(row["ref_cod"]))
+        c1.write(int(row["linea_codigo_proveedor"]))
+        c2.write(int(row["referencia_codigo_proveedor"]))
         c3.write(_sv(row.get("marca")) or "—")
 
         ge_idx = ge_keys.index(int(cur_ge)) if cur_ge and int(cur_ge) in ge_keys else 0
@@ -2109,7 +2144,8 @@ def _render_linea_referencia():
                         WHERE id = :id
                     """), {"ge": int(ge_nuevo), "t1": int(t1_nuevo), "id": lr_id})
                 celebrate_save(
-                    f"L+R línea {int(row['linea_cod'])} ref {int(row['ref_cod'])} guardado",
+                    f"L+R línea {int(row['linea_codigo_proveedor'])} "
+                    f"ref {int(row['referencia_codigo_proveedor'])} guardado",
                     modulo="Motor de Precios",
                     contexto="guardado",
                     balloons=False,
