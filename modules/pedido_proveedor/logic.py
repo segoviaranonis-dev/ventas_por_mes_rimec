@@ -2543,13 +2543,13 @@ def get_lista_precios_completa(evento_id: int) -> pd.DataFrame:
                     pl.dolar_aplicado       AS dolar,
                     pl.indice_aplicado      AS indice
                 FROM precio_lista pl
-                LEFT JOIN linea     l ON l.id::text = pl.linea_codigo
-                LEFT JOIN referencia r ON r.id::text = pl.referencia_codigo
-                LEFT JOIN material   m ON m.id::text = pl.material_descripcion
+                LEFT JOIN linea      l ON l.id = pl.linea_id
+                LEFT JOIN referencia r ON r.id = pl.referencia_id
+                LEFT JOIN material   m ON m.id = pl.material_id
                 WHERE pl.evento_id = :evento_id
-                ORDER BY pl.linea_codigo::int NULLS LAST,
-                         pl.referencia_codigo::int NULLS LAST,
-                         m.descripcion
+                ORDER BY l.codigo_proveedor NULLS LAST,
+                         r.codigo_proveedor NULLS LAST,
+                         m.descripcion NULLS LAST
             """), {"evento_id": evento_id}).fetchall()
         return pd.DataFrame([dict(r._mapping) for r in rows])
     except Exception as e:
@@ -2673,9 +2673,10 @@ def get_skus_con_precio_para_fi(pp_id: int, evento_id: int) -> pd.DataFrame:
         LEFT JOIN material   m   ON m.proveedor_id = pp.proveedor_importacion_id
                                 AND m.codigo_proveedor::TEXT = ppd.material_code
         LEFT JOIN color      c   ON c.codigo_proveedor::TEXT = ppd.color_code
-        LEFT JOIN precio_lista pl ON pl.evento_id       = :evento_id
-                                 AND pl.linea_codigo     = l.id::TEXT
-                                 AND pl.material_descripcion = m.id::TEXT
+        LEFT JOIN precio_lista pl ON pl.evento_id = :evento_id
+                                 AND pl.linea_id = l.id
+                                 AND pl.referencia_id = ref.id
+                                 AND pl.material_id = m.id
         WHERE ppd.pedido_proveedor_id = :pp_id
           AND ppd.linea IS NOT NULL AND ppd.linea != ''
         GROUP BY ppd.id, ppd.linea, ppd.referencia, ppd.descp_material, ppd.descp_color,
@@ -2840,9 +2841,10 @@ def generar_stock_bazar(pp_id: int) -> tuple[bool, str]:
                                  AND m.codigo_proveedor::TEXT = ppd.material_code
             LEFT JOIN color  c   ON c.codigo_proveedor::TEXT = ppd.color_code
             LEFT JOIN precio_lista pl
-                    ON pl.evento_id           = icp.precio_evento_id
-                   AND pl.linea_codigo        = l.id::TEXT
-                   AND pl.material_descripcion = m.id::TEXT
+                    ON pl.evento_id = icp.precio_evento_id
+                   AND pl.linea_id = l.id
+                   AND pl.referencia_id = ref.id
+                   AND pl.material_id = m.id
             WHERE ppd.pedido_proveedor_id = :pp_id
               AND ppd.linea IS NOT NULL AND ppd.linea != ''
               AND ppd.cantidad_pares > 0

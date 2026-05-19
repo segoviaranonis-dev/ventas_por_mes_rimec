@@ -187,6 +187,8 @@ def _extraer_hoja_layout_bacera(df_raw: pd.DataFrame, marca: str) -> pd.DataFram
 
 def _extraer_hoja_por_nombres(df_raw: pd.DataFrame, hoja: str) -> tuple[pd.DataFrame | None, str | None]:
     """Lectura legacy por fila de encabezados y nombres de columna."""
+    from modules.rimec_engine.pillar_parse import normalizar_triplete_excel
+
     header_row = None
     for i, row in df_raw.iterrows():
         row_str = " ".join(str(v).upper() for v in row if pd.notna(v))
@@ -208,11 +210,28 @@ def _extraer_hoja_por_nombres(df_raw: pd.DataFrame, hoja: str) -> tuple[pd.DataF
             f"Detectadas: {df.columns.tolist()}. Se espera layout A–E."
         )
 
+    # Aplicar parser STYLE unificado fila por fila
+    filas_normalizadas = []
+    for _, row in df.iterrows():
+        linea_cell = row.get(col_map.get("linea", "")) if col_map.get("linea") else None
+        ref_cell = row.get(col_map.get("referencia", "")) if col_map.get("referencia") else None
+        mat_cell = row.get(col_map.get("material", "")) if col_map.get("material") else None
+
+        triplete = normalizar_triplete_excel(linea_cell, ref_cell, mat_cell)
+
+        filas_normalizadas.append({
+            "linea": str(triplete["linea"]) if triplete["linea"] is not None else "—",
+            "referencia": str(triplete["referencia"]) if triplete["referencia"] is not None else "—",
+            "material": str(triplete["material"]) if triplete["material"] is not None else "—",
+        })
+
+    df_pilares = pd.DataFrame(filas_normalizadas)
+
     df_clean = pd.DataFrame({
         "marca":        hoja,
-        "linea":        df[col_map["linea"]].astype(str).str.strip() if col_map.get("linea") else "—",
-        "referencia":   df[col_map["referencia"]].astype(str).str.strip(),
-        "material":     df[col_map["material"]].astype(str).str.strip() if col_map.get("material") else "—",
+        "linea":        df_pilares["linea"],
+        "referencia":   df_pilares["referencia"],
+        "material":     df_pilares["material"],
         "descripcion":  df[col_map["descripcion"]].astype(str).str.strip() if col_map.get("descripcion") else "",
         "fob_fabrica":  pd.to_numeric(df[col_map["fob"]], errors="coerce"),
     })
