@@ -24,7 +24,7 @@ from modules.balance_tiendas_retail.logic import (
 )
 
 EXCEL_SHEET_RETAIL = "st+vt+RC"
-TABLE_RETAIL = "retail_multitienda_staging"  # Frontend /retail lee esta tabla
+TABLE_RETAIL = "registro_st_vt_rc_reposicion"  # Frontend /retail lee esta tabla (migración 060)
 
 CANON = [
     "origen_holding",
@@ -252,8 +252,16 @@ def insert_batch(
     out = df.copy()
     out.insert(0, "batch_id", bid)
     out.insert(1, "batch_label", (batch_label or "").strip() or None)
+    # FKs desde resolve_retail_fks
     out["material_id"] = resolved["material_id"]
     out["color_id"] = resolved["color_id"]
+    out["marca_id"] = resolved["marca_id"]
+    out["genero_id"] = resolved["genero_id"]
+    out["grupo_estilo_id"] = resolved["grupo_estilo_id"]
+    out["tipo_1_id"] = resolved["tipo_1_id"]
+    # linea_id y referencia_id: resolver desde códigos proveedor (backfill en migración 063)
+    out["linea_id"] = pd.NA
+    out["referencia_id"] = pd.NA
     out["archivo_origen"] = (archivo_origen or "").strip() or None
     out["excel_sheet"] = excel_sheet
     out["created_by"] = (created_by or "").strip() or None
@@ -261,7 +269,9 @@ def insert_batch(
     cols = [
         "batch_id", "batch_label", "fecha_mov", "origen_holding", "tipo_movimiento",
         "codigo_barras", "linea_codigo_proveedor", "referencia_codigo_proveedor",
-        "excel_material_code", "excel_color_code", "material_id", "color_id",
+        "excel_material_code", "excel_color_code",
+        "material_id", "color_id", "linea_id", "referencia_id",
+        "marca_id", "genero_id", "grupo_estilo_id", "tipo_1_id",
         "grada", "cantidad", "precio_unitario", "monto", "imagen_nombre",
         "archivo_origen", "excel_sheet", "created_by",
     ]
