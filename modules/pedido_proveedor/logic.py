@@ -1670,34 +1670,30 @@ def populate_pp_from_proforma(
                     "fila":     int(r.get("item", 0)),
                 })
 
-                # Regla 2.2: curar pilar color/material si venían con descripción NULL y la proforma trae texto.
+                # Regla 2.2: enriquecimiento no inverso de pilar color/material (motor compartido).
+                # Refactorizado para usar upsert_material/upsert_color (idempotente + regla §6).
+                from core.pilares import upsert_material, upsert_color
+
                 heal_col = str(r.get("color", "") or "").strip()
-                if id_col and heal_col:
-                    conn.execute(
-                        sqlt(
-                            """
-                            UPDATE public.color
-                            SET nombre = CAST(:nom AS text)
-                            WHERE id = CAST(:cid AS bigint)
-                              AND proveedor_id = CAST(:pid AS bigint)
-                              AND (nombre IS NULL OR btrim(nombre::text) = '')
-                            """
-                        ),
-                        {"nom": heal_col[:2000], "cid": id_col, "pid": prov_id},
+                if col_code_s and heal_col:
+                    # Usar motor compartido para aplicar regla no inversa completa
+                    upsert_color(
+                        conn,
+                        col_code_s,
+                        prov_id,
+                        nombre=heal_col[:2000],
+                        fuente="proforma",
                     )
+
                 heal_mat = str(r.get("material", "") or "").strip()
-                if id_mat and heal_mat:
-                    conn.execute(
-                        sqlt(
-                            """
-                            UPDATE public.material
-                            SET descripcion = CAST(:d AS text)
-                            WHERE id = CAST(:mid AS bigint)
-                              AND proveedor_id = CAST(:pid AS bigint)
-                              AND (descripcion IS NULL OR btrim(descripcion::text) = '')
-                            """
-                        ),
-                        {"d": heal_mat[:2000], "mid": id_mat, "pid": prov_id},
+                if mat_code_s and heal_mat:
+                    # Usar motor compartido para aplicar regla no inversa completa
+                    upsert_material(
+                        conn,
+                        mat_code_s,
+                        prov_id,
+                        descripcion=heal_mat[:2000],
+                        fuente="proforma",
                     )
 
         # ── Auditoría ────────────────────────────────────────────────────
