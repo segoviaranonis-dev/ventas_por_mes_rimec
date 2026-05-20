@@ -51,12 +51,31 @@ def aplicar_herencia_linea(
       3. Heredar los que faltan
       4. Si no hay plantilla: usar sentinelas "OTROS" (marca=-999001, genero=NULL, estilo=NULL)
     """
-    # TODO: Implementación completa en fase 2 de OT
-    # Por ahora, devuelve los valores entrantes sin modificar
+    # 1. Si ya tiene todas las dimensiones, no heredar
+    if marca_id is not None and genero_id is not None and grupo_estilo_id is not None:
+        return {
+            "marca_id": marca_id,
+            "genero_id": genero_id,
+            "grupo_estilo_id": grupo_estilo_id,
+        }
+
+    # 2. Buscar línea plantilla para herencia
+    plantilla = _buscar_linea_plantilla(conn, nuevo_codigo_proveedor, proveedor_id)
+
+    if plantilla:
+        # 3. Heredar dimensiones faltantes de plantilla
+        return {
+            "marca_id": marca_id if marca_id is not None else plantilla["marca_id"],
+            "genero_id": genero_id if genero_id is not None else plantilla["genero_id"],
+            "grupo_estilo_id": grupo_estilo_id if grupo_estilo_id is not None else plantilla["grupo_estilo_id"],
+        }
+
+    # 4. Sin plantilla: usar sentinelas OTROS
+    sentinelas = _obtener_sentinelas_otros(conn)
     return {
-        "marca_id": marca_id,
-        "genero_id": genero_id,
-        "grupo_estilo_id": grupo_estilo_id,
+        "marca_id": marca_id if marca_id is not None else sentinelas["marca_id"],
+        "genero_id": genero_id if genero_id is not None else sentinelas["genero_id"],
+        "grupo_estilo_id": grupo_estilo_id if grupo_estilo_id is not None else sentinelas["grupo_estilo_id"],
     }
 
 
@@ -71,7 +90,28 @@ def _buscar_linea_plantilla(
     Returns:
         {"marca_id": ..., "genero_id": ..., "grupo_estilo_id": ...} o None
     """
-    # TODO: Implementación SQL
+    codigo_nuevo_int = int(codigo_proveedor_nuevo)
+
+    r = conn.execute(
+        text("""
+            SELECT marca_id, genero_id, grupo_estilo_id
+            FROM linea
+            WHERE proveedor_id = :prov
+              AND codigo_proveedor < :codigo
+              AND activo = TRUE
+            ORDER BY codigo_proveedor DESC
+            LIMIT 1
+        """),
+        {"prov": proveedor_id, "codigo": codigo_nuevo_int},
+    ).fetchone()
+
+    if r:
+        return {
+            "marca_id": r[0],
+            "genero_id": r[1],
+            "grupo_estilo_id": r[2],
+        }
+
     return None
 
 
@@ -82,9 +122,22 @@ def _obtener_sentinelas_otros(conn: Connection) -> dict[str, int | None]:
     Returns:
         {"marca_id": -999001, "genero_id": None, "grupo_estilo_id": None}
     """
-    # TODO: Query real a marca_v2, genero, grupo_estilo_v2
+    # Buscar marca RETAIL_OTROS (sentinela -999001)
+    r = conn.execute(
+        text("""
+            SELECT id
+            FROM marca_v2
+            WHERE nombre_v2 = 'RETAIL_OTROS'
+               OR id = -999001
+            LIMIT 1
+        """),
+    ).fetchone()
+
+    marca_id = r[0] if r else -999001  # Fallback a sentinela conocida
+
+    # Genero y grupo_estilo: NULL por defecto (sin sentinelas)
     return {
-        "marca_id": -999001,  # Sentinela RETAIL_OTROS
+        "marca_id": marca_id,
         "genero_id": None,
         "grupo_estilo_id": None,
     }

@@ -626,7 +626,11 @@ def _provision_missing_material_color_codes(engine: Engine, proveedor_id: int, d
     """
     Regla 2.1: alta perezosa de material/color por codigo_proveedor con descripcion/nombre NULL
     si el código no está en el pilar (no detiene la importación).
+
+    Refactorizado para usar motor compartido (upsert_material, upsert_color).
     """
+    from core.pilares import upsert_material, upsert_color
+
     raw_mats: set[int] = set()
     raw_cols: set[int] = set()
     for _, row in df.iterrows():
@@ -652,34 +656,22 @@ def _provision_missing_material_color_codes(engine: Engine, proveedor_id: int, d
 
     with engine.begin() as conn:
         for cod in mats_miss:
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO public.material (proveedor_id, codigo_proveedor, descripcion)
-                    SELECT CAST(:p AS bigint), CAST(:c AS bigint), NULL
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM public.material m
-                        WHERE m.proveedor_id = CAST(:p2 AS bigint)
-                          AND m.codigo_proveedor = CAST(:c2 AS bigint)
-                    )
-                    """
-                ),
-                {"p": proveedor_id, "c": cod, "p2": proveedor_id, "c2": cod},
+            # Usar motor compartido para upsert idempotente
+            upsert_material(
+                conn,
+                str(cod),
+                proveedor_id,
+                descripcion=None,  # NULL permitido (Regla 2.1)
+                fuente="retail",
             )
         for cod in cols_miss:
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO public.color (proveedor_id, codigo_proveedor, nombre)
-                    SELECT CAST(:p AS bigint), CAST(:c AS bigint), NULL
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM public.color c2
-                        WHERE c2.proveedor_id = CAST(:p2 AS bigint)
-                          AND c2.codigo_proveedor = CAST(:c2 AS bigint)
-                    )
-                    """
-                ),
-                {"p": proveedor_id, "c": cod, "p2": proveedor_id, "c2": cod},
+            # Usar motor compartido para upsert idempotente
+            upsert_color(
+                conn,
+                str(cod),
+                proveedor_id,
+                nombre=None,  # NULL permitido (Regla 2.1)
+                fuente="retail",
             )
 
 
@@ -714,7 +706,10 @@ def provision_missing_linea_referencia_pairs(
     Herencia 1.2: LR = referencia inmediata inferior en la **misma** línea (R-1 en catálogo);
     si no hay, misma R en línea L_prev, arquetipos, bloque de mil.
     Orden: línea ASC, referencia ASC (para que existan 1185-199 antes que 1185-200).
+
+    Refactorizado para usar motor compartido (upsert_linea, upsert_referencia).
     """
+    from core.pilares import upsert_linea, upsert_referencia
     rows: list[tuple[int, int]] = []
     seen: set[tuple[int, int]] = set()
     for key in missing_keys:
@@ -754,28 +749,17 @@ def provision_missing_linea_referencia_pairs(
 
             linea_id = _get_linea_id(conn, proveedor_id, ln)
             if linea_id is None:
-                conn.execute(
-                    text(
-                        """
-                        INSERT INTO public.linea (
-                            proveedor_id, codigo_proveedor, descripcion,
-                            marca_id, genero_id, grupo_estilo_id
-                        ) VALUES (
-                            CAST(:p AS bigint), CAST(:cod AS bigint), CAST(:d AS text),
-                            CAST(:m AS bigint), CAST(:g AS bigint), CAST(:ge AS bigint)
-                        )
-                        """
-                    ),
-                    {
-                        "p": proveedor_id,
-                        "cod": ln,
-                        "d": f"Retail auto línea {ln}"[:2000],
-                        "m": m_id,
-                        "g": g_id,
-                        "ge": ge_for_line,
-                    },
+                # Usar motor compartido con herencia jerárquica
+                linea_id = upsert_linea(
+                    conn,
+                    str(ln),
+                    proveedor_id,
+                    descripcion=f"Retail auto línea {ln}"[:2000],
+                    marca_id=m_id,
+                    genero_id=g_id,
+                    grupo_estilo_id=ge_for_line,
+                    fuente="retail",
                 )
-                linea_id = _get_linea_id(conn, proveedor_id, ln)
             if linea_id is None:
                 continue
 
@@ -799,16 +783,15 @@ def provision_missing_linea_referencia_pairs(
 
             ref_id = _get_referencia_id(conn, proveedor_id, linea_id, rn)
             if ref_id is None:
-                conn.execute(
-                    text(
-                        """
-                        INSERT INTO public.referencia (proveedor_id, linea_id, codigo_proveedor)
-                        VALUES (CAST(:p AS bigint), CAST(:l AS bigint), CAST(:c AS bigint))
-                        """
-                    ),
-                    {"p": proveedor_id, "l": linea_id, "c": rn},
+                # Usar motor compartido para upsert idempotente
+                ref_id = upsert_referencia(
+                    conn,
+                    str(rn),
+                    linea_id,
+                    proveedor_id,
+                    descripcion=None,
+                    fuente="retail",
                 )
-                ref_id = _get_referencia_id(conn, proveedor_id, linea_id, rn)
             if ref_id is None:
                 continue
 

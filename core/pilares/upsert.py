@@ -13,16 +13,15 @@ Comportamiento garantizado:
   - Devuelve id del pilar para usar como FK aguas abajo
   - Honra regla no inversa (enriquecimiento.py)
   - Aplica herencia jerárquica para línea (herencia.py)
-
-TODO: Implementación completa en fase 2 de OT.
-      Por ahora, placeholders que mantienen firma API.
 """
 from __future__ import annotations
 
 from typing import Literal
+from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-from .enriquecimiento import aplicar_enriquecimiento_no_inverso
+from .enriquecimiento import debe_actualizar_descripcion
+from .herencia import aplicar_herencia_linea
 
 
 def upsert_material(
@@ -52,9 +51,47 @@ def upsert_material(
       3. Si no existe: INSERT con descripcion (puede ser NULL)
       4. Devolver id
     """
-    # TODO: Implementar lógica completa
-    # Placeholder: devuelve -1 hasta fase 2
-    raise NotImplementedError("upsert_material en fase 2 de OT")
+    codigo_int = int(codigo_proveedor)
+
+    # 1. Buscar existente
+    r = conn.execute(
+        text("""
+            SELECT id, descripcion
+            FROM material
+            WHERE codigo_proveedor = :codigo AND proveedor_id = :prov
+        """),
+        {"codigo": codigo_int, "prov": proveedor_id},
+    ).fetchone()
+
+    if r:
+        material_id, desc_actual = r
+        # 2. Enriquecimiento no inverso
+        if debe_actualizar_descripcion(desc_actual, descripcion):
+            conn.execute(
+                text("""
+                    UPDATE material
+                    SET descripcion = :desc
+                    WHERE id = :id
+                """),
+                {"desc": (descripcion or "").strip(), "id": material_id},
+            )
+        return material_id
+
+    # 3. INSERT nuevo
+    r = conn.execute(
+        text("""
+            INSERT INTO material (codigo_proveedor, proveedor_id, descripcion, activo)
+            VALUES (:codigo, :prov, :desc, TRUE)
+            RETURNING id
+        """),
+        {
+            "codigo": codigo_int,
+            "prov": proveedor_id,
+            "desc": (descripcion or "").strip() or None,
+        },
+    ).fetchone()
+
+    return r[0]
 
 
 def upsert_color(
@@ -80,7 +117,48 @@ def upsert_color(
     Returns:
         color.id (int)
     """
-    raise NotImplementedError("upsert_color en fase 2 de OT")
+    codigo_int = int(codigo_proveedor)
+
+    # 1. Buscar existente
+    r = conn.execute(
+        text("""
+            SELECT id, nombre
+            FROM color
+            WHERE codigo_proveedor = :codigo AND proveedor_id = :prov
+        """),
+        {"codigo": codigo_int, "prov": proveedor_id},
+    ).fetchone()
+
+    if r:
+        color_id, nombre_actual = r
+        # 2. Enriquecimiento no inverso
+        if debe_actualizar_descripcion(nombre_actual, nombre):
+            conn.execute(
+                text("""
+                    UPDATE color
+                    SET nombre = :nom
+                    WHERE id = :id
+                """),
+                {"nom": (nombre or "").strip(), "id": color_id},
+            )
+        return color_id
+
+    # 3. INSERT nuevo
+    r = conn.execute(
+        text("""
+            INSERT INTO color (codigo_proveedor, proveedor_id, nombre, hex_web, activo)
+            VALUES (:codigo, :prov, :nom, :hex, TRUE)
+            RETURNING id
+        """),
+        {
+            "codigo": codigo_int,
+            "prov": proveedor_id,
+            "nom": (nombre or "").strip() or None,
+            "hex": hex_web,
+        },
+    ).fetchone()
+
+    return r[0]
 
 
 def upsert_linea(
@@ -104,7 +182,57 @@ def upsert_linea(
     Returns:
         linea.id (int)
     """
-    raise NotImplementedError("upsert_linea en fase 2 de OT")
+    codigo_int = int(codigo_proveedor)
+
+    # 1. Buscar existente
+    r = conn.execute(
+        text("""
+            SELECT id, descripcion, marca_id, genero_id, grupo_estilo_id
+            FROM linea
+            WHERE codigo_proveedor = :codigo AND proveedor_id = :prov
+        """),
+        {"codigo": codigo_int, "prov": proveedor_id},
+    ).fetchone()
+
+    if r:
+        linea_id = r[0]
+        # Enriquecimiento descripción
+        if debe_actualizar_descripcion(r[1], descripcion):
+            conn.execute(
+                text("UPDATE linea SET descripcion = :desc WHERE id = :id"),
+                {"desc": (descripcion or "").strip(), "id": linea_id},
+            )
+        return linea_id
+
+    # 2. INSERT nueva - aplicar herencia si faltan dimensiones
+    dimensiones = aplicar_herencia_linea(
+        conn, str(codigo_int), proveedor_id,
+        marca_id=marca_id,
+        genero_id=genero_id,
+        grupo_estilo_id=grupo_estilo_id,
+    )
+
+    r = conn.execute(
+        text("""
+            INSERT INTO linea (
+                codigo_proveedor, proveedor_id, descripcion,
+                marca_id, genero_id, grupo_estilo_id, caso_id, activo
+            )
+            VALUES (:codigo, :prov, :desc, :marca, :genero, :estilo, :caso, TRUE)
+            RETURNING id
+        """),
+        {
+            "codigo": codigo_int,
+            "prov": proveedor_id,
+            "desc": (descripcion or "").strip() or None,
+            "marca": dimensiones["marca_id"],
+            "genero": dimensiones["genero_id"],
+            "estilo": dimensiones["grupo_estilo_id"],
+            "caso": caso_id,
+        },
+    ).fetchone()
+
+    return r[0]
 
 
 def upsert_referencia(
@@ -122,4 +250,41 @@ def upsert_referencia(
     Returns:
         referencia.id (int)
     """
-    raise NotImplementedError("upsert_referencia en fase 2 de OT")
+    codigo_int = int(codigo_proveedor)
+
+    # 1. Buscar existente
+    r = conn.execute(
+        text("""
+            SELECT id, descripcion
+            FROM referencia
+            WHERE linea_id = :linea AND codigo_proveedor = :codigo AND proveedor_id = :prov
+        """),
+        {"linea": linea_id, "codigo": codigo_int, "prov": proveedor_id},
+    ).fetchone()
+
+    if r:
+        ref_id, desc_actual = r
+        # Enriquecimiento descripción
+        if debe_actualizar_descripcion(desc_actual, descripcion):
+            conn.execute(
+                text("UPDATE referencia SET descripcion = :desc WHERE id = :id"),
+                {"desc": (descripcion or "").strip(), "id": ref_id},
+            )
+        return ref_id
+
+    # 2. INSERT nueva
+    r = conn.execute(
+        text("""
+            INSERT INTO referencia (linea_id, codigo_proveedor, proveedor_id, descripcion, activo)
+            VALUES (:linea, :codigo, :prov, :desc, TRUE)
+            RETURNING id
+        """),
+        {
+            "linea": linea_id,
+            "codigo": codigo_int,
+            "prov": proveedor_id,
+            "desc": (descripcion or "").strip() or None,
+        },
+    ).fetchone()
+
+    return r[0]
