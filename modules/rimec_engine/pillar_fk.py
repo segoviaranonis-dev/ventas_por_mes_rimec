@@ -176,68 +176,23 @@ def _upsert_linea(
     genero_id: int | None,
     grupo_estilo_id: int | None,
 ) -> int | None:
-    ge_otros = _otros_grupo_estilo_id(engine)
-    gen_otros = _otros_genero_id(engine)
-    g_id = genero_id if genero_id is not None else gen_otros
-    ge_id = grupo_estilo_id if grupo_estilo_id is not None else ge_otros
+    """
+    Refactorizado para usar motor compartido con herencia jerárquica (§3.1).
+    Si línea nueva sin dimensiones → hereda de plantilla o sentinelas OTROS.
+    """
+    from core.pilares import upsert_linea
 
-    linea_id = _get_linea_id(conn, proveedor_id, line_num)
-    if linea_id is None:
-        conn.execute(
-            text(
-                """
-                INSERT INTO public.linea (
-                    proveedor_id, codigo_proveedor, descripcion,
-                    marca_id, genero_id, grupo_estilo_id
-                ) VALUES (
-                    CAST(:p AS bigint), CAST(:cod AS bigint), CAST(:d AS text),
-                    CAST(:m AS bigint), CAST(:g AS bigint), CAST(:ge AS bigint)
-                )
-                """
-            ),
-            {
-                "p": proveedor_id,
-                "cod": line_num,
-                "d": f"Listado precios línea {line_num}"[:2000],
-                "m": marca_id,
-                "g": g_id,
-                "ge": ge_id,
-            },
-        )
-        linea_id = _get_linea_id(conn, proveedor_id, line_num)
-    else:
-        cur = conn.execute(
-            text(
-                """
-                SELECT marca_id, genero_id, grupo_estilo_id
-                FROM public.linea
-                WHERE id = CAST(:lid AS bigint)
-                """
-            ),
-            {"lid": linea_id},
-        ).fetchone()
-        if cur:
-            m0, g0, ge0 = cur[0], cur[1], cur[2]
-            if (
-                m0 is not None
-                and int(m0) == int(marca_id)
-                and g0 is not None
-                and int(g0) == int(g_id)
-                and (ge0 is None or int(ge0) == int(ge_id))
-            ):
-                return linea_id
-        conn.execute(
-            text(
-                """
-                UPDATE public.linea
-                SET marca_id = CAST(:m AS bigint),
-                    genero_id = CAST(:g AS bigint),
-                    grupo_estilo_id = COALESCE(CAST(:ge AS bigint), grupo_estilo_id)
-                WHERE id = CAST(:lid AS bigint)
-                """
-            ),
-            {"m": marca_id, "g": g_id, "ge": ge_id, "lid": linea_id},
-        )
+    # Usar motor compartido para upsert idempotente + herencia
+    linea_id = upsert_linea(
+        conn,
+        str(line_num),
+        proveedor_id,
+        descripcion=f"Listado precios línea {line_num}"[:2000],
+        marca_id=marca_id,
+        genero_id=genero_id,
+        grupo_estilo_id=grupo_estilo_id,
+        fuente="listado",
+    )
     return linea_id
 
 
