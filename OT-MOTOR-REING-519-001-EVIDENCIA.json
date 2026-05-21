@@ -6,7 +6,7 @@
   "auditoria_auto_fecha": "2026-05-18",
   "auditoria_auto_nota": "C1-C7 OK; Implementación completa flujo simple 4 pasos. Requiere pruebas manuales T1-T5.",
   "objetivo": "Reducir flujo Motor de Precios de 20-40 min a <5 min preparación mediante comparación biblioteca vs Excel",
-  "commit": "PENDING_PUSH",
+  "commit": "151fa83",
   "sla_producto": "Preparación (pasos 1-2 nuevo flujo) ≤ 5 minutos con listado típico ~50-100 SKUs",
   "checks": [
     {

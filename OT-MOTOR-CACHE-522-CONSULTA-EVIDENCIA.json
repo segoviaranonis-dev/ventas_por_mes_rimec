@@ -1,0 +1,165 @@
+{
+  "consulta_id": "OT-522",
+  "tipo": "CONSULTA",
+  "fecha": "2026-05-18",
+  "ejecutor": "Claude Code",
+  "titulo": "Caché pilares Paso 3 Motor - Evaluación hotfix Cursor",
+  "checks_preguntas": {
+    "Q1_cache_acotada_suficiente": {
+      "veredicto": "SUFICIENTE",
+      "checks": [
+        {
+          "item": "Caché usa ANY(:codes) en lugar de escaneo completo",
+          "archivo": "logic.py:302",
+          "estado": "PASS"
+        },
+        {
+          "item": "Recibe skus_df como parámetro para acotar códigos",
+          "archivo": "logic.py:286",
+          "estado": "PASS"
+        },
+        {
+          "item": "Anti-patrón N+1 resuelto en lectura",
+          "referencia": "CONTRATO_ARQUITECTURA.md §2",
+          "estado": "PASS"
+        },
+        {
+          "item": "Riesgo menor: prefetch materiales usa loop (línea 393-416)",
+          "archivo": "logic.py:393",
+          "estado": "WARN - Resolver en OT-524"
+        }
+      ]
+    },
+    "Q2_resolucion_fk_sql": {
+      "veredicto": "RECOMENDADO",
+      "checks": [
+        {
+          "item": "Función SQL eliminaría loops Python residuales",
+          "estado": "PROPUESTA"
+        },
+        {
+          "item": "UPSERT masivo + RETURNING más eficiente que N queries",
+          "estado": "PROPUESTA"
+        },
+        {
+          "item": "Alineado con OT-520 (set-based SQL)",
+          "estado": "ARQUITECTURA"
+        }
+      ]
+    },
+    "Q3_provisionar_pilares_cuello_botella": {
+      "veredicto": "SÍ",
+      "checks": [
+        {
+          "item": "Loop for _, row in skus_df.iterrows() existe",
+          "archivo": "pillar_fk.py:582",
+          "estado": "DETECTADO"
+        },
+        {
+          "item": "Bulk upsert con UNNEST reduciría round-trips",
+          "estado": "PROPUESTA"
+        }
+      ]
+    },
+    "Q4_indices_faltantes": {
+      "veredicto": "VERIFICAR",
+      "checks": [
+        {
+          "item": "UNIQUE(proveedor_id, codigo_proveedor) documentado",
+          "referencia": "RIMEC_PILARES_CINCO.md:20",
+          "estado": "DOCUMENTADO"
+        },
+        {
+          "item": "Postgres crea B-tree automático por UNIQUE",
+          "estado": "TEORIA - Verificar \\d en prod"
+        },
+        {
+          "item": "Migración 054 propuesta si falta",
+          "estado": "CONTINGENCIA"
+        }
+      ]
+    },
+    "Q5_interaccion_ot520": {
+      "veredicto": "COMPLEMENTARIOS",
+      "checks": [
+        {
+          "item": "Hotfix 522 acelera resolución FK (fase previa)",
+          "estado": "PASS"
+        },
+        {
+          "item": "OT-520 acelera cálculo precios (fase posterior)",
+          "estado": "PASS"
+        },
+        {
+          "item": "Sin duplicación de trabajo",
+          "estado": "PASS"
+        },
+        {
+          "item": "Si Q2 implementado, flujo end-to-end SQL",
+          "estado": "MEJORA FUTURA"
+        }
+      ]
+    },
+    "Q6_staging_pilares_evento": {
+      "veredicto": "DESCARTADA",
+      "checks": [
+        {
+          "item": "Complejidad innecesaria vs caché acotada",
+          "estado": "DESCARTADO"
+        },
+        {
+          "item": "Duplicación de datos canónicos",
+          "estado": "ANTI-PATRON"
+        }
+      ]
+    },
+    "Q7_veredicto_final": {
+      "veredicto": "REFINAR",
+      "checks": [
+        {
+          "item": "Hotfix base es correcto",
+          "estado": "APROBAR"
+        },
+        {
+          "item": "Loops Python residuales identificados",
+          "estado": "REFINAR - OT-524"
+        },
+        {
+          "item": "Estimación mejora: 147s → <10s para 91 SKUs",
+          "base": "OT-520 mejoras set-based",
+          "estado": "PROYECCION"
+        }
+      ]
+    }
+  },
+  "codigo_revisado": {
+    "logic.py": {
+      "funciones": [
+        "build_pillar_cache (286-353)",
+        "prefetch_materiales_para_listado (371-424)",
+        "_pillar_codes_from_skus (258-284)"
+      ],
+      "cambios_cursor": "Caché acotada con ANY(:codes), prefetch materiales en una transacción"
+    },
+    "pillar_fk.py": {
+      "funciones": [
+        "asegurar_pilares_para_listado (568-634)",
+        "provisionar_pilares_desde_skus (referenciada en 579)"
+      ],
+      "cambios_cursor": "Verificación líneas faltantes en 1 query ANY(:codes) en lugar de N queries"
+    },
+    "ui.py": {
+      "lineas": "1171-1173",
+      "cambios_cursor": "Pasa skus_resueltos a build_pillar_cache, mensajes de progreso mejorados"
+    }
+  },
+  "ot_propuesta": {
+    "id": "OT-MOTOR-FK-524-001",
+    "titulo": "Resolución FK pilares set-based SQL",
+    "fase_1": "Migración 054: Función resolver_pilares_sql()",
+    "fase_2": "Python: resolver_pilares_evento_sql() wrapper",
+    "fase_3": "Integración ui.py + test paridad",
+    "estimacion_mejora": "147s → <10s (91 SKUs)"
+  },
+  "siguiente_paso": "Cursor lee RESPUESTA_EJECUTOR.md + RESPUESTA_ANTIGRAVITY.md → recomendación única al Director"
+}

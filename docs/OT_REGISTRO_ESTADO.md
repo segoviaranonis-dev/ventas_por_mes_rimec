@@ -1,15 +1,26 @@
 # Registro de órdenes de trabajo (OT) — RIMEC Nexus + Web
 
 > **Fuente de verdad del estado operativo.** Actualizado: **2026-05-18** (post OT-511 reset).  
-> Evidencia máquina: `OT-*-EVIDENCIA.json` en raíz del repo.
+> Evidencia máquina: `OT-*-EVIDENCIA.json` en raíz del repo.  
+> **Casa holding:** `C:\Users\hecto\Nexus_Core\` — ver [NEXUS_CORE_INDEX.md](NEXUS_CORE_INDEX.md) y [../../OT-RESTABLECIMIENTO-NEXUS-CORE-001.md](../../OT-RESTABLECIMIENTO-NEXUS-CORE-001.md).
 
 ---
+
+## Infraestructura
+
+| OT | Título | Estado | Nota |
+|----|--------|--------|------|
+| [OT-RESTABLECIMIENTO-NEXUS-CORE-001](../../OT-RESTABLECIMIENTO-NEXUS-CORE-001.md) | Casa Nexus_Core + `.cursorrules` + roles | **IMPLEMENTADA** | Abrir Cursor en carpeta padre `Nexus_Core` |
 
 ## En curso (nueva etapa — carga final)
 
 | OT | Título | Estado | Nota |
 |----|--------|--------|------|
-| [OT-DEPLOY-GIT-VERCEL-512-001](../OT-DEPLOY-GIT-VERCEL-512-001.md) | Git 4 repos + Vercel ×3 + Streamlit Nexus | **PARCIAL** | Fase 0+1 OK → docs `DEPLOY_*_512.md` para usuario |
+| [OT-MOTOR-SQL-520-001](../../ot/en_curso/OT-MOTOR-SQL-520-001.md) | Cálculo `precio_lista` SQL masivo + índice triplete | **CONDICIONAL** | Cursor: código OK; aplicar migr. 052/053 + T1/T3 |
+| [OT-MOTOR-REING-519-001](../OT-MOTOR-REING-519-001.md) | Reingeniería: Biblioteca ↔ Excel (< 5 min), sin Memoria/Matriz | **PENDIENTE** | Claude Code |
+| [OT-MOTOR-PASO4-AVANCE-516-001](../OT-MOTOR-PASO4-AVANCE-516-001.md) | Paso 3→4: recuperar desde BD tras timeout Cloud | **PENDIENTE** | Claude Code — **urgente carga** |
+| [OT-513B-GITIGNORE-SCRIPTS-LIB](../OT-513B-GITIGNORE-SCRIPTS-LIB.md) | Cerrar 513: `!scripts/lib/` + verificar Streamlit C3 | **PENDIENTE** | Claude Code |
+| [OT-DEPLOY-GIT-VERCEL-512-001](../OT-DEPLOY-GIT-VERCEL-512-001.md) | Git 4 repos + Vercel ×3 + Streamlit Nexus | **PENDIENTE** | Claude Code |
 | [OT-DEPOSITO-WEB-510-001](../OT-DEPOSITO-WEB-510-001.md) | Depósito Web: LPN + Precio venta = Bazar | **EN PAUSA** | Tras nueva carga con stock |
 
 ## Recomendado (prevención)
@@ -27,10 +38,14 @@
 
 | OT | Título | Resultado | Evidencia |
 |----|--------|-----------|-----------|
-| [OT-STREAMLIT-SCRIPTS-LIB-513-001](../OT-STREAMLIT-SCRIPTS-LIB-513-001.md) | Fix `scripts.lib.import_heartbeat` faltante en Git | **CERRADA** | `OT-STREAMLIT-SCRIPTS-LIB-513-001-EVIDENCIA.json` |
 | [OT-RESET-TRANSACCIONAL-511-001](../OT-RESET-TRANSACCIONAL-511-001.md) | Vaciar operativa; pilares + biblioteca + diccionario intactos | **CERRADA** | `OT-RESET-TRANSACCIONAL-511-001-EVIDENCIA.json` |
 
 Post-reset: `linea=1452`, biblioteca `5807` líneas-caso, `caso_precio_web_regla=6`, Sales Report `107570` sin cambio.
+
+| OT | Título | Resultado | Evidencia |
+|----|--------|-----------|-----------|
+| [OT-STREAMLIT-SCRIPTS-LIB-513-001](../OT-STREAMLIT-SCRIPTS-LIB-513-001.md) | Fix `scripts.lib` ignorado por `.gitignore` `lib/` | **CERRADA** (Auto PASS cond.) | `OT-STREAMLIT-SCRIPTS-LIB-513-001-EVIDENCIA.json` · `ccfc675` |
+| [OT-RIMEC-WEB-AUTH-514-001](../OT-RIMEC-WEB-AUTH-514-001.md) | Login Vercel: solo VENDEDOR + ADMIN | **CERRADA** (Auto PASS cond.) | `dfedd16` · ver `CONTROL_INTEGRIDAD_HOLDING.md` |
 
 ---
 

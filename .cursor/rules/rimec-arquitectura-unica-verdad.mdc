@@ -33,7 +33,8 @@ Modelo acordado del ecosistema. No mezclar responsabilidades entre capas.
 
 **Relacionamiento:** `linea_referencia` (estilo/tipo L+R) · **`combinacion`** (5 FK) · `movimiento_detalle` / `pedido_proveedor_detalle` → trazabilidad IC→PP→evento→caso histórica.
 
-Doc completo: `docs/RIMEC_PILARES_CINCO.md`
+Doc completo: `docs/RIMEC_PILARES_CINCO.md`  
+**Nombres (P0):** `docs/RIMEC_NOMENCLATURA_PILARES.md` — regla `rimec-nomenclatura-pilares-p0.mdc`
 
 ## Pilares en procesos vs Report
 

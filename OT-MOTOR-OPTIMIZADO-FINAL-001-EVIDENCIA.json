@@ -1,0 +1,20 @@
+{
+  "ot_id": "OT-MOTOR-OPTIMIZADO-FINAL-001",
+  "decision_director": "Opcion_C_Paquete_Completo",
+  "fecha": "2026-05-18",
+  "auditoria_auto": "PENDING_MANUAL",
+  "meta_tiempo_91_skus_segundos": 10,
+  "migraciones_director_supabase": [
+    "migrations/052_precio_lista_indice_triplete.sql",
+    "migrations/053_calcular_precio_lista_evento_sql.sql",
+    "migrations/054_resolver_pilares_sql.sql"
+  ],
+  "checks": [
+    { "id": "T1", "pass": null, "expected": "Paso 3 < 10s para 91 SKUs", "actual": null },
+    { "id": "T2", "pass": null, "expected": "diff_count = 0 paridad SQL vs Python", "actual": null },
+    { "id": "T3", "pass": null, "expected": "UX 5 fases + insignias + boton recuperacion", "actual": null },
+    { "id": "T4", "pass": null, "expected": "Commit(s) en git con hotfix 522 + paquete", "actual": null }
+  ],
+  "respuesta_claude": "C:\\Users\\hecto\\Nexus_Core\\ot\\RESPUESTA_EJECUTOR.md",
+  "respuesta_gemini": "C:\\Users\\hecto\\Nexus_Core\\ot\\RESPUESTA_ANTIGRAVITY.md (solo consultorias, no esta OT)"
+}

@@ -37,7 +37,7 @@ def _register(module_package: str) -> None:
         _registry[info["key"]] = info
     except Exception as e:
         # Log sin romper el arranque — el módulo aparece como inaccesible
-        print(f"⚠️  [REGISTRY] No se pudo registrar '{module_package}': {e}")
+        print(f"[WARN]  [REGISTRY] No se pudo registrar '{module_package}': {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -46,7 +46,7 @@ def _register(module_package: str) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 _register("modules.home")
 _register("modules.sales_report")
-_register("modules.balance_tiendas_retail")  # 2.1 — Retail: importación Excel → staging
+_register("modules.balance_tiendas_retail")  # 2.1 — Retail: Excel st+vt+RC → registro_st_vt_rc_reposicion
 _register("modules.intencion_compra")
 _register("modules.digitacion")       # 3.5 — Puente IC → PP (nro fábrica + evento precio)
 _register("modules.carga_transito")     # 4.2 — Carga Stock Tránsito

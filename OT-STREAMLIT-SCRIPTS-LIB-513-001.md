@@ -1,6 +1,7 @@
 # OT-STREAMLIT-SCRIPTS-LIB-513-001 — Fix `ModuleNotFoundError: scripts.lib` en Streamlit Cloud
 
-**Estado:** PENDIENTE EJECUCIÓN (Claude Code) — fix mínimo ya puede existir en working tree  
+**Estado:** ✅ CERRADA (2026-05-18) — auditoría Auto **PASS condicional** (C3 Streamlit manual) · commit `ccfc675`  
+**Evidencia:** `OT-STREAMLIT-SCRIPTS-LIB-513-001-EVIDENCIA.json` · post-audit: excepción `!scripts/lib/` en `.gitignore`  
 **Fecha:** 2026-05-18  
 **Repo:** https://github.com/segoviaranonis-dev/ventas_por_mes_rimec.git  
 **Deploy:** Streamlit Cloud (`/mount/src/ventas_por_mes_rimec`)
@@ -122,6 +123,15 @@ Registrar URL app en `OT-STREAMLIT-SCRIPTS-LIB-513-001-EVIDENCIA.json`.
 
 ---
 
+## Auditoría Auto (obligatoria antes de CERRADA)
+
+Ver `docs/AUDITORIA_AUTO_513.md` y sección OT-513 en `docs/CONTROL_INTEGRIDAD_HOLDING.md`.
+
+**Rechazar** si el diff incluye:
+- `try/except ImportError` alrededor del import en `ui.py`
+- Copiar lógica de heartbeat inline en lugar del módulo `scripts/lib/`
+- Cualquier cambio en `import_pilares_linea_lr_excel.py` que no sea estrictamente necesario
+
 ## Orden Claude Code
 
-**No pedir confirmación.** Push + evidencia JSON. Si el fix ya está en el repo, solo verificar C1–C3 y cerrar OT.
+Push + evidencia JSON. **No marcar OT cerrada** — el director pasa evidencia a Auto para veredicto PASS/FAIL.

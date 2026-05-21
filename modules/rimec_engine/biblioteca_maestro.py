@@ -1323,65 +1323,234 @@ def crear_caso_en_biblioteca_vacia(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# BATCH - OT-519: agregar líneas a casos (unión, no reemplazo)
+# BATCH - OT-519 / cierre excepciones: pilar → biblioteca (bcl + lineas[])
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _lineas_actuales_casos_desde_bd(caso_ids: list[int]) -> dict[int, set[str]]:
+    """Unión biblioteca_caso_linea + fallback columna lineas[]."""
+    if not caso_ids:
+        return {}
+    por_caso = _lineas_por_caso_biblioteca_desde_ids(caso_ids)
+    df = get_dataframe(
+        "SELECT id, lineas FROM caso_precio_biblioteca WHERE id = ANY(:ids)",
+        {"ids": caso_ids},
+    )
+    if df is not None and not df.empty:
+        for _, row in df.iterrows():
+            cid = int(row["id"])
+            raw = row.get("lineas") or []
+            if isinstance(raw, (list, tuple)):
+                fallback = {str(c).strip() for c in raw if str(c).strip()}
+            else:
+                fallback = set()
+            por_caso.setdefault(cid, set())
+            por_caso[cid] |= fallback
+    return por_caso
+
+
+def _lineas_por_caso_biblioteca_desde_ids(caso_ids: list[int]) -> dict[int, set[str]]:
+    if not caso_ids or not _tabla_biblioteca_precio_existe():
+        return {}
+    df = get_dataframe(
+        """SELECT bcl.caso_biblioteca_id, l.codigo_proveedor::text AS cod
+           FROM biblioteca_caso_linea bcl
+           JOIN linea l ON l.id = bcl.linea_id
+           WHERE bcl.caso_biblioteca_id = ANY(:ids)
+           ORDER BY bcl.caso_biblioteca_id, l.codigo_proveedor""",
+        {"ids": caso_ids},
+    )
+    out: dict[int, set[str]] = {}
+    if df is None or df.empty:
+        return out
+    for _, row in df.iterrows():
+        cid = int(row["caso_biblioteca_id"])
+        try:
+            cod = str(int(float(str(row["cod"]))))
+        except (ValueError, TypeError):
+            continue
+        out.setdefault(cid, set()).add(cod)
+    return out
+
+
 def agregar_lineas_a_casos_biblioteca(
-    caso_lineas_map: dict[int, list[str]]
-) -> tuple[bool, int]:
+    biblioteca_id: int,
+    proveedor_id: int,
+    caso_lineas_map: dict[int, list[str]],
+) -> tuple[bool, int, str]:
     """
-    Agrega (unión) códigos de línea a múltiples casos de biblioteca en un lote.
+    Agrega (unión) códigos a casos: INSERT en biblioteca_caso_linea + array lineas[].
 
     Args:
-        caso_lineas_map: {caso_id: [codigo_proveedor, ...]}
+        biblioteca_id: biblioteca afectada
+        proveedor_id: proveedor del pilar
+        caso_lineas_map: {caso_biblioteca_id: [codigo_proveedor, ...]}
 
     Returns:
-        (ok, total_lineas_agregadas)
-
-    Usado en OT-519 para resolver gaps: línea sin caso → asignar a N casos seleccionados.
+        (ok, total_lineas_nuevas_agregadas, mensaje_error)
     """
+    if not biblioteca_id:
+        return False, 0, "Biblioteca sin ID."
     if not caso_lineas_map:
-        return True, 0
+        return True, 0, ""
 
-    from core.database import get_dataframe
-    from sqlalchemy import text
-
+    caso_ids = list(caso_lineas_map.keys())
+    actuales_por_caso = _lineas_actuales_casos_desde_bd(caso_ids)
     total_agregadas = 0
+    errores: list[str] = []
 
     try:
-        # Cargar lineas actuales de cada caso (una query)
-        caso_ids = list(caso_lineas_map.keys())
-        df = get_dataframe(
-            "SELECT id, lineas FROM caso_precio_biblioteca WHERE id = ANY(:ids)",
-            {"ids": caso_ids}
-        )
-        if df is None:
-            return False, 0
-
-        lineas_actuales = {int(row["id"]): row.get("lineas") or [] for _, row in df.iterrows()}
-
-        # Preparar updates con unión
-        updates = []
         for caso_id, nuevas in caso_lineas_map.items():
-            actuales_set = set(lineas_actuales.get(caso_id, []))
+            actuales_set = actuales_por_caso.get(caso_id, set())
             nuevas_set = {str(c).strip() for c in nuevas if str(c).strip()}
-            union = sorted(actuales_set | nuevas_set, key=lambda x: int(x) if x.isdigit() else 999999)
-            agregadas = len(nuevas_set - actuales_set)
-            if agregadas > 0:
-                updates.append((caso_id, union))
-                total_agregadas += agregadas
+            delta = sorted(nuevas_set - actuales_set, key=lambda x: int(x) if x.isdigit() else 999999)
+            if not delta:
+                continue
+            union = sorted(
+                actuales_set | nuevas_set,
+                key=lambda x: int(x) if x.isdigit() else 999999,
+            )
+            ok, err = agregar_lineas_de_caso_biblioteca(
+                int(biblioteca_id),
+                int(caso_id),
+                int(proveedor_id),
+                delta,
+                union,
+            )
+            if not ok:
+                errores.append(f"caso {caso_id}: {err}")
+                continue
+            total_agregadas += len(delta)
+            actuales_por_caso[caso_id] = set(union)
 
-        # Batch update
-        if updates:
-            with engine.begin() as conn:
-                for caso_id, lineas_finales in updates:
-                    conn.execute(
-                        text("UPDATE caso_precio_biblioteca SET lineas = :lineas WHERE id = :id"),
-                        {"lineas": lineas_finales, "id": caso_id}
-                    )
-
-        return True, total_agregadas
-
+        if errores:
+            return False, total_agregadas, "; ".join(errores[:5])
+        return True, total_agregadas, ""
     except Exception as e:
         DBInspector.log(f"[BIB] agregar_lineas_a_casos_biblioteca error: {e}", "ERROR")
-        return False, 0
+        return False, total_agregadas, str(e)
+
+
+def resumen_atributos_lineas_pilar(
+    proveedor_id: int,
+    codigos: list[str],
+) -> pd.DataFrame:
+    """Marca, género, estilo y tipo_1 por línea (post-alta en pilar)."""
+    codes_int = _codigos_proveedor_a_int(codigos)
+    if not codes_int:
+        return pd.DataFrame(
+            columns=["linea", "marca", "genero", "estilo", "tipo_1"]
+        )
+    df = get_dataframe(
+        """SELECT DISTINCT ON (l.codigo_proveedor)
+                  l.codigo_proveedor::text AS linea,
+                  COALESCE(mv.descp_marca, '') AS marca,
+                  COALESCE(gen.descripcion, gen.codigo, '') AS genero,
+                  COALESCE(ge.descp_grupo_estilo, '') AS estilo,
+                  COALESCE(
+                      (
+                          SELECT COALESCE(t1.descp_tipo_1, lr.descp_tipo_1, '')
+                          FROM linea_referencia lr
+                          LEFT JOIN tipo_1 t1 ON t1.id_tipo_1 = lr.tipo_1_id
+                          WHERE lr.linea_id = l.id
+                          ORDER BY lr.id
+                          LIMIT 1
+                      ),
+                      ''
+                  ) AS tipo_1
+           FROM linea l
+           LEFT JOIN marca_v2 mv ON mv.id_marca = l.marca_id
+           LEFT JOIN genero gen ON gen.id = l.genero_id
+           LEFT JOIN grupo_estilo_v2 ge ON ge.id_grupo_estilo = l.grupo_estilo_id
+           WHERE l.proveedor_id = :pid
+             AND l.codigo_proveedor = ANY(:codes)
+           ORDER BY l.codigo_proveedor::bigint""",
+        {"pid": proveedor_id, "codes": codes_int},
+    )
+    if df is None or df.empty:
+        return pd.DataFrame(
+            columns=["linea", "marca", "genero", "estilo", "tipo_1"]
+        )
+    return df
+
+
+def ejecutar_cierre_excepciones_biblioteca(
+    *,
+    proveedor_id: int,
+    biblioteca_id: int,
+    biblioteca_nombre: str,
+    evento_id: int | None,
+    caso_lineas_map: dict[int, list[str]],
+    lineas_provisionar: list[str] | None = None,
+    nombres_caso_por_id: dict[int, str] | None = None,
+) -> dict[str, Any]:
+    """
+    Pipeline completo: (opcional) alta en pilar → agregar a casos → resumen atributos.
+
+    Identifica biblioteca, aplica leyes de agregación vía provisionar_linea_pilar_clonando_inferior,
+    persiste en biblioteca_caso_linea y devuelve tabla resumen para la UI.
+    """
+    from modules.rimec_engine.pillar_fk import provisionar_lineas_faltantes_en_pilar
+
+    resultado: dict[str, Any] = {
+        "ok": False,
+        "biblioteca_id": biblioteca_id,
+        "biblioteca_nombre": biblioteca_nombre,
+        "proveedor_id": proveedor_id,
+        "pilar_creadas": [],
+        "pilar_errores": [],
+        "lineas_agregadas_biblioteca": 0,
+        "casos_tocados": 0,
+        "detalle_casos": [],
+        "lineas_procesadas": [],
+        "error": "",
+    }
+    todas_lineas: set[str] = set()
+
+    if lineas_provisionar:
+        ok_p, err_p = provisionar_lineas_faltantes_en_pilar(
+            proveedor_id,
+            lineas_provisionar,
+            evento_id=evento_id,
+        )
+        resultado["pilar_creadas"] = ok_p
+        resultado["pilar_errores"] = err_p
+        todas_lineas.update(ok_p)
+        if err_p and not ok_p:
+            resultado["error"] = "; ".join(err_p[:4])
+            return resultado
+
+    for codigos in caso_lineas_map.values():
+        todas_lineas.update(str(c).strip() for c in codigos if str(c).strip())
+
+    if caso_lineas_map:
+        ok_bib, n_ag, err_bib = agregar_lineas_a_casos_biblioteca(
+            biblioteca_id,
+            proveedor_id,
+            caso_lineas_map,
+        )
+        resultado["lineas_agregadas_biblioteca"] = n_ag
+        resultado["casos_tocados"] = len(caso_lineas_map)
+        nombres = nombres_caso_por_id or {}
+        for cid, cods in caso_lineas_map.items():
+            resultado["detalle_casos"].append(
+                {
+                    "caso_id": cid,
+                    "caso_nombre": nombres.get(cid, f"#{cid}"),
+                    "lineas": sorted(
+                        {str(c).strip() for c in cods if str(c).strip()},
+                        key=lambda x: int(x) if x.isdigit() else 999999,
+                    ),
+                }
+            )
+        if not ok_bib:
+            resultado["error"] = err_bib or "Error al agregar líneas a la biblioteca."
+            return resultado
+
+    resultado["lineas_procesadas"] = sorted(
+        todas_lineas,
+        key=lambda x: int(x) if x.isdigit() else 999999,
+    )
+    df_res = resumen_atributos_lineas_pilar(proveedor_id, resultado["lineas_procesadas"])
+    resultado["resumen_df"] = df_res
+    resultado["ok"] = True
+    return resultado

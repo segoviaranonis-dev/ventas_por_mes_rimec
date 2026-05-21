@@ -8,7 +8,7 @@ import streamlit as st
 from core.ux_celebrate import celebrate_save, celebrate_step
 from modules.rimec_engine.biblioteca_maestro import (
     BibliotecaEditorState,
-    agregar_lineas_a_casos_biblioteca,
+    ejecutar_cierre_excepciones_biblioteca,
     aplicar_biblioteca_a_evento,
     cargar_biblioteca_editor_state,
     crear_biblioteca,
@@ -191,6 +191,12 @@ def _render_comparacion_y_resolucion(
 
     st.markdown("---")
     st.markdown(f"### 📊 Resultado: **{biblioteca_nombre}**")
+    st.caption(
+        f"Biblioteca **#{biblioteca_id}** · evento **#{evento_id}** · "
+        f"proveedor **#{proveedor_id}**"
+    )
+
+    _render_resumen_cierre_biblioteca_si_hay()
 
     # Semáforo verde o ámbar
     if comp.ok:
@@ -287,25 +293,53 @@ def _render_comparacion_y_resolucion(
                 if selected:
                     asignaciones[linea] = [casos_map[c] for c in selected]
 
-            if asignaciones and st.button("💾 Agregar a biblioteca", key="add_to_bib"):
-                # Invertir: {caso_id: [lineas]}
-                caso_lineas = {}
+            if asignaciones and st.button(
+                "💾 Agregar a biblioteca (pilar + caso + cierre)",
+                key="add_to_bib",
+                type="primary",
+                help=(
+                    f"Afecta biblioteca #{biblioteca_id}: asegura pilar si falta, "
+                    "inserta en casos elegidos y muestra resumen marca/género/estilo/tipo_1."
+                ),
+            ):
+                caso_lineas: dict[int, list[str]] = {}
                 for linea, caso_ids in asignaciones.items():
                     for cid in caso_ids:
                         caso_lineas.setdefault(cid, []).append(linea)
 
-                with proceso_largo("Guardando", "Agregando líneas a casos...") as avanzar:
-                    avanzar(0.5, "Actualizando biblioteca...")
-                    ok, n_agregadas = agregar_lineas_a_casos_biblioteca(caso_lineas)
+                inv_casos = {v: k for k, v in casos_map.items()}
+                lineas_sin_pilar = [
+                    ln for ln in asignaciones if ln in comp.no_en_pilar
+                ]
+
+                with proceso_largo(
+                    "Cierre biblioteca",
+                    f"Biblioteca «{biblioteca_nombre}» — pilar, casos y resumen…",
+                ) as avanzar:
+                    avanzar(0.15, f"Biblioteca #{biblioteca_id}…")
+                    avanzar(0.35, "Pilar (ley de agregación)…")
+                    cierre = ejecutar_cierre_excepciones_biblioteca(
+                        proveedor_id=proveedor_id,
+                        biblioteca_id=biblioteca_id,
+                        biblioteca_nombre=biblioteca_nombre,
+                        evento_id=evento_id,
+                        caso_lineas_map=caso_lineas,
+                        lineas_provisionar=lineas_sin_pilar or None,
+                        nombres_caso_por_id=inv_casos,
+                    )
+                    avanzar(0.85, "Resumen de atributos…")
                     avanzar(1.0, "Listo")
 
-                if ok:
-                    st.success(f"✅ {n_agregadas} líneas agregadas a {len(caso_lineas)} caso(s)")
-                    # Limpiar caché y re-comparar
+                if cierre.get("ok"):
+                    st.session_state["re_resumen_cierre_bib"] = cierre
                     st.session_state.pop(comp_key, None)
+                    st.session_state.pop(f"_cache_pilar_datos_{proveedor_id}", None)
+                    st.session_state.pop(f"_cache_pilar_cod_{proveedor_id}", None)
                     st.rerun()
                 else:
-                    st.error("Error al agregar líneas a biblioteca")
+                    st.error(cierre.get("error") or "Error al cerrar excepciones en biblioteca")
+                    if cierre.get("pilar_errores"):
+                        st.warning("; ".join(cierre["pilar_errores"][:6]))
 
         # Tabla: líneas no en pilar
         if comp.no_en_pilar:
@@ -317,25 +351,91 @@ def _render_comparacion_y_resolucion(
             if len(comp.no_en_pilar) > 10:
                 st.caption(f"...y {len(comp.no_en_pilar) - 10} más")
 
-            if st.button("🔨 Crear en pilar (batch)", key="create_pilar"):
-                with proceso_largo("Creando líneas", f"Provisionando {len(comp.no_en_pilar)} líneas...") as avanzar:
-                    avanzar(0.3, "Iniciando...")
-                    codigos = [int(c) if c.isdigit() else 0 for c in comp.no_en_pilar]
-                    codigos = [c for c in codigos if c > 0]
-                    ok_list, err_list = provisionar_lineas_faltantes_en_pilar(
-                        proveedor_id, [str(c) for c in codigos]
+            if st.button(
+                "🔨 Crear en pilar (batch + resumen)",
+                key="create_pilar",
+                type="primary",
+            ):
+                codigos_txt = [str(c).strip() for c in comp.no_en_pilar if str(c).strip()]
+                with proceso_largo(
+                    "Creando líneas",
+                    f"Pilar proveedor #{proveedor_id} — {len(codigos_txt)} línea(s)…",
+                ) as avanzar:
+                    avanzar(0.35, "Clonando desde línea inferior (marca/género/estilo)…")
+                    cierre = ejecutar_cierre_excepciones_biblioteca(
+                        proveedor_id=proveedor_id,
+                        biblioteca_id=biblioteca_id,
+                        biblioteca_nombre=biblioteca_nombre,
+                        evento_id=evento_id,
+                        caso_lineas_map={},
+                        lineas_provisionar=codigos_txt,
                     )
-                    avanzar(1.0, f"Creadas: {len(ok_list)}")
+                    avanzar(1.0, "Listo")
 
-                st.success(f"✅ {len(ok_list)} líneas creadas en pilar")
-                if err_list:
-                    st.warning("Algunas líneas no se crearon: " + "; ".join(err_list[:5]))
-                # Limpiar caché y re-comparar
-                st.session_state.pop(comp_key, None)
-                st.rerun()
+                if cierre.get("ok") or cierre.get("pilar_creadas"):
+                    st.session_state["re_resumen_cierre_bib"] = cierre
+                    st.session_state.pop(comp_key, None)
+                    st.session_state.pop(f"_cache_pilar_datos_{proveedor_id}", None)
+                    st.rerun()
+                else:
+                    st.error(cierre.get("error") or "No se pudieron crear líneas en el pilar")
+                    if cierre.get("pilar_errores"):
+                        st.warning("; ".join(cierre["pilar_errores"][:6]))
 
         # Link a catálogo (casos complejos)
         st.caption("💡 **¿Casos complejos?** Ir a **Catálogo de casos** para armar y volver.")
+
+
+def _render_resumen_cierre_biblioteca_si_hay() -> None:
+    """Tabla final: líneas procesadas con marca, género, estilo y tipo_1."""
+    cierre = st.session_state.get("re_resumen_cierre_bib")
+    if not cierre:
+        return
+    import pandas as pd
+
+    st.success(
+        f"**Cierre completado** — biblioteca **#{cierre.get('biblioteca_id')}** "
+        f"«{cierre.get('biblioteca_nombre', '')}»"
+    )
+    n_pilar = len(cierre.get("pilar_creadas") or [])
+    n_bib = int(cierre.get("lineas_agregadas_biblioteca") or 0)
+    n_casos = int(cierre.get("casos_tocados") or 0)
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Líneas en pilar (nuevas)", n_pilar)
+    m2.metric("Líneas agregadas a casos", n_bib)
+    m3.metric("Casos tocados", n_casos)
+
+    for det in cierre.get("detalle_casos") or []:
+        st.caption(
+            f"**{det.get('caso_nombre')}**: "
+            f"{', '.join(det.get('lineas') or [])}"
+        )
+
+    df = cierre.get("resumen_df")
+    if df is not None and not getattr(df, "empty", True):
+        st.markdown("#### Líneas agregadas — atributos del pilar")
+        st.dataframe(
+            df.rename(
+                columns={
+                    "linea": "Línea",
+                    "marca": "Marca",
+                    "genero": "Género",
+                    "estilo": "Estilo",
+                    "tipo_1": "Tipo 1",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+    elif cierre.get("lineas_procesadas"):
+        st.info("Líneas procesadas: " + ", ".join(cierre["lineas_procesadas"][:20]))
+
+    if cierre.get("pilar_errores"):
+        st.warning("Pilar: " + "; ".join(cierre["pilar_errores"][:8]))
+
+    if st.button("Continuar (re-comparar)", key="re_resumen_cierre_ok", type="primary"):
+        st.session_state.pop("re_resumen_cierre_bib", None)
+        st.rerun()
 
 
 def _ir_a_paso_1() -> None:
@@ -616,12 +716,33 @@ def _render_alta_linea_pilar(state: BibliotecaEditorState) -> None:
                         st.error("; ".join(err_list[:6]))
                     if ok_list:
                         _refrescar_pilar_en_estado(state)
+                        from modules.rimec_engine.biblioteca_maestro import (
+                            resumen_atributos_lineas_pilar,
+                        )
+
+                        df_sum = resumen_atributos_lineas_pilar(
+                            state.proveedor_id, ok_list
+                        )
                         st.success(
                             f"Pilar actualizado: {len(ok_list)} línea(s) creada(s) "
                             f"({', '.join(ok_list[:8])}"
                             f"{', …' if len(ok_list) > 8 else ''}). "
                             "Asignalas a un caso abajo."
                         )
+                        if df_sum is not None and not df_sum.empty:
+                            st.dataframe(
+                                df_sum.rename(
+                                    columns={
+                                        "linea": "Línea",
+                                        "marca": "Marca",
+                                        "genero": "Género",
+                                        "estilo": "Estilo",
+                                        "tipo_1": "Tipo 1",
+                                    }
+                                ),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
                         if "bib_alta_linea_cod" in st.session_state:
                             del st.session_state["bib_alta_linea_cod"]
                         st.rerun()

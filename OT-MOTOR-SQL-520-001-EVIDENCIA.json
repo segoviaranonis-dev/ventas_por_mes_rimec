@@ -96,5 +96,8 @@
     "p3_pilares_blindados": "✓ Sin TRUNCATE CASCADE",
     "p8_evidencia_maquina": "✓ JSON entregado"
   },
-  "siguiente_paso": "Ejecutar migraciones en ambiente desarrollo, probar con evento real, verificar paridad T3"
+  "siguiente_paso": "Ejecutar migraciones en ambiente desarrollo, probar con evento real, verificar paridad T3",
+  "auditoria_auto": "CONDICIONAL",
+  "auditoria_auto_fecha": "2026-05-18",
+  "auditoria_auto_nota": "Código PASS; T1/T3 y migraciones Supabase pendientes Director. RESPUESTA consolidada por Cursor en ot/RESPUESTA_EJECUTOR.md"
 }

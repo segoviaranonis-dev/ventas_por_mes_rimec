@@ -29,7 +29,7 @@ class ThemeManager:
     @staticmethod
     def _trace(category, msg):
         """Microfonía de auditoría visual."""
-        print(f"🎨 [{category}] {msg}")
+        print(f"[THEME] [{category}] {msg}")
 
     @classmethod
     def get_rendering_specs(cls):

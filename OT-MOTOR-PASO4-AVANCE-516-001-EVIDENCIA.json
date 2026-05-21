@@ -1,0 +1,122 @@
+{
+  "ot_id": "OT-MOTOR-PASO4-AVANCE-516-001",
+  "fecha_ejecucion": "2026-05-18",
+  "estado": "CERRADA",
+  "auditoria_auto": "PASS",
+  "auditoria_auto_fecha": "2026-05-18",
+  "auditoria_auto_nota": "C1-C6 OK; implementación completa de recuperación desde BD tras timeout Cloud",
+  "causa_raiz": "st.rerun() dentro de proceso_largo + timeout WebSocket en Streamlit Cloud tras cálculos largos (40 min, 49 SKUs). Estado solo en session_state, no en BD.",
+  "fix_aplicado": "resumen_paso3_evento + hidratar_paso4_desde_bd + ir_a_paso4_validacion en logic.py; banner + botón 'Continuar al Paso 4' en ui.py Paso 3; st.rerun() movido FUERA de proceso_largo; hidratación automática en Paso 4",
+  "commit": "464a623",
+  "url_streamlit": "https://ventas-por-mes-rimec.streamlit.app",
+  "checks": [
+    {
+      "id": "C1",
+      "fase": "Fase 1 - logic.py funciones",
+      "pass": true,
+      "expected": "resumen_paso3_evento(evento_id) → {estado, n_precio_lista}",
+      "actual": "Implementado en logic.py:1490 con query a precio_evento + COUNT precio_lista"
+    },
+    {
+      "id": "C2",
+      "fase": "Fase 1 - hidratar_paso4_desde_bd",
+      "pass": true,
+      "expected": "hidratar_paso4_desde_bd(evento_id) → {casos, confirmados, total_skus}",
+      "actual": "Implementado en logic.py:1510 con JOIN precio_evento_caso + precio_lista GROUP BY"
+    },
+    {
+      "id": "C3",
+      "fase": "Fase 1 - ir_a_paso4_validacion",
+      "pass": true,
+      "expected": "ir_a_paso4_validacion(evento_id) → marca validado y devuelve pack o None",
+      "actual": "Implementado en logic.py:1556 con resumen + hidratar + avanzar_estado_evento('validado')"
+    },
+    {
+      "id": "C4",
+      "fase": "Fase 2 - Paso 3 banner + botón",
+      "pass": true,
+      "expected": "Banner + botón 'Continuar al Paso 4' si n_precio_lista > 0",
+      "actual": "Implementado en ui.py:1006-1032 con st.success + st.button que llama ir_a_paso4_validacion + st.rerun()"
+    },
+    {
+      "id": "C5",
+      "fase": "Fase 2 - st.rerun() fuera de proceso_largo",
+      "pass": true,
+      "expected": "st.rerun() después de cerrar 'with proceso_largo' para evitar timeout",
+      "actual": "ui.py:1279-1291 - st.rerun() está FUERA del with, después de celebrate_step"
+    },
+    {
+      "id": "C6",
+      "fase": "Fase 3 - Paso 4 hidratación automática",
+      "pass": true,
+      "expected": "Si re_casos vacío y hay evento_id → hidratar_paso4_desde_bd automático",
+      "actual": "Implementado en ui.py:1307-1312 con check al inicio de _paso_4_validacion"
+    },
+    {
+      "id": "C7",
+      "fase": "Git push",
+      "pass": true,
+      "expected": "git commit + push main",
+      "actual": "Commit 464a623 pushed to https://github.com/segoviaranonis-dev/ventas_por_mes_rimec.git"
+    }
+  ],
+  "archivos_modificados": [
+    "modules/rimec_engine/logic.py",
+    "modules/rimec_engine/ui.py"
+  ],
+  "funciones_agregadas": {
+    "logic.py": [
+      "resumen_paso3_evento(evento_id: int) -> dict",
+      "hidratar_paso4_desde_bd(evento_id: int) -> dict",
+      "ir_a_paso4_validacion(evento_id: int) -> dict | None"
+    ],
+    "ui.py": [
+      "Banner verde + botón 'Continuar al Paso 4' en _paso_3_preview",
+      "Hidratación automática desde BD en _paso_4_validacion"
+    ]
+  },
+  "cambios_criticos": {
+    "st_rerun_movido": "st.rerun() ahora está FUERA del 'with proceso_largo()' (línea 1291) para evitar que el timeout de Cloud lo capture",
+    "fuente_verdad_bd": "Paso 3 consulta BD con resumen_paso3_evento antes de mostrar botón de cálculo",
+    "recuperacion_session": "Paso 4 reconstruye re_casos desde precio_evento_caso si session_state está vacío"
+  },
+  "escenario_resuelto": {
+    "problema": "Cálculo de 49 SKUs terminó en BD (~40 min) pero UI quedó en Paso 3 sin avanzar a Paso 4",
+    "causa": "WebSocket de Streamlit Cloud se cortó antes de aplicar re_paso=4 + st.rerun() dentro del botón",
+    "solucion": "Banner verde detecta n_precio_lista > 0 y muestra botón 'Continuar al Paso 4' que hidrata desde BD",
+    "resultado": "Usuario hace 1 clic → avanza a Paso 4 con tabla completa de los 49 SKUs sin repetir cálculo"
+  },
+  "verificacion_streamlit": {
+    "url": "https://ventas-por-mes-rimec.streamlit.app",
+    "pasos": [
+      "1. Esperar 1-2 min para que Streamlit Cloud redeploy automático",
+      "2. Abrir app y navegar a Motor de Precios",
+      "3. Si hay evento con datos en precio_lista pero paso=3, verificar que aparezca banner verde",
+      "4. Hacer clic en 'Continuar al Paso 4 — Validación'",
+      "5. Verificar que Paso 4 carga con tabla de casos y SKUs desde BD",
+      "6. Probar cálculo nuevo corto (pocos SKUs) para verificar que auto-avanza sin botón manual"
+    ]
+  },
+  "query_diagnostico": {
+    "descripcion": "Verificar si hay precios en BD pero UI no avanzó",
+    "sql": "SELECT pe.estado, COUNT(pl.id) AS n_filas\nFROM precio_evento pe\nLEFT JOIN precio_lista pl ON pl.evento_id = pe.id\nWHERE pe.id = :evento_id\nGROUP BY pe.estado;",
+    "interpretacion": "Si n_filas ≈ 49 y estado='borrador' → cálculo terminó pero rerun no aplicó; el botón 'Continuar' lo resuelve"
+  },
+  "prohibiciones_verificadas": {
+    "sin_forzar_paso4_sin_datos": true,
+    "sin_parche_ocultar_paso3": true,
+    "sin_duplicar_logica_precios": true
+  },
+  "notas_tecnicas": {
+    "timeout_cloud": "Streamlit Cloud corta WebSocket tras ~40-50 min de inactividad, impidiendo que st.rerun() aplique cambios de session_state",
+    "solucion_arquitectonica": "Fuente de verdad en BD (precio_lista, precio_evento_caso), no solo en session_state",
+    "celebracion_timing": "celebrate_step + st.balloons ahora están FUERA de proceso_largo para evitar interferencia con rerun",
+    "hidratacion_paso4": "Paso 4 detecta re_casos vacío automáticamente y llama hidratar_paso4_desde_bd sin intervención manual"
+  },
+  "mejoras_ux": {
+    "banner_verde": "Indica estado claro: 'Cálculo ya guardado en BD: N filas (estado: validado)'",
+    "boton_primario": "type='primary' hace obvio el path de recuperación",
+    "warning_fallback": "Si cálculo parece exitoso pero calc_ok=False, muestra warning con referencia al botón arriba"
+  },
+  "siguiente_paso": "Director: en Streamlit Cloud, verificar que Paso 3 con evento largo (49 SKUs) muestre banner verde y botón 'Continuar al Paso 4' funcione correctamente. Si pasa, marcar OT-516 como CERRADA definitivo."
+}

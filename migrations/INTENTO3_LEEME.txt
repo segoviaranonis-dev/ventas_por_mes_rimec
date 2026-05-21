@@ -1,0 +1,11 @@
+INTENTO 3 — Pegar en Supabase SQL Editor (un archivo por vez, en orden):
+
+  1) 052_precio_lista_indice_triplete.sql
+  2) 053_calcular_precio_lista_evento_sql.sql   (solo staging; si falla 42P13, saltar)
+  3) 053b_fix_columnas_aplicado.sql           <-- OBLIGATORIO: columnas + funcion
+  4) 054_resolver_pilares_sql.sql
+
+Opcional previo si falta contenedor por evento:
+  0) 043_contenedor_lineas_evento.sql
+
+Guia completa: ../../ot/GUIA_INTENTO3_SUPABASE.md

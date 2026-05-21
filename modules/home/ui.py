@@ -86,20 +86,20 @@ def render_home():
     # ══════════════════════════════════════════════════════════════════════════
     _section("📊", "ANÁLISIS COMERCIAL", "Reportes e inteligencia de ventas")
 
-    col_sr, col_rt, col_empty = st.columns([1, 1, 2])
+    col_sr, col_rt, _ = st.columns([1, 1, 2])
     _card(
         col_sr,
         icon="📊",
         title="Sales Report",
-        desc="Análisis de ventas por período, vendedor, marca y cadena. Exportación PDF ejecutiva.",
+        desc="Excel de ventas → registro_ventas_general_v2. Informes comerciales.",
         btn_key="nav_sales",
         module_key="sales",
     )
     _card(
         col_rt,
         icon="🏪",
-        title="Retail — importación Excel",
-        desc="Subida del Excel multi-tienda a staging Supabase; validación de lotes y mantenimiento de FKs.",
+        title="Retail",
+        desc="Excel VTA SM, hoja st+vt+RC → registro_st_vt_rc_reposicion.",
         btn_key="nav_retail",
         module_key="balance_tiendas",
     )

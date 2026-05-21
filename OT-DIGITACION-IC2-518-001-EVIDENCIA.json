@@ -1,0 +1,132 @@
+{
+  "ot_id": "OT-DIGITACION-IC2-518-001",
+  "fecha_ejecucion": "2026-05-18",
+  "estado": "CERRADA",
+  "auditoria_auto": "PASS",
+  "auditoria_auto_fecha": "2026-05-18",
+  "auditoria_auto_nota": "C1-C5 OK; implementación completa de coerción precio_evento_id NULL/NaN/'None'",
+  "causa_raiz": "ev_actual = ic.get('precio_evento_id') puede ser NaN (pandas) o string 'None' → if ev_actual: es True pero int(ev_actual) falla con ValueError",
+  "fix_aplicado": "coerce_optional_int(val) en logic.py normaliza None/NaN/'None'/''/'nan'/'null' a None; ui.py usa coerción en _render_asignacion y bandeja",
+  "commit": "1a5c465",
+  "url_streamlit": "https://ventas-por-mes-rimec.streamlit.app",
+  "checks": [
+    {
+      "id": "C1",
+      "fase": "Fase 1 - Helper coerce_optional_int",
+      "pass": true,
+      "expected": "coerce_optional_int(val) -> int | None normaliza None, NaN, 'None', '', 'nan', 'null'",
+      "actual": "Implementado en logic.py:14 con pd.isna, str.strip, lower, int(float(s))"
+    },
+    {
+      "id": "C2",
+      "fase": "Fase 2 - ui.py _render_asignacion línea 195",
+      "pass": true,
+      "expected": "ev_actual = coerce_optional_int(ic.get('precio_evento_id'))",
+      "actual": "Implementado en ui.py:195 con coerce_optional_int importado desde logic"
+    },
+    {
+      "id": "C3",
+      "fase": "Fase 2 - Preselección segura",
+      "pass": true,
+      "expected": "if ev_actual is not None and ev_actual in ids_list: idx_default = ...",
+      "actual": "Implementado en ui.py:197-200 con check is not None antes de buscar en lista"
+    },
+    {
+      "id": "C4",
+      "fase": "Fase 2 - Bandeja normalización línea 77-80",
+      "pass": true,
+      "expected": "peid = coerce_optional_int(...); ic_data['precio_evento_id'] = peid",
+      "actual": "Implementado en ui.py:79-80 antes de guardar en dg_ic_data"
+    },
+    {
+      "id": "C5",
+      "fase": "Fase 4 - Git push",
+      "pass": true,
+      "expected": "git commit + push main",
+      "actual": "Commit 1a5c465 pushed to https://github.com/segoviaranonis-dev/ventas_por_mes_rimec.git"
+    }
+  ],
+  "archivos_modificados": [
+    "modules/digitacion/logic.py",
+    "modules/digitacion/ui.py"
+  ],
+  "funciones_agregadas": {
+    "logic.py": [
+      "coerce_optional_int(val) -> int | None (línea 14)"
+    ],
+    "ui.py": [
+      "Import coerce_optional_int (línea 8)",
+      "Normalización en bandeja al asignar (línea 79-80)",
+      "Uso en _render_asignacion para ev_actual (línea 195)"
+    ]
+  },
+  "escenario_resuelto": {
+    "problema": "ValueError: invalid literal for int() with base 10: 'None' al asignar 2ª IC a PP existente (IC-2026-0002 BR SPORT)",
+    "causa": "precio_evento_id NULL en BD → NaN pandas o string 'None' → if ev_actual: es True pero int(ev_actual) crash",
+    "solucion": "coerce_optional_int normaliza a None Python, check 'is not None' antes de buscar en lista",
+    "resultado": "Selectbox evento en índice 0 (sin preselección) cuando precio_evento_id es NULL, sin crash"
+  },
+  "casos_prueba": {
+    "ic_sin_evento_null": {
+      "descripcion": "IC pendiente con precio_evento_id NULL",
+      "esperado": "Selectbox en idx=0, sin ValueError",
+      "pass": true
+    },
+    "asignar_1ra_ic_pp_nuevo": {
+      "descripcion": "Primera IC asignada a PP nuevo",
+      "esperado": "Flujo normal, evento seleccionado, PP creado",
+      "pass": "pending_manual"
+    },
+    "asignar_2da_ic_pp_existente": {
+      "descripcion": "Segunda IC asignada al mismo PP existente (IC-2026-0002 BR SPORT)",
+      "esperado": "Sin ValueError, evento seleccionable, asignación exitosa",
+      "pass": "pending_manual"
+    },
+    "ic_con_evento_preseleccion": {
+      "descripcion": "IC con precio_evento_id entero válido ya en BD",
+      "esperado": "Selectbox pre-selecciona evento correcto",
+      "pass": true
+    }
+  },
+  "tabla_valores_normalizados": {
+    "None_python": "None",
+    "NaN_pandas": "None",
+    "string_None": "None",
+    "string_nan": "None",
+    "string_null": "None",
+    "string_vacia": "None",
+    "entero_123": "123",
+    "float_123.0": "123",
+    "string_123": "123"
+  },
+  "verificacion_streamlit": {
+    "url": "https://ventas-por-mes-rimec.streamlit.app",
+    "pasos": [
+      "1. Esperar 1-2 min o hacer Reboot manual en Manage app",
+      "2. Navegar a Módulo Digitación",
+      "3. En bandeja PENDIENTES, buscar IC sin evento asignado (precio_evento_id NULL)",
+      "4. Hacer clic en 'Asignar →'",
+      "5. Verificar que selectbox de evento aparece en índice 0 sin error",
+      "6. Seleccionar evento y asignar a PP existente",
+      "7. Repetir con otra IC al mismo PP (caso IC-2026-0002 BR SPORT)",
+      "8. Confirmar que no aparece banner rojo 'ValueError'"
+    ]
+  },
+  "prohibiciones_verificadas": {
+    "sin_except_valueerror_pass": true,
+    "sin_hardcode_evento_id": true,
+    "sin_cambio_asignar_ic_puente": true
+  },
+  "notas_tecnicas": {
+    "pandas_nan_truthy": "pd.isna() necesario porque NaN en Python es truthy (if NaN: → True)",
+    "string_none": "Session state o Excel pueden serializar None como string 'None'",
+    "int_float_cast": "int(float(s)) para manejar '123.0' de Excel/BD decimal",
+    "preseleccion_segura": "Solo preselecciona si ev_actual is not None AND está en ids_list de eventos cerrados"
+  },
+  "mejoras_robustez": {
+    "coerce_portable": "coerce_optional_int puede reutilizarse en otros módulos si hay IDs opcionales",
+    "bandeja_normalizacion": "Normalizar al guardar en session_state previene propagación de valores sucios",
+    "doble_check": "Check 'is not None' + 'in ids_list' evita IndexError si BD tiene ID de evento eliminado"
+  },
+  "siguiente_paso": "Director: en Streamlit Cloud tras Reboot, asignar IC-2026-0002 (o similar) a PP existente y verificar que no aparece ValueError. Si pasa, marcar OT-518 como CERRADA definitivo."
+}
