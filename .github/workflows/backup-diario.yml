@@ -1,0 +1,61 @@
+name: Backup Diario de Base de Datos
+
+on:
+  schedule:
+    # Ejecutar todos los días a las 3:00 AM UTC (00:00 Paraguay)
+    - cron: '0 3 * * *'
+  workflow_dispatch: # Permitir ejecución manual
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Crear archivo secrets.toml
+        run: |
+          mkdir -p .streamlit
+          cat > .streamlit/secrets.toml << EOF
+          [postgres]
+          host = "${{ secrets.DB_HOST }}"
+          port = ${{ secrets.DB_PORT }}
+          dbname = "${{ secrets.DB_NAME }}"
+          user = "${{ secrets.DB_USER }}"
+          password = "${{ secrets.DB_PASSWORD }}"
+          EOF
+
+      - name: Ejecutar backup
+        run: |
+          python scripts/seguridad/backup_db_automatico.py
+
+      - name: Upload backup a GitHub Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup-${{ github.run_number }}
+          path: backups/db/backup_*.sql.gz
+          retention-days: 30
+
+      - name: Notificar éxito
+        if: success()
+        run: |
+          echo "✓ Backup completado exitosamente"
+          echo "Fecha: $(date)"
+          ls -lh backups/db/
+
+      - name: Notificar fallo
+        if: failure()
+        run: |
+          echo "✗ Backup falló"
+          echo "Revisar logs arriba"
