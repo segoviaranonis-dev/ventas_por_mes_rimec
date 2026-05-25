@@ -159,8 +159,8 @@ def get_fi_registro_por_numero(nro_factura: str) -> dict | None:
             fi.caso,  fi.caso_id,
             cv.descp_cliente          AS cliente,
             cv.descp_cliente          AS cliente_nombre,
-            vv.descp_vendedor         AS vendedor,
-            vv.descp_vendedor         AS vendedor_nombre,
+            vv.descp_usuario         AS vendedor,
+            vv.descp_usuario         AS vendedor_nombre,
             fi.total_pares,
             fi.total_monto            AS total_neto,
             fi.total_monto,
@@ -169,7 +169,7 @@ def get_fi_registro_por_numero(nro_factura: str) -> dict | None:
         FROM factura_interna fi
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
         LEFT JOIN cliente_v2  cv ON cv.id_cliente  = fi.cliente_id
-        LEFT JOIN vendedor_v2 vv ON vv.id_vendedor = fi.vendedor_id
+        LEFT JOIN usuario_v2 vv ON vv.id_usuario = fi.vendedor_id
         WHERE fi.nro_factura = :nro
         LIMIT 1
     """, {"nro": str(nro_factura).strip()})

@@ -205,7 +205,7 @@ def get_pedidos_pendientes() -> list[dict]:
             pvr.cliente_id,
             c.descp_cliente   AS cliente_nombre,
             pvr.vendedor_id,
-            v.descp_vendedor  AS vendedor_nombre,
+            v.descp_usuario  AS vendedor_nombre,
             pvr.plazo_id,
             p.descp_plazo     AS plazo_nombre,
             pvr.lista_precio_id,
@@ -216,7 +216,7 @@ def get_pedidos_pendientes() -> list[dict]:
             pvr.created_at
         FROM pedido_venta_rimec pvr
         JOIN cliente_v2 c ON c.id_cliente = pvr.cliente_id
-        LEFT JOIN vendedor_v2 v ON v.id_vendedor = pvr.vendedor_id
+        LEFT JOIN usuario_v2 v ON v.id_usuario = pvr.vendedor_id
         LEFT JOIN plazo_v2 p ON p.id_plazo = pvr.plazo_id
         WHERE pvr.estado = 'PENDIENTE'
         ORDER BY pvr.created_at DESC
@@ -786,11 +786,11 @@ def get_fi_reservadas() -> list[dict]:
                fi.descuento_1, fi.descuento_2, fi.descuento_3, fi.descuento_4,
                fi.created_at,
                c.descp_cliente AS cliente_nombre,
-               v.descp_vendedor AS vendedor_nombre,
+               v.descp_usuario AS vendedor_nombre,
                pp.numero_registro AS nro_pp
         FROM factura_interna fi
         LEFT JOIN cliente_v2 c ON c.id_cliente = fi.cliente_id
-        LEFT JOIN vendedor_v2 v ON v.id_vendedor = fi.vendedor_id
+        LEFT JOIN usuario_v2 v ON v.id_usuario = fi.vendedor_id
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
         WHERE fi.estado = 'RESERVADA'
         ORDER BY fi.created_at DESC
@@ -806,12 +806,12 @@ def get_fi_confirmadas() -> list[dict]:
                fi.cliente_id, fi.vendedor_id,
                fi.descuento_1, fi.descuento_2, fi.descuento_3, fi.descuento_4,
                c.descp_cliente AS cliente_nombre,
-               v.descp_vendedor AS vendedor_nombre,
+               v.descp_usuario AS vendedor_nombre,
                pp.numero_registro AS nro_pp,
                fi.created_at
         FROM factura_interna fi
         LEFT JOIN cliente_v2 c ON c.id_cliente = fi.cliente_id
-        LEFT JOIN vendedor_v2 v ON v.id_vendedor = fi.vendedor_id
+        LEFT JOIN usuario_v2 v ON v.id_usuario = fi.vendedor_id
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
         WHERE fi.estado = 'CONFIRMADA'
         ORDER BY fi.created_at DESC

@@ -46,7 +46,7 @@ def get_clientes() -> pd.DataFrame:
 @st.cache_data(ttl=3600)
 def get_vendedores() -> pd.DataFrame:
     return get_dataframe(
-        "SELECT id_vendedor, descp_vendedor FROM vendedor_v2 ORDER BY descp_vendedor"
+        "SELECT id_usuario AS id_vendedor, descp_usuario AS descp_vendedor FROM usuario_v2 u JOIN maestro_rol_acceso r ON u.rol_id = r.id WHERE r.nombre_rol IN ('VENDEDOR', 'ADMIN') ORDER BY descp_usuario"
     )
 
 
@@ -92,7 +92,7 @@ def get_ics_pendientes() -> pd.DataFrame:
                ic.id_marca,    mv.descp_marca                    AS marca,
                pi2.nombre                                        AS proveedor,
                cv.descp_cliente                                  AS cliente,
-               vv.descp_vendedor                                 AS vendedor,
+               vv.descp_usuario                                  AS vendedor,
                ic.fecha_llegada,
                ic.cantidad_total_pares AS pares,
                ic.monto_neto,
@@ -102,7 +102,7 @@ def get_ics_pendientes() -> pd.DataFrame:
         FROM intencion_compra ic
         JOIN  marca_v2              mv   ON mv.id_marca       = ic.id_marca
         JOIN  cliente_v2            cv   ON cv.id_cliente     = ic.id_cliente
-        JOIN  vendedor_v2           vv   ON vv.id_vendedor    = ic.id_vendedor
+        JOIN  usuario_v2            vv   ON vv.id_usuario    = ic.id_vendedor
         JOIN  proveedor_importacion pi2  ON pi2.id            = ic.id_proveedor
         LEFT JOIN tipo_v2           tv   ON tv.id_tipo         = ic.tipo_id
         LEFT JOIN categoria_v2      cv2  ON cv2.id_categoria   = ic.categoria_id
@@ -120,7 +120,7 @@ def get_ics_historial() -> pd.DataFrame:
                COALESCE(cv2.descp_categoria,'—') AS categoria,
                mv.descp_marca                    AS marca,
                cv.descp_cliente                  AS cliente,
-               vv.descp_vendedor                 AS vendedor,
+               vv.descp_usuario                  AS vendedor,
                ic.fecha_llegada                  AS eta,
                ic.cantidad_total_pares           AS pares,
                ic.monto_neto,
@@ -129,7 +129,7 @@ def get_ics_historial() -> pd.DataFrame:
         FROM intencion_compra ic
         JOIN  marca_v2     mv   ON mv.id_marca       = ic.id_marca
         JOIN  cliente_v2   cv   ON cv.id_cliente     = ic.id_cliente
-        JOIN  vendedor_v2  vv   ON vv.id_vendedor    = ic.id_vendedor
+        JOIN  usuario_v2   vv   ON vv.id_usuario    = ic.id_vendedor
         LEFT JOIN tipo_v2  tv   ON tv.id_tipo         = ic.tipo_id
         LEFT JOIN categoria_v2 cv2 ON cv2.id_categoria = ic.categoria_id
         LEFT JOIN precio_evento pe ON pe.id            = ic.precio_evento_id
@@ -162,7 +162,7 @@ def _snap_ic(conn, ic_id: int) -> dict:
                mv.descp_marca      AS marca,
                pi2.nombre          AS proveedor,
                cv.descp_cliente    AS cliente,
-               vv.descp_vendedor   AS vendedor,
+               vv.descp_usuario    AS vendedor,
                COALESCE(tv.descp_tipo,      '—') AS tipo,
                COALESCE(cv2.descp_categoria,'—') AS categoria,
                pe.nombre_evento    AS evento_precio
@@ -170,7 +170,7 @@ def _snap_ic(conn, ic_id: int) -> dict:
         JOIN  marca_v2              mv  ON mv.id_marca    = ic.id_marca
         JOIN  proveedor_importacion pi2 ON pi2.id         = ic.id_proveedor
         JOIN  cliente_v2            cv  ON cv.id_cliente  = ic.id_cliente
-        JOIN  vendedor_v2           vv  ON vv.id_vendedor = ic.id_vendedor
+        JOIN  usuario_v2            vv  ON vv.id_usuario = ic.id_vendedor
         LEFT JOIN tipo_v2       tv  ON tv.id_tipo         = ic.tipo_id
         LEFT JOIN categoria_v2  cv2 ON cv2.id_categoria   = ic.categoria_id
         LEFT JOIN precio_evento pe  ON pe.id              = ic.precio_evento_id
@@ -284,7 +284,7 @@ def get_ics_devueltas() -> pd.DataFrame:
                ic.id_marca,    mv.descp_marca                    AS marca,
                pi2.nombre                                        AS proveedor,
                cv.descp_cliente                                  AS cliente,
-               vv.descp_vendedor                                 AS vendedor,
+               vv.descp_usuario                                 AS vendedor,
                ic.fecha_llegada,
                ic.cantidad_total_pares AS pares,
                ic.monto_neto,
@@ -296,7 +296,7 @@ def get_ics_devueltas() -> pd.DataFrame:
         FROM intencion_compra ic
         JOIN  marca_v2              mv   ON mv.id_marca       = ic.id_marca
         JOIN  cliente_v2            cv   ON cv.id_cliente     = ic.id_cliente
-        JOIN  vendedor_v2           vv   ON vv.id_vendedor    = ic.id_vendedor
+        JOIN  usuario_v2            vv   ON vv.id_usuario    = ic.id_vendedor
         JOIN  proveedor_importacion pi2  ON pi2.id            = ic.id_proveedor
         LEFT JOIN tipo_v2           tv   ON tv.id_tipo         = ic.tipo_id
         LEFT JOIN categoria_v2      cv2  ON cv2.id_categoria   = ic.categoria_id
@@ -384,7 +384,7 @@ def get_intenciones(filtros: dict | None = None) -> pd.DataFrame:
             pi2.nombre                  AS proveedor,
             ic.id_cliente,
             cv.descp_cliente            AS cliente,
-            vv.descp_vendedor           AS vendedor,
+            vv.descp_usuario            AS vendedor,
             mv.descp_marca              AS marca,
             pz.descp_plazo              AS plazo,
             ic.cantidad_total_pares     AS pares,
@@ -402,7 +402,7 @@ def get_intenciones(filtros: dict | None = None) -> pd.DataFrame:
         FROM intencion_compra ic
         JOIN proveedor_importacion pi2 ON pi2.id         = ic.id_proveedor
         JOIN cliente_v2            cv  ON cv.id_cliente  = ic.id_cliente
-        JOIN vendedor_v2           vv  ON vv.id_vendedor = ic.id_vendedor
+        JOIN usuario_v2            vv  ON vv.id_usuario = ic.id_vendedor
         JOIN marca_v2              mv  ON mv.id_marca    = ic.id_marca
         LEFT JOIN plazo_v2         pz  ON pz.id_plazo   = ic.id_plazo
         WHERE {where}

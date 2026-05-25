@@ -92,7 +92,7 @@ def render_import_interface(engine):
         "listado_de_precio_v2": "id_listado_de_precio", "marca_v2": "id_marca",
         "plazo_v2": "id_plazo", "producto_v2": ["id_producto", "id_proveedor"],
         "proveedor_v2": "id_proveedor", "tipo_v2": "id_tipo", "usuario_v2": "id_usuario",
-        "vendedor_v2": "id_vendedor", "vendedor_marca_v2": ["id_vendedor", "id_marca"]
+        "vendedor_v2_deprecated": "id_vendedor", "vendedor_marca_v2": ["id_vendedor", "id_marca"]
     }
 
     tabs = st.tabs(["📦 MAESTROS (UPSERT)", "📉 VENTAS (SANEAMIENTO)"])

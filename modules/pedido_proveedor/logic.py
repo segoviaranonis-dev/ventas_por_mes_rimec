@@ -232,11 +232,11 @@ def get_pedidos_proveedor(filtros: dict | None = None) -> pd.DataFrame:
                 '—'
             )                                                         AS cliente,
             COALESCE(
-                v.descp_vendedor,
-                (SELECT v2.descp_vendedor
+                v.descp_usuario,
+                (SELECT v2.descp_usuario
                  FROM intencion_compra_pedido icp3
                  JOIN intencion_compra ic3  ON ic3.id = icp3.intencion_compra_id
-                 JOIN vendedor_v2 v2        ON v2.id_vendedor = ic3.id_vendedor
+                 JOIN usuario_v2 v2         ON v2.id_usuario = ic3.id_vendedor
                  WHERE icp3.pedido_proveedor_id = pp.id
                  LIMIT 1),
                 '—'
@@ -245,7 +245,7 @@ def get_pedidos_proveedor(filtros: dict | None = None) -> pd.DataFrame:
         LEFT JOIN proveedor_importacion pi2 ON pi2.id          = pp.proveedor_importacion_id
         LEFT JOIN intencion_compra      ic  ON ic.id           = pp.id_intencion_compra
         LEFT JOIN cliente_v2            c   ON c.id_cliente    = ic.id_cliente
-        LEFT JOIN vendedor_v2           v   ON v.id_vendedor   = ic.id_vendedor
+        LEFT JOIN usuario_v2            v   ON v.id_usuario    = ic.id_vendedor
         WHERE {where}
         ORDER BY pp.numero_registro ASC
     """, params or None)
@@ -314,11 +314,11 @@ def get_pp_header(id_pp: int) -> dict:
                 '—'
             )                                   AS cliente,
             COALESCE(
-                v.descp_vendedor,
-                (SELECT v2.descp_vendedor
+                v.descp_usuario,
+                (SELECT v2.descp_usuario
                  FROM intencion_compra_pedido icp3
                  JOIN intencion_compra ic3  ON ic3.id = icp3.intencion_compra_id
-                 JOIN vendedor_v2 v2        ON v2.id_vendedor = ic3.id_vendedor
+                 JOIN usuario_v2 v2         ON v2.id_usuario = ic3.id_vendedor
                  WHERE icp3.pedido_proveedor_id = pp.id LIMIT 1),
                 '—'
             )                                   AS vendedor
@@ -326,7 +326,7 @@ def get_pp_header(id_pp: int) -> dict:
         LEFT JOIN proveedor_importacion pi2 ON pi2.id          = pp.proveedor_importacion_id
         LEFT JOIN intencion_compra       ic  ON ic.id           = pp.id_intencion_compra
         LEFT JOIN cliente_v2             c   ON c.id_cliente    = ic.id_cliente
-        LEFT JOIN vendedor_v2            v   ON v.id_vendedor   = ic.id_vendedor
+        LEFT JOIN usuario_v2            v   ON v.id_usuario    = ic.id_vendedor
         WHERE pp.id = :id_pp
     """, {"id_pp": id_pp})
 
@@ -818,7 +818,7 @@ def get_ala_sur_facturas(id_pp: int) -> pd.DataFrame:
             MIN(vt.fecha_operacion)                          AS fecha,
             vt.codigo_cliente                                AS cod_cliente,
             COALESCE(cv.descp_cliente, vt.codigo_cliente)    AS cliente,
-            COALESCE(vv.descp_vendedor, 'Sin asignar')       AS vendedor,
+            COALESCE(vv.descp_usuario, 'Sin asignar')        AS vendedor,
             ppd.linea,
             ppd.referencia,
             ppd.descp_material                               AS material,
@@ -833,10 +833,10 @@ def get_ala_sur_facturas(id_pp: int) -> pd.DataFrame:
         JOIN  pedido_proveedor_detalle ppd ON ppd.id           = vt.pedido_proveedor_detalle_id
         LEFT JOIN marca_v2    mv  ON mv.id_marca                = ppd.id_marca
         LEFT JOIN cliente_v2  cv  ON cv.id_cliente::text        = vt.codigo_cliente
-        LEFT JOIN vendedor_v2 vv  ON vv.id_vendedor             = vt.id_vendedor
+        LEFT JOIN usuario_v2  vv  ON vv.id_usuario              = vt.id_vendedor
         WHERE vt.pedido_proveedor_id = :id_pp
         GROUP BY mv.descp_marca, vt.numero_factura_interna, vt.codigo_cliente,
-                 cv.descp_cliente, vv.descp_vendedor,
+                 cv.descp_cliente, vv.descp_usuario,
                  ppd.linea, ppd.referencia, ppd.descp_material, ppd.descp_color, ppd.grada
         ORDER BY mv.descp_marca, vt.numero_factura_interna, ppd.linea, ppd.referencia
     """, {"id_pp": id_pp})
@@ -897,7 +897,7 @@ def buscar_cliente_pp(id_cliente: int) -> str | None:
 def get_vendedores_pp() -> pd.DataFrame:
     """Lista de vendedores para el selectbox opcional de nueva factura."""
     return get_dataframe(
-        "SELECT id_vendedor, descp_vendedor FROM vendedor_v2 ORDER BY descp_vendedor"
+        "SELECT id_usuario AS id_vendedor, descp_usuario AS descp_vendedor FROM usuario_v2 u JOIN maestro_rol_acceso r ON u.rol_id = r.id WHERE r.nombre_rol IN ('VENDEDOR', 'ADMIN') ORDER BY descp_usuario"
     )
 
 
@@ -2025,7 +2025,7 @@ def populate_pp(
             SELECT pp.numero_registro,
                    pi2.nombre AS proveedor,
                    cv.descp_cliente AS cliente,
-                   vv.descp_vendedor AS vendedor,
+                   vv.descp_usuario AS vendedor,
                    STRING_AGG(DISTINCT mv.descp_marca, ' / ') AS marcas,
                    COUNT(DISTINCT ppd.id) AS n_articulos,
                    ic.numero_registro AS nro_ic
@@ -2034,12 +2034,12 @@ def populate_pp(
             LEFT JOIN intencion_compra_pedido icp ON icp.pedido_proveedor_id = pp.id
             LEFT JOIN intencion_compra ic  ON ic.id  = icp.intencion_compra_id
             LEFT JOIN cliente_v2  cv ON cv.id_cliente  = ic.id_cliente
-            LEFT JOIN vendedor_v2 vv ON vv.id_vendedor = ic.id_vendedor
+            LEFT JOIN usuario_v2  vv ON vv.id_usuario  = ic.id_vendedor
             LEFT JOIN pedido_proveedor_detalle ppd ON ppd.pedido_proveedor_id = pp.id
             LEFT JOIN marca_v2 mv ON mv.id_marca = ppd.id_marca
             WHERE pp.id = :pp_id
             GROUP BY pp.numero_registro, pi2.nombre,
-                     cv.descp_cliente, vv.descp_vendedor, ic.numero_registro
+                     cv.descp_cliente, vv.descp_usuario, ic.numero_registro
         """, {"pp_id": pp_id})
 
         snap_row = pp_snap.iloc[0] if pp_snap is not None and not pp_snap.empty else None
@@ -2623,7 +2623,26 @@ def vincular_listado_precio_a_pp(
     if not guardar_configuracion_pp(pp_id, None, evento_id, usuario_id):
         return False, "No se pudo vincular el evento al PP.", {}
 
-    stats: dict = {"evento_anterior": prev, "evento_nuevo": evento_id}
+    try:
+        with engine.begin() as conn:
+            snap = conn.execute(
+                sqlt("SELECT public.vincular_listado_a_pp(:pp_id, :evento_id, :uid) AS r"),
+                {"pp_id": pp_id, "evento_id": evento_id, "uid": usuario_id},
+            ).scalar()
+        if isinstance(snap, str):
+            snap = __import__("json").loads(snap)
+        if not snap or not snap.get("success"):
+            detail = (snap or {}).get("error", "Falló snapshot de precios en PPD.")
+            return False, detail, {"snapshot": snap or {}}
+    except Exception as e:
+        DBInspector.log(f"[PP] vincular_listado_a_pp snapshot: {e}", "ERROR")
+        return False, f"Evento vinculado en ICP pero falló congelar precios: {e}", {}
+
+    stats: dict = {
+        "evento_anterior": prev,
+        "evento_nuevo": evento_id,
+        "snapshot": snap,
+    }
     if recalcular_fi:
         ok, msg, rstats = recalcular_facturas_internas_pp(
             pp_id,
@@ -2730,8 +2749,8 @@ def get_facturas_interna_de_pp(pp_id: int) -> pd.DataFrame:
             fi.caso,  fi.caso_id,
             cv.descp_cliente          AS cliente,
             cv.descp_cliente          AS cliente_nombre,
-            vv.descp_vendedor         AS vendedor,
-            vv.descp_vendedor         AS vendedor_nombre,
+            vv.descp_usuario          AS vendedor,
+            vv.descp_usuario          AS vendedor_nombre,
             fi.total_pares,
             fi.total_monto            AS total_neto,
             fi.total_monto,
@@ -2740,7 +2759,7 @@ def get_facturas_interna_de_pp(pp_id: int) -> pd.DataFrame:
         FROM factura_interna fi
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
         LEFT JOIN cliente_v2  cv ON cv.id_cliente  = fi.cliente_id
-        LEFT JOIN vendedor_v2 vv ON vv.id_vendedor = fi.vendedor_id
+        LEFT JOIN usuario_v2  vv ON vv.id_usuario  = fi.vendedor_id
         WHERE fi.pp_id = :pp_id
         ORDER BY fi.created_at DESC, fi.nro_factura
     """, {"pp_id": pp_id})

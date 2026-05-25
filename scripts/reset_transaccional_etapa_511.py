@@ -28,7 +28,7 @@ TABLAS_CONSERVAR = [
     "linea", "referencia", "linea_referencia", "material", "color", "talla",
     # Maestras
     "marca_v2", "genero", "grupo_estilo_v2", "tipo_v2", "categoria_v2",
-    "cliente_v2", "vendedor_v2", "plazo_v2", "usuario_v2", "producto_v2",
+    "cliente_v2", "vendedor_v2_deprecated", "plazo_v2", "usuario_v2", "producto_v2",
     "grupo_v2", "comision_v2", "proveedor_importacion", "almacen",
     # Biblioteca casos
     "caso_precio_biblioteca", "biblioteca_precio", "biblioteca_caso_linea",

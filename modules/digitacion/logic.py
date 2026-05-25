@@ -178,13 +178,13 @@ def asignar_ic(ic_id: int, pp_id: int, nro_pedido_fabrica: str,
                        ic.cantidad_total_pares, ic.id_marca, ic.id_cliente,
                        ic.id_vendedor, ic.monto_neto, ic.fecha_llegada,
                        mv.descp_marca, pi2.nombre AS proveedor,
-                       cv.descp_cliente, vv.descp_vendedor,
+                       cv.descp_cliente, vv.descp_usuario AS descp_vendedor,
                        pe.nombre_evento
                 FROM intencion_compra ic
                 JOIN  marca_v2              mv  ON mv.id_marca    = ic.id_marca
                 JOIN  proveedor_importacion pi2 ON pi2.id         = ic.id_proveedor
                 JOIN  cliente_v2            cv  ON cv.id_cliente  = ic.id_cliente
-                JOIN  vendedor_v2           vv  ON vv.id_vendedor = ic.id_vendedor
+                JOIN  usuario_v2            vv  ON vv.id_usuario = ic.id_vendedor
                 LEFT JOIN precio_evento     pe  ON pe.id          = ic.precio_evento_id
                 WHERE ic.id = :ic_id
             """), {"ic_id": ic_id}).fetchone()

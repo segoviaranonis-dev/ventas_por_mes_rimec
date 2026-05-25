@@ -80,6 +80,19 @@ def main() -> None:
     df = pd.read_sql(q, eng)
     log("—— Pares de prueba ——")
     log("\n" + df.to_string(index=False))
+
+    q_val = text("""
+        SELECT COUNT(*) AS n
+        FROM v_stock_rimec
+        WHERE lpn > 0 AND caso_id IS NULL
+    """)
+    n_sin_caso = int(pd.read_sql(q_val, eng).iloc[0, 0])
+    log("—— Validación MIG-071 (lpn>0 AND caso_id IS NULL) ——")
+    log(f"Conteo: {n_sin_caso} (debe ser 0)")
+    if n_sin_caso != 0:
+        log("ERROR: Hay filas con precio sin caso_id — revisar JOIN icp / precio_lista")
+        raise SystemExit(1)
+    log("OK — validación cumplida")
     log(f"Listo. Log: {LOG}")
 
 
