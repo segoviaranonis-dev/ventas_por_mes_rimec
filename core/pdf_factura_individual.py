@@ -14,6 +14,8 @@ USO:
 from typing import Optional
 from datetime import datetime
 from io import BytesIO
+import requests
+from PIL import Image
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
@@ -21,9 +23,54 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.platypus import Image as RLImage
 
 from core.database import get_dataframe
 from core.settings import settings
+
+
+def _get_image_from_url(url: str, max_width: float = 15*mm, max_height: float = 15*mm) -> Optional[RLImage]:
+    """
+    Descarga una imagen desde URL y la convierte a RLImage redimensionada.
+
+    Args:
+        url: URL de la imagen
+        max_width: Ancho máximo en mm
+        max_height: Alto máximo en mm
+
+    Returns:
+        RLImage o None si falla
+    """
+    if not url:
+        return None
+
+    try:
+        # Descargar imagen
+        response = requests.get(url, timeout=3)
+        if response.status_code != 200:
+            return None
+
+        # Abrir con PIL
+        img_buffer = BytesIO(response.content)
+        pil_img = Image.open(img_buffer)
+
+        # Calcular dimensiones manteniendo aspect ratio
+        aspect = pil_img.width / pil_img.height
+        if aspect > 1:  # Imagen ancha
+            width = max_width
+            height = max_width / aspect
+        else:  # Imagen alta
+            height = max_height
+            width = max_height * aspect
+
+        # Crear RLImage
+        img_buffer.seek(0)
+        rl_img = RLImage(img_buffer, width=width, height=height)
+        return rl_img
+
+    except Exception as e:
+        # Si falla, retornar None (no imagen)
+        return None
 
 
 def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
@@ -124,6 +171,7 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
                 'ref_codigo': snapshot.get('ref_codigo', '?'),
                 'color_nombre': snapshot.get('color_nombre', ''),
                 'gradas_fmt': snapshot.get('gradas_fmt', ''),
+                'imagen_url': snapshot.get('imagen_url', ''),
                 'cajas': int(row['cajas']) if row['cajas'] else 0,
                 'pares': int(row['pares']) if row['pares'] else 0,
                 'precio_unit': float(row['precio_unit'] or 0),
@@ -206,11 +254,11 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
         fecha_str = 'N/A'
 
     info_data = [
-        ['<b>Pedido Proveedor:</b>', fi_data.get('pp_nro', 'N/A'), '<b>Marca:</b>', fi_data.get('marca', 'N/A')],
-        ['<b>Caso:</b>', fi_data.get('caso', 'N/A'), '<b>Estado:</b>', fi_data.get('estado', 'RESERVADA')],
-        ['<b>Cliente:</b>', fi_data.get('cliente_nombre', 'N/A')[:45], '<b>Fecha:</b>', fecha_str],
-        ['<b>Vendedor:</b>', fi_data.get('vendedor_nombre', 'N/A')[:45], '<b>Plazo:</b>', fi_data.get('plazo_nombre', 'N/A')],
-        ['<b>Lista de Precio:</b>', f"Lista {fi_data.get('lista_precio_id', 1)}", '', ''],
+        ['Pedido Proveedor:', fi_data.get('pp_nro', 'N/A'), 'Marca:', fi_data.get('marca', 'N/A')],
+        ['Caso:', fi_data.get('caso', 'N/A'), 'Estado:', fi_data.get('estado', 'RESERVADA')],
+        ['Cliente:', fi_data.get('cliente_nombre', 'N/A')[:45], 'Fecha:', fecha_str],
+        ['Vendedor:', fi_data.get('vendedor_nombre', 'N/A')[:45], 'Plazo:', fi_data.get('plazo_nombre', 'N/A')],
+        ['Lista de Precio:', f"Lista {fi_data.get('lista_precio_id', 1)}", '', ''],
     ]
 
     info_table = Table(info_data, colWidths=[38*mm, 57*mm, 30*mm, 65*mm])
@@ -252,17 +300,24 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
     ))
     story.append(Spacer(1, 7*mm))
 
-    # Tabla de items (estilo ejecutivo IMF)
+    # Tabla de items (estilo ejecutivo IMF con imágenes)
     if items:
-        items_data = [['Producto', 'Gradas', 'Cajas', 'Pares', 'Precio/Par', 'Subtotal']]
+        items_data = [['Foto', 'Producto', 'Gradas', 'Cajas', 'Pares', 'Precio/Par', 'Subtotal']]
 
         for item in items:
-            # Formato producto: Línea:Ref + Color
+            # Descargar imagen del producto
+            img = _get_image_from_url(item.get('imagen_url', ''), max_width=12*mm, max_height=12*mm)
+            if not img:
+                # Placeholder si no hay imagen
+                img = Paragraph('<font size=6 color="#94A3B8">Sin<br/>imagen</font>', styles['Normal'])
+
+            # Formato producto: Línea-Ref + Color
             nombre = f"<b>{item['linea_codigo']}-{item['ref_codigo']}</b>"
             if item.get('color_nombre'):
-                nombre += f"<br/><font size=7>{item['color_nombre']}</font>"
+                nombre += f"<br/><font size=7 color='#64748B'>{item['color_nombre'][:40]}</font>"
 
             items_data.append([
+                img,
                 Paragraph(nombre, styles['Normal']),
                 item.get('gradas_fmt', 'N/A'),
                 str(item['cajas']),
@@ -273,7 +328,7 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
 
         items_table = Table(
             items_data,
-            colWidths=[55*mm, 45*mm, 18*mm, 18*mm, 27*mm, 27*mm]
+            colWidths=[15*mm, 42*mm, 38*mm, 16*mm, 16*mm, 25*mm, 25*mm]
         )
         items_table.setStyle(TableStyle([
             # Header (NAVY ejecutivo)
@@ -281,18 +336,20 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
             ('FONTSIZE', (0, 0), (-1, 0), 9),
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B3A6B')),  # NAVY
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('ALIGN', (0, 0), (1, 0), 'LEFT'),
-            ('ALIGN', (2, 0), (-1, 0), 'CENTER'),
+            ('ALIGN', (0, 0), (0, 0), 'CENTER'),  # Foto centrada
+            ('ALIGN', (1, 0), (2, 0), 'LEFT'),    # Producto y Gradas a la izquierda
+            ('ALIGN', (3, 0), (-1, 0), 'CENTER'), # Resto centrado
 
             # Datos
-            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 1), (-1, -1), 8),
-            ('ALIGN', (2, 1), (-1, -1), 'RIGHT'),
+            ('FONTNAME', (1, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (1, 1), (-1, -1), 8),
+            ('ALIGN', (0, 1), (0, -1), 'CENTER'),  # Imágenes centradas
+            ('ALIGN', (3, 1), (-1, -1), 'RIGHT'),  # Números a la derecha
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
 
             # Padding
-            ('LEFTPADDING', (0, 0), (-1, -1), 6),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+            ('LEFTPADDING', (0, 0), (-1, -1), 4),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
             ('TOPPADDING', (0, 0), (-1, -1), 5),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
 
