@@ -12,8 +12,9 @@ USO:
 """
 
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
+import re
 import requests
 from PIL import Image
 
@@ -225,7 +226,7 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
         spaceAfter=8*mm
     ))
 
-    # Título de la factura (Navy ejecutivo)
+    # Título simple (sin número de factura - ese es dato secundario)
     factura_style = ParagraphStyle(
         'FacturaTitle',
         parent=styles['Heading2'],
@@ -238,12 +239,12 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
     )
 
     story.append(Paragraph(
-        f"FACTURA INTERNA · {fi_data['nro_factura']}",
+        "FACTURA INTERNA",
         factura_style
     ))
     story.append(Spacer(1, 6*mm))
 
-    # CLIENTE destacado (vendemos moda, es lo más importante)
+    # JERARQUÍA 1: CLIENTE (mercadería en tránsito)
     cliente_style = ParagraphStyle(
         'ClienteDestacado',
         parent=styles['Normal'],
@@ -254,37 +255,66 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
         spaceAfter=1
     )
 
-    plazo_style = ParagraphStyle(
-        'PlazoDestacado',
+    # JERARQUÍA 2: ETA LLEGADA (fecha estimada del contenedor)
+    eta_style = ParagraphStyle(
+        'ETADestacado',
         parent=styles['Normal'],
         fontSize=11,
         textColor=colors.HexColor('#D4AF37'),  # Dorado
         fontName='Helvetica-Bold',
         alignment=TA_LEFT,
+        spaceAfter=1
+    )
+
+    # JERARQUÍA 3: VENDEDORA
+    vendedora_style = ParagraphStyle(
+        'VendedoraDestacado',
+        parent=styles['Normal'],
+        fontSize=10,
+        textColor=colors.HexColor('#64748B'),
+        fontName='Helvetica',
+        alignment=TA_LEFT,
         spaceAfter=8
     )
 
     cliente_nombre = fi_data.get('cliente_nombre', 'SIN CLIENTE')
-    plazo_nombre = fi_data.get('plazo_nombre', 'N/A')
+    vendedor_nombre = fi_data.get('vendedor_nombre', 'N/A')
+
+    # Calcular ETA (fecha estimada de llegada del contenedor)
+    fecha_creacion = fi_data.get('created_at')
+    plazo_nombre = fi_data.get('plazo_nombre', '')
+
+    eta_str = 'A CONFIRMAR'
+    if fecha_creacion and plazo_nombre:
+        # Extraer días del plazo (ej: "60-90-120 DÍAS" -> 60)
+        match = re.search(r'(\d+)', plazo_nombre)
+        if match:
+            dias_minimo = int(match.group(1))
+            if hasattr(fecha_creacion, 'date'):
+                fecha_eta = fecha_creacion.date() + timedelta(days=dias_minimo)
+            else:
+                fecha_eta = datetime.strptime(str(fecha_creacion)[:10], '%Y-%m-%d').date() + timedelta(days=dias_minimo)
+            eta_str = fecha_eta.strftime('%d/%m/%Y')
 
     story.append(Paragraph(f"Cliente: {cliente_nombre}", cliente_style))
-    story.append(Paragraph(f"Entrega: {plazo_nombre}", plazo_style))
+    story.append(Paragraph(f"ETA Llegada: {eta_str}", eta_style))
+    story.append(Paragraph(f"Vendedora: {vendedor_nombre}", vendedora_style))
     story.append(Spacer(1, 3*mm))
 
-    # Info complementaria (minimalista)
-    fecha_creacion = fi_data.get('created_at')
-    if fecha_creacion:
-        if hasattr(fecha_creacion, 'strftime'):
-            fecha_str = fecha_creacion.strftime('%d/%m/%Y')
+    # Info complementaria (datos secundarios)
+    fecha_doc = fi_data.get('created_at')
+    if fecha_doc:
+        if hasattr(fecha_doc, 'strftime'):
+            fecha_str = fecha_doc.strftime('%d/%m/%Y')
         else:
-            fecha_str = str(fecha_creacion)[:10]
+            fecha_str = str(fecha_doc)[:10]
     else:
         fecha_str = 'N/A'
 
     info_data = [
-        ['PP:', fi_data.get('pp_nro', 'N/A'), 'Marca:', fi_data.get('marca', 'N/A')],
-        ['Caso:', fi_data.get('caso', 'N/A'), 'Estado:', fi_data.get('estado', 'RESERVADA')],
-        ['Vendedor:', fi_data.get('vendedor_nombre', 'N/A')[:45], 'Fecha:', fecha_str],
+        ['Nro. FI:', fi_data.get('nro_factura', 'N/A'), 'PP:', fi_data.get('pp_nro', 'N/A')],
+        ['Marca:', fi_data.get('marca', 'N/A'), 'Caso:', fi_data.get('caso', 'N/A')],
+        ['Estado:', fi_data.get('estado', 'RESERVADA'), 'Fecha:', fecha_str],
     ]
 
     info_table = Table(info_data, colWidths=[22*mm, 73*mm, 22*mm, 73*mm])
