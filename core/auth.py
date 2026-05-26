@@ -67,7 +67,7 @@ class AuthManager:
         # QUERY ACTUALIZADA: Apuntando a la estructura real de Supabase (usuario_v2)
         query = """
             SELECT id_usuario, descp_usuario, categoria
-            FROM usuario_v2
+            FROM public.usuario_v2
             WHERE descp_usuario = :usuario
             AND password = :pass
             LIMIT 1
