@@ -91,6 +91,8 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
             fi.nro_factura,
             fi.pp_id,
             pp.numero_registro as pp_nro,
+            pp.fecha_arribo_estimada as pp_eta,
+            pp.descripcion_arribo as pp_eta_desc,
             fi.marca,
             fi.caso,
             fi.total_pares,
@@ -226,47 +228,34 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
         spaceAfter=8*mm
     ))
 
-    # Título simple (sin número de factura - ese es dato secundario)
-    factura_style = ParagraphStyle(
-        'FacturaTitle',
+    # HEADER = NOMBRE DEL CLIENTE (la estrella del documento)
+    cliente_header_style = ParagraphStyle(
+        'ClienteHeader',
         parent=styles['Heading2'],
-        fontSize=16,
+        fontSize=15,
         textColor=colors.white,
         backColor=colors.HexColor('#1B3A6B'),  # NAVY
-        borderPadding=8,
+        borderPadding=10,
         alignment=TA_CENTER,
         fontName='Helvetica-Bold'
     )
 
-    story.append(Paragraph(
-        "FACTURA INTERNA",
-        factura_style
-    ))
-    story.append(Spacer(1, 6*mm))
+    cliente_nombre = fi_data.get('cliente_nombre', 'CLIENTE NO ASIGNADO')
+    story.append(Paragraph(cliente_nombre, cliente_header_style))
+    story.append(Spacer(1, 5*mm))
 
-    # JERARQUÍA 1: CLIENTE (mercadería en tránsito)
-    cliente_style = ParagraphStyle(
-        'ClienteDestacado',
-        parent=styles['Normal'],
-        fontSize=13,
-        textColor=colors.HexColor('#1B3A6B'),
-        fontName='Helvetica-Bold',
-        alignment=TA_LEFT,
-        spaceAfter=1
-    )
-
-    # JERARQUÍA 2: ETA LLEGADA (fecha estimada del contenedor)
+    # JERARQUÍA 1: ETA LLEGADA (fecha del pedido proveedor)
     eta_style = ParagraphStyle(
         'ETADestacado',
         parent=styles['Normal'],
-        fontSize=11,
+        fontSize=12,
         textColor=colors.HexColor('#D4AF37'),  # Dorado
         fontName='Helvetica-Bold',
         alignment=TA_LEFT,
-        spaceAfter=1
+        spaceAfter=2
     )
 
-    # JERARQUÍA 3: VENDEDORA
+    # JERARQUÍA 2: VENDEDORA
     vendedora_style = ParagraphStyle(
         'VendedoraDestacado',
         parent=styles['Normal'],
@@ -277,26 +266,23 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
         spaceAfter=8
     )
 
-    cliente_nombre = fi_data.get('cliente_nombre', 'SIN CLIENTE')
     vendedor_nombre = fi_data.get('vendedor_nombre', 'N/A')
 
-    # Calcular ETA (fecha estimada de llegada del contenedor)
-    fecha_creacion = fi_data.get('created_at')
-    plazo_nombre = fi_data.get('plazo_nombre', '')
+    # ETA del Pedido Proveedor (no calcular, ya existe en BD)
+    pp_eta = fi_data.get('pp_eta')
+    pp_eta_desc = fi_data.get('pp_eta_desc')
 
-    eta_str = 'A CONFIRMAR'
-    if fecha_creacion and plazo_nombre:
-        # Extraer días del plazo (ej: "60-90-120 DÍAS" -> 60)
-        match = re.search(r'(\d+)', plazo_nombre)
-        if match:
-            dias_minimo = int(match.group(1))
-            if hasattr(fecha_creacion, 'date'):
-                fecha_eta = fecha_creacion.date() + timedelta(days=dias_minimo)
-            else:
-                fecha_eta = datetime.strptime(str(fecha_creacion)[:10], '%Y-%m-%d').date() + timedelta(days=dias_minimo)
-            eta_str = fecha_eta.strftime('%d/%m/%Y')
+    if pp_eta:
+        if hasattr(pp_eta, 'strftime'):
+            eta_str = pp_eta.strftime('%d/%m/%Y')
+        else:
+            eta_str = str(pp_eta)
+        # Si hay descripción (ej: "2ª Quincena Mayo 2026"), mostrarla también
+        if pp_eta_desc:
+            eta_str = f"{pp_eta_desc} ({eta_str})"
+    else:
+        eta_str = 'A CONFIRMAR'
 
-    story.append(Paragraph(f"Cliente: {cliente_nombre}", cliente_style))
     story.append(Paragraph(f"ETA Llegada: {eta_str}", eta_style))
     story.append(Paragraph(f"Vendedora: {vendedor_nombre}", vendedora_style))
     story.append(Spacer(1, 3*mm))
