@@ -243,7 +243,35 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
     ))
     story.append(Spacer(1, 6*mm))
 
-    # Info de la factura (estilo ejecutivo)
+    # CLIENTE destacado (vendemos moda, es lo más importante)
+    cliente_style = ParagraphStyle(
+        'ClienteDestacado',
+        parent=styles['Normal'],
+        fontSize=13,
+        textColor=colors.HexColor('#1B3A6B'),
+        fontName='Helvetica-Bold',
+        alignment=TA_LEFT,
+        spaceAfter=1
+    )
+
+    plazo_style = ParagraphStyle(
+        'PlazoDestacado',
+        parent=styles['Normal'],
+        fontSize=11,
+        textColor=colors.HexColor('#D4AF37'),  # Dorado
+        fontName='Helvetica-Bold',
+        alignment=TA_LEFT,
+        spaceAfter=8
+    )
+
+    cliente_nombre = fi_data.get('cliente_nombre', 'SIN CLIENTE')
+    plazo_nombre = fi_data.get('plazo_nombre', 'N/A')
+
+    story.append(Paragraph(f"Cliente: {cliente_nombre}", cliente_style))
+    story.append(Paragraph(f"Entrega: {plazo_nombre}", plazo_style))
+    story.append(Spacer(1, 3*mm))
+
+    # Info complementaria (minimalista)
     fecha_creacion = fi_data.get('created_at')
     if fecha_creacion:
         if hasattr(fecha_creacion, 'strftime'):
@@ -254,51 +282,45 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
         fecha_str = 'N/A'
 
     info_data = [
-        ['Pedido Proveedor:', fi_data.get('pp_nro', 'N/A'), 'Marca:', fi_data.get('marca', 'N/A')],
+        ['PP:', fi_data.get('pp_nro', 'N/A'), 'Marca:', fi_data.get('marca', 'N/A')],
         ['Caso:', fi_data.get('caso', 'N/A'), 'Estado:', fi_data.get('estado', 'RESERVADA')],
-        ['Cliente:', fi_data.get('cliente_nombre', 'N/A')[:45], 'Fecha:', fecha_str],
-        ['Vendedor:', fi_data.get('vendedor_nombre', 'N/A')[:45], 'Plazo:', fi_data.get('plazo_nombre', 'N/A')],
-        ['Lista de Precio:', f"Lista {fi_data.get('lista_precio_id', 1)}", '', ''],
+        ['Vendedor:', fi_data.get('vendedor_nombre', 'N/A')[:45], 'Fecha:', fecha_str],
     ]
 
-    info_table = Table(info_data, colWidths=[38*mm, 57*mm, 30*mm, 65*mm])
+    info_table = Table(info_data, colWidths=[22*mm, 73*mm, 22*mm, 73*mm])
     info_table.setStyle(TableStyle([
         ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
         ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
         ('FONTNAME', (2, 0), (2, -1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('TEXTCOLOR', (0, 0), (0, -1), colors.HexColor('#1B3A6B')),  # Labels en NAVY
-        ('TEXTCOLOR', (2, 0), (2, -1), colors.HexColor('#1B3A6B')),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('TEXTCOLOR', (0, 0), (0, -1), colors.HexColor('#64748B')),  # Gris suave
+        ('TEXTCOLOR', (2, 0), (2, -1), colors.HexColor('#64748B')),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 8),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-        ('TOPPADDING', (0, 0), (-1, -1), 6),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
+        ('LEFTPADDING', (0, 0), (-1, -1), 5),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 5),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('LINEBELOW', (0, 0), (-1, -1), 0.25, colors.HexColor('#E2E8F0')),  # Líneas sutiles
         ('BACKGROUND', (0, 0), (-1, -1), colors.white),
-        ('ROWBACKGROUNDS', (0, 0), (-1, -1), [colors.white, colors.HexColor('#F8FAFC')]),
     ]))
     story.append(info_table)
-    story.append(Spacer(1, 7*mm))
+    story.append(Spacer(1, 5*mm))
 
-    # Disclaimer (ejecutivo, menos alarmista)
+    # Disclaimer minimalista
     disclaimer_style = ParagraphStyle(
         'Disclaimer',
         parent=styles['Normal'],
-        fontSize=8,
-        textColor=colors.HexColor('#1B3A6B'),
-        backColor=colors.HexColor('#E4EEF7'),  # Azul suave ejecutivo
-        borderPadding=8,
+        fontSize=7,
+        textColor=colors.HexColor('#64748B'),
+        backColor=colors.HexColor('#F8FAFC'),  # Gris muy suave
+        borderPadding=6,
         alignment=TA_CENTER,
-        leftIndent=10,
-        rightIndent=10
     )
     story.append(Paragraph(
-        "<b>DOCUMENTO DE USO INTERNO</b><br/>"
-        "Factura provisoria sin valor legal. No genera obligaciones fiscales ni comerciales.",
+        "Documento de uso interno - Sin valor legal",
         disclaimer_style
     ))
-    story.append(Spacer(1, 7*mm))
+    story.append(Spacer(1, 5*mm))
 
     # Tabla de items (estilo ejecutivo IMF con imágenes)
     if items:
@@ -384,29 +406,30 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
     total_data = []
 
     # Subtotal
-    total_data.append(['Subtotal:', f"₲ {subtotal:,.0f}".replace(',', '.')])
+    total_data.append(['Subtotal:', f"Gs. {subtotal:,.0f}".replace(',', '.')])
 
     # Descuentos si existen
     if descuentos_activos:
         desc_text = ' + '.join([f"{d}%" for d in descuentos_activos])
-        total_data.append([f'Descuentos ({desc_text}):', f"- ₲ {monto_descuento:,.0f}".replace(',', '.')])
+        total_data.append([f'Descuentos ({desc_text}):', f"- Gs. {monto_descuento:,.0f}".replace(',', '.')])
 
-    # Total Neto (destacado)
+    # Total Neto (sin tags HTML, solo estilo)
     total_data.append([
-        '<b>TOTAL NETO:</b>',
-        f'<b>₲ {total_neto:,.0f}</b>'.replace(',', '.')
+        'TOTAL NETO:',
+        f"Gs. {total_neto:,.0f}".replace(',', '.')
     ])
 
-    # Resumen cantidades
+    # Resumen cantidades (sin tags font, solo texto)
     total_data.append([
-        f'<font size=8>({total_cajas} cajas · {total_pares} pares)</font>',
+        f'({total_cajas} cajas - {total_pares} pares)',
         ''
     ])
 
     total_table = Table(total_data, colWidths=[135*mm, 55*mm])
     total_table.setStyle(TableStyle([
         ('FONTNAME', (0, 0), (-1, -2), 'Helvetica'),
-        ('FONTNAME', (0, -2), (-1, -2), 'Helvetica-Bold'),
+        ('FONTNAME', (0, -2), (0, -2), 'Helvetica-Bold'),  # Solo label en bold
+        ('FONTNAME', (1, -2), (1, -2), 'Helvetica-Bold'),  # Monto en bold
         ('FONTSIZE', (0, 0), (-1, -3), 10),
         ('FONTSIZE', (0, -2), (-1, -2), 14),
         ('FONTSIZE', (0, -1), (-1, -1), 8),
@@ -414,7 +437,7 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
         ('TEXTCOLOR', (0, 0), (-1, -3), colors.HexColor('#334155')),
         ('TEXTCOLOR', (0, -2), (-1, -2), colors.HexColor('#1B3A6B')),  # NAVY para total
         ('TEXTCOLOR', (0, -1), (-1, -1), colors.HexColor('#64748B')),
-        ('LINEABOVE', (0, -2), (-1, -2), 2, colors.HexColor('#D4AF37')),  # Línea dorada
+        ('LINEABOVE', (0, -2), (-1, -2), 1.5, colors.HexColor('#D4AF37')),  # Línea dorada
         ('TOPPADDING', (0, 0), (-1, -1), 4),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
     ]))
