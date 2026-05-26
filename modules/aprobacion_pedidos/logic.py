@@ -153,6 +153,8 @@ def get_fis_de_pedido(pedido_id: int) -> list[dict]:
           fi.pp_id, fi.pedido_id,
           fi.marca, fi.marca_id, fi.caso, fi.caso_id,
           fi.total_pares, fi.total_monto, fi.estado,
+          fi.cliente_id, fi.vendedor_id, fi.plazo_id, fi.lista_precio_id,
+          fi.descuento_1, fi.descuento_2, fi.descuento_3, fi.descuento_4,
           fi.created_at,
           pp.numero_registro AS nro_pp
         FROM public.factura_interna fi
@@ -779,7 +781,7 @@ def get_fi_reservadas() -> list[dict]:
     """Lee FIs con estado RESERVADA directamente de BD.
     El módulo de Aprobación las encuentra por estado — no recibe objetos."""
     df = get_dataframe("""
-        SELECT fi.id, fi.nro_factura, fi.pp_id, fi.marca, fi.caso,
+        SELECT fi.id, fi.nro_factura, fi.pp_id, fi.pedido_id, fi.marca, fi.caso,
                fi.total_pares, fi.total_monto,
                fi.cliente_id, fi.vendedor_id, fi.plazo_id,
                fi.lista_precio_id,
@@ -801,7 +803,7 @@ def get_fi_reservadas() -> list[dict]:
 def get_fi_confirmadas() -> list[dict]:
     """Lee FIs confirmadas (aprobadas) para el historial con detalle."""
     df = get_dataframe("""
-        SELECT fi.id, fi.nro_factura, fi.pp_id, fi.marca, fi.caso,
+        SELECT fi.id, fi.nro_factura, fi.pp_id, fi.pedido_id, fi.marca, fi.caso,
                fi.total_pares, fi.total_monto,
                fi.cliente_id, fi.vendedor_id,
                fi.descuento_1, fi.descuento_2, fi.descuento_3, fi.descuento_4,

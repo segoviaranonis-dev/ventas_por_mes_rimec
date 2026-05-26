@@ -156,6 +156,46 @@ def rechazar_celula(pedido_id: int, celula: dict, motivo: str):
 # RENDER DE UNA CÉLULA = UNA FI YA CREADA por el RPC 028 (camino limpio)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _ver_pdf_action(fi: dict):
+    """Genera y descarga el PDF del pedido (todas las FIs agrupadas)."""
+    from core.pdf_factura_interna import generar_pdf_factura_interna, obtener_metadata_para_email
+
+    # Obtener el pedido_id desde la FI
+    pedido_id = fi.get("pedido_id")
+    if not pedido_id:
+        st.warning("⚠️ Esta FI no tiene pedido_id asociado. No se puede generar PDF.")
+        return
+
+    try:
+        with st.spinner("Generando PDF..."):
+            # Generar PDF
+            pdf_bytes = generar_pdf_factura_interna(pedido_id)
+
+            if pdf_bytes:
+                # Obtener metadata para nombre del archivo
+                metadata = obtener_metadata_para_email(pedido_id)
+                filename = f"Factura_Interna_{metadata['nro_pedido']}.pdf" if metadata else "Factura_Interna.pdf"
+
+                # Botón de descarga
+                st.download_button(
+                    label="⬇️ Descargar PDF",
+                    data=pdf_bytes,
+                    file_name=filename,
+                    mime="application/pdf",
+                    type="primary",
+                    key=f"download_pdf_{fi['id']}"
+                )
+
+                st.success("✅ PDF generado exitosamente. Este es el mismo PDF que se enviará por email al confirmar.")
+            else:
+                st.error("❌ Error al generar PDF")
+
+    except Exception as e:
+        st.error(f"❌ Error al generar PDF: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
+
+
 def _confirmar_fi_action(fi: dict):
     """Acción 'Confirmar' delegada por render_fi_card."""
     fi_id = int(fi["id"])
@@ -212,6 +252,10 @@ def _render_dialogo_anulacion(fi_id: int, key_suffix: str = ""):
 
 
 _FI_ACTIONS_RESERVADA = [
+    {
+        "label": "📄 Ver PDF", "key": "pdf",
+        "on_click": _ver_pdf_action, "show_if": "RESERVADA",
+    },
     {
         "label": "✅ Confirmar", "key": "conf", "type": "primary",
         "on_click": _confirmar_fi_action, "show_if": "RESERVADA",
