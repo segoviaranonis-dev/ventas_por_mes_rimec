@@ -95,17 +95,29 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
 
     if df_items is not None and not df_items.empty:
         for _, row in df_items.iterrows():
-            # Parsear linea_snapshot (viene como string JSON)
+            # Parsear linea_snapshot (puede venir como dict, JSON string, o Python dict string)
             import json
+            import ast
+
             snapshot = {}
             if row.get('linea_snapshot'):
                 try:
-                    if isinstance(row['linea_snapshot'], str):
-                        snapshot = json.loads(row['linea_snapshot'])
+                    ls = row['linea_snapshot']
+                    if isinstance(ls, dict):
+                        # Ya es dict
+                        snapshot = ls
+                    elif isinstance(ls, str):
+                        # Intentar como JSON primero
+                        try:
+                            snapshot = json.loads(ls)
+                        except json.JSONDecodeError:
+                            # Si falla, intentar como dict de Python (comillas simples)
+                            snapshot = ast.literal_eval(ls)
                     else:
-                        snapshot = row['linea_snapshot']
-                except:
-                    pass
+                        snapshot = {}
+                except Exception as e:
+                    # Si todo falla, dejar vacío
+                    snapshot = {}
 
             items.append({
                 'linea_codigo': snapshot.get('linea_codigo', '?'),
