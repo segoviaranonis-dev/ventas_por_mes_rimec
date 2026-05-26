@@ -172,42 +172,53 @@ def _ver_pdf_action(fi: dict):
         import weasyprint
     except ImportError:
         st.error("❌ **Falta instalar `weasyprint`**")
-        st.markdown("""
-        **Para instalar, ejecutá este comando en tu terminal:**
-
-        ```bash
-        python -m pip install weasyprint
-        ```
-
-        **O copiá y ejecutá este comando directamente:**
-        """)
 
         python_exe = sys.executable
-        install_cmd = f'"{python_exe}" -m pip install weasyprint'
 
+        st.warning("""
+        ⚠️ **IMPORTANTE:** Detené Streamlit (Ctrl+C) y ejecutá este comando
+        EN LA MISMA TERMINAL donde corriste Streamlit:
+        """)
+
+        install_cmd = f'"{python_exe}" -m pip install weasyprint'
         st.code(install_cmd, language="bash")
 
-        col1, col2 = st.columns([1, 3])
-        with col1:
-            if st.button("🔧 Instalar Ahora", key=f"install_weasy_{fi['id']}", type="primary"):
-                with st.spinner("Instalando weasyprint..."):
-                    try:
-                        result = subprocess.run(
-                            [python_exe, "-m", "pip", "install", "weasyprint"],
-                            capture_output=True,
-                            text=True,
-                            timeout=120
-                        )
+        st.markdown("**Después de instalar:**")
+        st.markdown("1. Volvé a ejecutar Streamlit")
+        st.markdown("2. Presioná este botón de nuevo")
 
-                        if result.returncode == 0:
-                            st.success("✅ weasyprint instalado exitosamente. Recargá la página (F5) y volvé a intentar.")
-                            st.balloons()
-                        else:
-                            st.error(f"❌ Error al instalar:\n{result.stderr}")
-                    except Exception as e:
-                        st.error(f"❌ Error: {e}")
+        st.divider()
 
-        st.info(f"**Python detectado:** `{python_exe}`")
+        st.info("💡 **O dejá que lo instale automáticamente (puede tardar 1-2 minutos):**")
+
+        if st.button("🔧 Instalar Automáticamente", key=f"install_weasy_{fi['id']}", type="primary", use_container_width=True):
+            with st.spinner("⏳ Instalando weasyprint... (esto puede tardar 1-2 minutos)"):
+                try:
+                    result = subprocess.run(
+                        [python_exe, "-m", "pip", "install", "weasyprint"],
+                        capture_output=True,
+                        text=True,
+                        timeout=180
+                    )
+
+                    if result.returncode == 0:
+                        st.success("✅ weasyprint instalado exitosamente!")
+                        st.balloons()
+                        st.info("🔄 **Recargá esta página (F5)** y volvé a presionar 'Ver PDF'")
+                    else:
+                        st.error("❌ Error al instalar. Probá con el comando manual de arriba.")
+                        with st.expander("Ver error"):
+                            st.code(result.stderr)
+                except subprocess.TimeoutExpired:
+                    st.error("❌ La instalación tardó demasiado. Probá con el comando manual.")
+                except Exception as e:
+                    st.error(f"❌ Error: {e}")
+                    st.info("Usá el comando manual de arriba.")
+
+        with st.expander("🔍 Información técnica"):
+            st.caption(f"Python detectado: `{python_exe}`")
+            st.caption(f"Versión: {sys.version}")
+
         return
 
     # Si weasyprint está instalado, proceder
