@@ -183,6 +183,13 @@ def _obtener_facturas_del_pedido(pedido_id: int) -> List[Dict]:
         LEFT JOIN public.color col ON col.id = ppd.id_color
 
         WHERE fi.pedido_id = :pedido_id
+           OR (
+                fi.pedido_id IS NULL
+                AND ABS(EXTRACT(EPOCH FROM (
+                  fi.created_at -
+                  (SELECT created_at FROM public.pedido_venta_rimec WHERE id = :pedido_id)
+                ))) < 10
+              )
         ORDER BY fi.id, fid.id
     """
 
