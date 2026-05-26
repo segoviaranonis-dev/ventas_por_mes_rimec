@@ -70,21 +70,20 @@ def _obtener_metadata_pedido(pedido_id: int) -> Optional[Dict]:
         SELECT
             pvr.id,
             pvr.nro_pedido,
-            pvr.id_cliente,
-            c.razon_social as cliente_nombre,
-            pvr.id_vendedor,
+            pvr.cliente_id,
+            c.descp_cliente as cliente_nombre,
+            pvr.vendedor_id,
             v.descp_usuario as vendedor_nombre,
-            pvr.id_lista_precio,
-            lp.nombre as lista_nombre,
-            pvr.id_plazo,
-            pl.nombre as plazo_nombre,
+            pvr.lista_precio_id,
+            'Lista ' || CAST(pvr.lista_precio_id AS TEXT) as lista_nombre,
+            pvr.plazo_id,
+            pl.descp_plazo as plazo_nombre,
             pvr.estado,
-            pvr.fecha_creacion
+            pvr.created_at as fecha_creacion
         FROM public.pedido_venta_rimec pvr
-        LEFT JOIN public.cliente c ON c.id = pvr.id_cliente
-        LEFT JOIN public.usuario_v2 v ON v.id_usuario = pvr.id_vendedor
-        LEFT JOIN public.lista_precio lp ON lp.id = pvr.id_lista_precio
-        LEFT JOIN public.plazo pl ON pl.id = pvr.id_plazo
+        LEFT JOIN public.cliente_v2 c ON c.id_cliente = pvr.cliente_id
+        LEFT JOIN public.usuario_v2 v ON v.id_usuario = pvr.vendedor_id
+        LEFT JOIN public.plazo_v2 pl ON pl.id_plazo = pvr.plazo_id
         WHERE pvr.id = :pedido_id
         LIMIT 1
     """
@@ -98,13 +97,13 @@ def _obtener_metadata_pedido(pedido_id: int) -> Optional[Dict]:
     return {
         "pedido_id": int(row["id"]),
         "nro_pedido": row["nro_pedido"],
-        "cliente_id": int(row["id_cliente"]) if row["id_cliente"] else None,
+        "cliente_id": int(row["cliente_id"]) if row["cliente_id"] else None,
         "cliente_nombre": row["cliente_nombre"] or "SIN CLIENTE",
-        "vendedor_id": int(row["id_vendedor"]) if row["id_vendedor"] else None,
+        "vendedor_id": int(row["vendedor_id"]) if row["vendedor_id"] else None,
         "vendedor_nombre": row["vendedor_nombre"] or "SIN VENDEDOR",
-        "lista_id": int(row["id_lista_precio"]) if row["id_lista_precio"] else None,
+        "lista_id": int(row["lista_precio_id"]) if row["lista_precio_id"] else None,
         "lista_nombre": row["lista_nombre"] or "SIN LISTA",
-        "plazo_id": int(row["id_plazo"]) if row["id_plazo"] else None,
+        "plazo_id": int(row["plazo_id"]) if row["plazo_id"] else None,
         "plazo_nombre": row["plazo_nombre"] or "SIN PLAZO",
         "estado": row["estado"],
         "fecha_creacion": row["fecha_creacion"]
@@ -367,7 +366,7 @@ def obtener_metadata_para_email(pedido_id: int) -> Optional[Dict]:
             v.email as vendedor_email,
             s.email as supervisor_email
         FROM public.pedido_venta_rimec pvr
-        LEFT JOIN public.usuario_v2 v ON v.id_usuario = pvr.id_vendedor
+        LEFT JOIN public.usuario_v2 v ON v.id_usuario = pvr.vendedor_id
         LEFT JOIN public.usuario_v2 s ON s.id_usuario = v.supervisor_id
         WHERE pvr.id = :pedido_id
         LIMIT 1
