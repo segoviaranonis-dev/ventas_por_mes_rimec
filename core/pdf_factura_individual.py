@@ -79,24 +79,13 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
     items_query = """
         SELECT
             fid.id,
-            fid.pares,
             fid.cajas,
+            fid.pares,
             fid.precio_unit,
             fid.subtotal,
             fid.precio_neto,
-            fid.linea_snapshot,
-            ppd.sku,
-            pc.nombre as producto_nombre,
-            pc.imagen_url,
-            l.cod_linea as linea_codigo,
-            r.cod_ref as ref_codigo,
-            col.nombre as color_nombre
+            fid.linea_snapshot
         FROM public.factura_interna_detalle fid
-        LEFT JOIN public.pedido_proveedor_det ppd ON ppd.id = fid.ppd_id
-        LEFT JOIN public.producto_cab pc ON pc.id = ppd.id_producto_cab
-        LEFT JOIN public.linea l ON l.id = pc.id_linea
-        LEFT JOIN public.referencia r ON r.id = pc.id_referencia
-        LEFT JOIN public.color col ON col.id = ppd.id_color
         WHERE fid.factura_id = :fi_id
         ORDER BY fid.id
     """
@@ -106,7 +95,7 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
 
     if df_items is not None and not df_items.empty:
         for _, row in df_items.iterrows():
-            # Parsear linea_snapshot si existe
+            # Parsear linea_snapshot (viene como string JSON)
             import json
             snapshot = {}
             if row.get('linea_snapshot'):
@@ -119,9 +108,9 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
                     pass
 
             items.append({
-                'linea_codigo': row['linea_codigo'] or snapshot.get('linea_codigo', '?'),
-                'ref_codigo': row['ref_codigo'] or snapshot.get('ref_codigo', '?'),
-                'color_nombre': row['color_nombre'] or snapshot.get('color_nombre', ''),
+                'linea_codigo': snapshot.get('linea_codigo', '?'),
+                'ref_codigo': snapshot.get('ref_codigo', '?'),
+                'color_nombre': snapshot.get('color_nombre', ''),
                 'gradas_fmt': snapshot.get('gradas_fmt', ''),
                 'cajas': int(row['cajas']) if row['cajas'] else 0,
                 'pares': int(row['pares']) if row['pares'] else 0,
