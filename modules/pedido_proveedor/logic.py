@@ -2084,32 +2084,31 @@ def save_pp(header: dict, detalle_rows: list[dict]) -> tuple[bool, str]:
         with engine.begin() as conn:
 
             # TRAZABILIDAD DE ORIGEN (MANDATO DE DIRECCIÓN)
-            # categoria_id se hereda de la Intención de Compra padre.
-            # Valores posibles:
-            #   PRE VENTA  → la mercadería tiene cliente asignado antes de llegar.
-            #                Al facturar: se convierte en factura directa al cliente.
-            #   PROGRAMADO → proyección de compra sin cliente asignado.
-            #                Al facturar: intermediación entre Beira Rio y cliente.
-            #   STOCK      → saldo no vendido de ambas categorías.
-            #                NO se origina en IC. Nace en gestión de ventas mayorista.
+            # categoria_id y quincena_arribo_id se heredan de la IC padre.
+            # categoria_id:
+            #   PRE VENTA  → cliente asignado antes de llegar
+            #   PROGRAMADO → proyección sin cliente
+            #   STOCK      → saldo no vendido (NO origina en IC)
+            # quincena_arribo_id: Cable de acero reforzado (1-24)
             ic_row = conn.execute(sqlt(
-                "SELECT categoria_id FROM intencion_compra WHERE id = :id_ic"
+                "SELECT categoria_id, quincena_arribo_id FROM intencion_compra WHERE id = :id_ic"
             ), {"id_ic": int(header["id_intencion_compra"])}).fetchone()
             categoria_id = ic_row[0] if ic_row and ic_row[0] is not None else None
+            quincena_id = ic_row[1] if ic_row and ic_row[1] is not None else None  # PROPAGACIÓN
 
             row = conn.execute(sqlt("""
                 INSERT INTO pedido_proveedor (
                     numero_registro,    anio_fiscal,
                     id_intencion_compra, proveedor_importacion_id,
                     numero_proforma,    entidad_comercial,
-                    fecha_pedido,       fecha_arribo_estimada,
+                    fecha_pedido,       quincena_arribo_id,
                     estado,             pares_comprometidos,
                     categoria_id,       notas
                 ) VALUES (
                     :numero,    :anio,
                     :id_ic,     :id_prov,
                     :proforma,  'COMPRA_PREVIA',
-                    :fecha_ped, :fecha_eta,
+                    :fecha_ped, :quincena_id,
                     'ABIERTO',  :pares,
                     :categoria_id, :notas
                 )
@@ -2121,7 +2120,7 @@ def save_pp(header: dict, detalle_rows: list[dict]) -> tuple[bool, str]:
                 "id_prov":      int(header["id_proveedor"]),
                 "proforma":     str(header["numero_proforma"]).strip(),
                 "fecha_ped":    header.get("fecha_pedido")          or date.today(),
-                "fecha_eta":    header.get("fecha_arribo_estimada") or None,
+                "quincena_id":  quincena_id,  # PROPAGADO DESDE IC
                 "pares":        total_pares,
                 "categoria_id": categoria_id,
                 "notas":        header.get("observaciones")         or None,

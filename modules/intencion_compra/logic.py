@@ -506,7 +506,7 @@ def save_intencion(data: dict) -> tuple[bool, str]:
         "d4":                       float(data.get("descuento_4", 0)),
         "neto":                     neto,
         "fecha_reg":                data["fecha_registro"],
-        "fecha_eta":                data.get("fecha_llegada") or None,
+        "quincena_arribo_id":       int(data["quincena_arribo_id"]) if data.get("quincena_arribo_id") else None,  # NUEVO
         "nota_pedido":              data.get("nota_pedido") or None,
         "obs":                      data.get("observaciones") or None,
         "precio_evento_id":         int(data["precio_evento_id"]) if data.get("precio_evento_id") else None,
@@ -523,7 +523,7 @@ def save_intencion(data: dict) -> tuple[bool, str]:
                     tipo_id, categoria_id,
                     cantidad_total_pares,
                     monto_bruto, descuento_1, descuento_2, descuento_3, descuento_4,
-                    monto_neto, fecha_registro, fecha_llegada,
+                    monto_neto, fecha_registro, quincena_arribo_id,
                     estado, nota_pedido, observaciones, precio_evento_id,
                     listado_precio_id, comision_vendedor_id, comision_porcentaje_snap
                 ) VALUES (
@@ -532,7 +532,7 @@ def save_intencion(data: dict) -> tuple[bool, str]:
                     :tipo_id, :categoria_id,
                     :pares,
                     :bruto, :d1, :d2, :d3, :d4,
-                    :neto, :fecha_reg, :fecha_eta,
+                    :neto, :fecha_reg, :quincena_arribo_id,
                     'PENDIENTE_OPERATIVO', :nota_pedido, :obs, :precio_evento_id,
                     :listado_precio_id, :comision_vendedor_id, :comision_porcentaje_snap
                 ) RETURNING id

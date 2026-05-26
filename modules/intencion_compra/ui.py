@@ -534,8 +534,22 @@ def _render_form():
     sel_plaz  = c5.selectbox("Plazo de Pago",     list(opts_plaz.keys()), key="ic_plaz")
     pares     = c6.number_input("Total Pares",    min_value=0, step=12, value=0, key="ic_pares")
     fecha_reg = c7.date_input("Fecha Registro",   value=date.today(), key="ic_fecha_reg")
-    fecha_eta = c8.date_input("ETA (Llegada PY)", value=None, key="ic_fecha_eta",
-                               help="Fecha estimada de arribo a Paraguay")
+
+    # ETA: Dropdown de quincenas (NUEVO - cable de acero reforzado)
+    from core.database import get_dataframe
+    df_quincenas = get_dataframe("SELECT id, descripcion FROM quincena_arribo ORDER BY id")
+    opts_quincena = {"— Sin definir —": None}
+    if df_quincenas is not None and not df_quincenas.empty:
+        for _, q in df_quincenas.iterrows():
+            opts_quincena[q['descripcion']] = int(q['id'])
+
+    sel_quincena_label = c8.selectbox(
+        "Llegada",
+        list(opts_quincena.keys()),
+        key="ic_quincena",
+        help="Quincena estimada de arribo del contenedor"
+    )
+    quincena_id = opts_quincena[sel_quincena_label]
 
     # Pre-llenado Hiedra
     _hm = st.session_state.get("hiedra_meta", {})
@@ -672,8 +686,8 @@ def _render_form():
         if pares == 0:
             st.warning("Ingresá la cantidad de pares antes de registrar.")
             return
-        if not fecha_eta:
-            st.warning("La fecha de llegada (ETA) es obligatoria.")
+        if not quincena_id:
+            st.warning("La quincena de llegada es obligatoria.")
             return
 
         ok, resultado = save_intencion({
@@ -689,7 +703,7 @@ def _render_form():
             "descuento_1": d1, "descuento_2": d2,
             "descuento_3": d3, "descuento_4": d4,
             "fecha_registro":           fecha_reg,
-            "fecha_llegada":            fecha_eta,
+            "quincena_arribo_id":       quincena_id,  # NUEVO
             "nota_pedido":              nota_pedido,
             "observaciones":            observaciones,
             "precio_evento_id":         precio_ev_id,
@@ -699,7 +713,7 @@ def _render_form():
         })
 
         if ok:
-            st.success(f"Registrado: **{resultado}** | {sel_marc} | {pares:,} pares | ETA {fecha_eta}")
+            st.success(f"Registrado: **{resultado}** | {sel_marc} | {pares:,} pares | Llegada: {sel_quincena_label}")
             st.session_state["ic_vista"] = VISTA_DASHBOARD
             st.session_state.pop("ic_tipo_id",  None)
             st.session_state.pop("ic_cat_id",   None)
