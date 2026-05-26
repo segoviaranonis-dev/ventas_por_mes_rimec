@@ -1,0 +1,74 @@
+{% extends "email_base.html" %}
+
+{% block content %}
+    <!-- Success Alert -->
+    <div class="alert alert-success">
+        <strong>✓ Factura Interna Confirmada Exitosamente</strong><br>
+        El pedido ha sido procesado y está listo para la siguiente fase.
+    </div>
+
+    <!-- Greeting -->
+    <h2>Confirmación de Factura Interna</h2>
+    <p>Estimado/a,</p>
+    <p>
+        Le informamos que la <strong>Factura Interna</strong> del pedido
+        <strong>{{ nro_pedido }}</strong> ha sido confirmada exitosamente en el sistema.
+    </p>
+
+    <!-- Pedido Info Box -->
+    <div class="info-box">
+        <div class="label">Número de Pedido</div>
+        <div class="value">{{ nro_pedido }}</div>
+    </div>
+
+    <div class="info-box">
+        <div class="label">Cliente</div>
+        <div class="value">{{ cliente_nombre }}</div>
+    </div>
+
+    <!-- Stats Grid -->
+    <div class="stats-grid">
+        <div class="stat-item">
+            <div class="stat-label">Total Pares</div>
+            <div class="stat-value">{{ "{:,}".format(total_pares).replace(',', '.') }}</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-label">Monto Total</div>
+            <div class="stat-value">Gs. {{ "{:,.0f}".format(total_general).replace(',', '.') }}</div>
+        </div>
+    </div>
+
+    <!-- PDF Attachment Notice -->
+    <p style="margin-top: 25px;">
+        <strong>📎 Documento Adjunto:</strong> Encontrará el detalle completo de la factura
+        interna en el archivo PDF adjunto a este correo. El documento incluye:
+    </p>
+    <ul style="color: #475569; line-height: 1.8;">
+        <li>Detalles completos de productos y cantidades</li>
+        <li>Imágenes en miniatura de cada ítem</li>
+        <li>Distribución por marcas y casos de precio</li>
+        <li>Descuentos aplicados y totales finales</li>
+    </ul>
+
+    <!-- Warning Box -->
+    <div class="alert alert-warning">
+        <strong>⚠️ Importante:</strong> Este documento es una factura provisoria interna
+        sin valor legal ni impositivo. Es únicamente para uso interno y control de gestión.
+    </div>
+
+    <!-- Next Steps -->
+    <p style="margin-top: 25px;">
+        <strong>Próximos Pasos:</strong>
+    </p>
+    <ul style="color: #475569; line-height: 1.8;">
+        <li>El pedido pasó de estado <strong>PENDIENTE</strong> a <strong>CONFIRMADO</strong></li>
+        <li>Las facturas internas cambiaron de <strong>RESERVADA</strong> a <strong>CONFIRMADA</strong></li>
+        <li>El pedido está listo para autorización final</li>
+    </ul>
+
+    <!-- Footer Message -->
+    <p style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #E2E8F0; color: #64748B; font-size: 13px;">
+        Si tiene alguna consulta sobre este pedido, por favor comuníquese con su supervisor
+        o con el departamento de administración.
+    </p>
+{% endblock %}

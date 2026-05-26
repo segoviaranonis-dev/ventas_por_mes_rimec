@@ -1,0 +1,361 @@
+<!--
+SISTEMA: RIMEC Business Intelligence - NEXUS CORE
+TEMPLATE: Factura Provisoria Interna (Multi-Factura)
+VERSION: 1.0.0
+DESCRIPCIÓN: Template para generar PDFs de facturas internas.
+             Soporta múltiples facturas (PP × Marca × Caso) en un solo documento.
+-->
+
+<style>
+    /* Estilos específicos de factura interna */
+    .factura-section {
+        page-break-inside: avoid;
+        margin-bottom: 30px;
+        border: 1pt solid #E2E8F0;
+        padding: 15px;
+        background-color: #FAFAFA;
+    }
+
+    .factura-header {
+        background-color: {{ secondary_color }};
+        color: white;
+        padding: 12px 15px;
+        margin: -15px -15px 15px -15px;
+        font-size: 11pt;
+        font-weight: bold;
+        text-transform: uppercase;
+        letter-spacing: 0.5pt;
+    }
+
+    .factura-meta {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 10px;
+        margin-bottom: 15px;
+        font-size: 8pt;
+    }
+
+    .factura-meta .meta-item {
+        padding: 8px;
+        background-color: white;
+        border: 1pt solid #E2E8F0;
+        border-radius: 4px;
+    }
+
+    .factura-meta .meta-label {
+        color: #64748B;
+        font-size: 7pt;
+        text-transform: uppercase;
+        font-weight: bold;
+        margin-bottom: 3px;
+    }
+
+    .factura-meta .meta-value {
+        color: #1E293B;
+        font-size: 9pt;
+        font-weight: bold;
+    }
+
+    .items-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 15px;
+        background-color: white;
+    }
+
+    .items-table th {
+        background-color: {{ primary_color }};
+        color: white;
+        padding: 8px 6px;
+        text-align: left;
+        font-size: 7pt;
+        text-transform: uppercase;
+        font-weight: bold;
+    }
+
+    .items-table td {
+        padding: 8px 6px;
+        border-bottom: 0.5pt solid #E2E8F0;
+        font-size: 8pt;
+        vertical-align: middle;
+    }
+
+    .items-table tr:nth-child(even) {
+        background-color: #F8FAFC;
+    }
+
+    .item-thumbnail {
+        width: 50px;
+        height: 50px;
+        object-fit: cover;
+        border-radius: 4px;
+        border: 1pt solid #E2E8F0;
+    }
+
+    .item-description {
+        font-weight: bold;
+        color: #1E293B;
+        margin-bottom: 2px;
+    }
+
+    .item-sku {
+        color: #64748B;
+        font-size: 7pt;
+        font-family: 'Courier New', monospace;
+    }
+
+    .item-gradas {
+        color: #64748B;
+        font-size: 7pt;
+        font-style: italic;
+    }
+
+    .totales-section {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 15px;
+        margin-top: 10px;
+    }
+
+    .descuentos-box {
+        padding: 10px;
+        background-color: white;
+        border: 1pt solid #E2E8F0;
+        border-radius: 4px;
+    }
+
+    .totales-box {
+        padding: 10px;
+        background-color: white;
+        border: 1pt solid {{ primary_color }};
+        border-radius: 4px;
+    }
+
+    .descuento-item, .total-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 5px 0;
+        font-size: 8pt;
+    }
+
+    .total-item.total-final {
+        border-top: 2pt solid {{ primary_color }};
+        margin-top: 5px;
+        padding-top: 8px;
+        font-size: 10pt;
+        font-weight: bold;
+        color: {{ primary_color }};
+    }
+
+    .text-right {
+        text-align: right;
+    }
+
+    .money {
+        font-variant-numeric: tabular-nums;
+        font-family: 'Courier New', monospace;
+        font-weight: bold;
+    }
+
+    .pedido-header {
+        background-color: white;
+        border: 2pt solid {{ primary_color }};
+        padding: 15px;
+        margin-bottom: 20px;
+        border-radius: 4px;
+    }
+
+    .pedido-title {
+        color: {{ primary_color }};
+        font-size: 18pt;
+        font-weight: 900;
+        margin-bottom: 10px;
+    }
+
+    .pedido-info {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr 1fr;
+        gap: 15px;
+        font-size: 8pt;
+    }
+
+    .total-general-box {
+        background-color: {{ primary_color }};
+        color: white;
+        padding: 20px;
+        text-align: center;
+        margin-top: 30px;
+        border-radius: 4px;
+    }
+
+    .total-general-label {
+        font-size: 12pt;
+        font-weight: bold;
+        text-transform: uppercase;
+        letter-spacing: 1pt;
+        margin-bottom: 10px;
+    }
+
+    .total-general-value {
+        font-size: 24pt;
+        font-weight: 900;
+        font-family: 'Courier New', monospace;
+    }
+
+    .total-general-detail {
+        font-size: 10pt;
+        margin-top: 8px;
+        opacity: 0.9;
+    }
+
+    .disclaimer {
+        background-color: #FEF3C7;
+        border-left: 4pt solid #F59E0B;
+        padding: 10px 15px;
+        margin-top: 20px;
+        font-size: 7pt;
+        color: #92400E;
+    }
+</style>
+
+<!-- Encabezado del Pedido -->
+<div class="pedido-header">
+    <div class="pedido-title">{{ nro_pedido }}</div>
+    <div class="pedido-info">
+        <div>
+            <div class="meta-label">Cliente</div>
+            <div class="meta-value">{{ cliente_nombre }}</div>
+        </div>
+        <div>
+            <div class="meta-label">Vendedor</div>
+            <div class="meta-value">{{ vendedor_nombre }}</div>
+        </div>
+        <div>
+            <div class="meta-label">Plazo</div>
+            <div class="meta-value">{{ plazo_nombre }}</div>
+        </div>
+        <div>
+            <div class="meta-label">Lista</div>
+            <div class="meta-value">{{ lista_nombre }}</div>
+        </div>
+    </div>
+</div>
+
+<div class="disclaimer">
+    <strong>⚠️ FACTURA PROVISORIA INTERNA (SIN VALOR LEGAL)</strong><br>
+    Este documento es para uso interno y no genera obligaciones fiscales ni comerciales.
+    Los montos son referenciales y pueden variar según disponibilidad y condiciones finales.
+</div>
+
+<!-- Listado de Facturas -->
+{% for factura in facturas %}
+<div class="factura-section">
+    <div class="factura-header">
+        ⚡ {{ factura.nro_factura }} — {{ factura.marca }} · {{ factura.caso }}
+    </div>
+
+    <div class="factura-meta">
+        <div class="meta-item">
+            <div class="meta-label">Pedido Proveedor</div>
+            <div class="meta-value">{{ factura.pp_nro }}</div>
+        </div>
+        <div class="meta-item">
+            <div class="meta-label">Marca</div>
+            <div class="meta-value">{{ factura.marca }}</div>
+        </div>
+        <div class="meta-item">
+            <div class="meta-label">Caso Precio</div>
+            <div class="meta-value">{{ factura.caso }}</div>
+        </div>
+    </div>
+
+    <!-- Tabla de Items -->
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th style="width: 60px;">Imagen</th>
+                <th style="width: 35%;">Producto</th>
+                <th style="width: 15%;">Gradas</th>
+                <th style="width: 10%;" class="text-right">Cajas</th>
+                <th style="width: 10%;" class="text-right">Pares</th>
+                <th style="width: 15%;" class="text-right">Precio Unit.</th>
+                <th style="width: 15%;" class="text-right">Subtotal</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in factura.items %}
+            <tr>
+                <td>
+                    {% if item.imagen_url %}
+                    <img src="{{ item.imagen_url }}" class="item-thumbnail" alt="Producto">
+                    {% else %}
+                    <div class="item-thumbnail" style="background-color: #E2E8F0; display: flex; align-items: center; justify-content: center; color: #94A3B8;">
+                        📦
+                    </div>
+                    {% endif %}
+                </td>
+                <td>
+                    <div class="item-description">{{ item.nombre }}</div>
+                    <div class="item-sku">L{{ item.linea_codigo }}:R{{ item.ref_codigo }}</div>
+                    <div class="item-sku">{{ item.color_nombre }}</div>
+                </td>
+                <td>
+                    <div class="item-gradas">{{ item.gradas_fmt }}</div>
+                </td>
+                <td class="text-right">{{ item.cajas }}</td>
+                <td class="text-right">{{ item.pares }}</td>
+                <td class="text-right money">Gs. {{ "{:,.0f}".format(item.precio_neto).replace(',', '.') }}</td>
+                <td class="text-right money">Gs. {{ "{:,.0f}".format(item.subtotal).replace(',', '.') }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <!-- Totales y Descuentos -->
+    <div class="totales-section">
+        <div class="descuentos-box">
+            <div style="font-weight: bold; margin-bottom: 8px; color: {{ primary_color }};">Descuentos Aplicados</div>
+            {% if factura.descuentos and factura.descuentos|length > 0 %}
+                {% for desc in factura.descuentos %}
+                    {% if desc > 0 %}
+                    <div class="descuento-item">
+                        <span>Descuento {{ loop.index }}:</span>
+                        <span>{{ desc }}%</span>
+                    </div>
+                    {% endif %}
+                {% endfor %}
+            {% else %}
+            <div class="descuento-item" style="color: #94A3B8; font-style: italic;">
+                Sin descuentos
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="totales-box">
+            <div class="total-item">
+                <span>Subtotal:</span>
+                <span class="money">Gs. {{ "{:,.0f}".format(factura.subtotal).replace(',', '.') }}</span>
+            </div>
+            {% if factura.descuentos_aplicados > 0 %}
+            <div class="total-item" style="color: #059669;">
+                <span>Descuentos:</span>
+                <span class="money">-Gs. {{ "{:,.0f}".format(factura.descuentos_aplicados).replace(',', '.') }}</span>
+            </div>
+            {% endif %}
+            <div class="total-item total-final">
+                <span>TOTAL FACTURA:</span>
+                <span class="money">Gs. {{ "{:,.0f}".format(factura.total_neto).replace(',', '.') }}</span>
+            </div>
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+<!-- Total General -->
+<div class="total-general-box">
+    <div class="total-general-label">Total General del Pedido</div>
+    <div class="total-general-value">Gs. {{ "{:,.0f}".format(total_general).replace(',', '.') }}</div>
+    <div class="total-general-detail">
+        {{ total_pares_general }} pares · {{ facturas|length }} factura{% if facturas|length != 1 %}s{% endif %}
+    </div>
+</div>

@@ -866,29 +866,176 @@ def get_fi_anuladas() -> list[dict]:
     return df.to_dict("records") if df is not None and not df.empty else []
 
 
-def confirmar_fi(fi_id: int) -> tuple[bool, str]:
-    """APROBAR: RESERVADA → CONFIRMADA.
-    El descuento de stock ya fue hecho en el soft-discount al crear la FI."""
-    fi_id = int(fi_id)
+def _get_pedido_id_from_fi(fi_id: int) -> int | None:
+    """Obtiene el pedido_id asociado a una factura interna."""
+    df = get_dataframe("""
+        SELECT pedido_id
+        FROM public.factura_interna
+        WHERE id = :fi_id
+        LIMIT 1
+    """, {"fi_id": fi_id})
+    if df is None or df.empty or df.iloc[0]["pedido_id"] is None:
+        return None
+    return int(df.iloc[0]["pedido_id"])
+
+
+def _verificar_todas_fis_confirmadas(pedido_id: int) -> bool:
+    """Verifica si TODAS las FIs de un pedido están CONFIRMADAS."""
+    df = get_dataframe("""
+        SELECT COUNT(*) as total,
+               SUM(CASE WHEN estado = 'CONFIRMADA' THEN 1 ELSE 0 END) as confirmadas
+        FROM public.factura_interna
+        WHERE pedido_id = :pedido_id
+    """, {"pedido_id": pedido_id})
+
+    if df is None or df.empty:
+        return False
+
+    total = int(df.iloc[0]["total"])
+    confirmadas = int(df.iloc[0]["confirmadas"])
+
+    return total > 0 and total == confirmadas
+
+
+def _confirmar_pedido_web(pedido_id: int, conn) -> None:
+    """Cambia el estado del pedido_venta_rimec de PENDIENTE → CONFIRMADO."""
+    conn.execute(sqlt("""
+        UPDATE public.pedido_venta_rimec
+        SET estado = 'CONFIRMADO'
+        WHERE id = :pedido_id AND estado = 'PENDIENTE'
+    """), {"pedido_id": pedido_id})
+
+
+def _enviar_email_confirmacion(pedido_id: int) -> tuple[bool, str]:
+    """
+    Genera PDF y envía email de confirmación con todas las FIs del pedido.
+
+    Returns:
+        (success, message)
+    """
     try:
+        from core.pdf_factura_interna import generar_pdf_factura_interna, obtener_metadata_para_email
+        from core.email_service import send_factura_interna_confirmation
+
+        # 1. Obtener metadata para email
+        metadata = obtener_metadata_para_email(pedido_id)
+        if not metadata:
+            return False, "No se pudo obtener metadata del pedido"
+
+        # 2. Validar que haya emails configurados
+        if not metadata.get("vendedor_email"):
+            DBInspector.log(f"[EMAIL] Pedido {pedido_id}: vendedor sin email configurado", "WARNING")
+            return False, "Vendedor no tiene email configurado"
+
+        # 3. Generar PDF
+        pdf_bytes = generar_pdf_factura_interna(pedido_id)
+        if not pdf_bytes:
+            return False, "Error al generar PDF"
+
+        # 4. Enviar email
+        pdf_filename = f"Factura_Interna_{metadata['nro_pedido']}.pdf"
+
+        email_ok = send_factura_interna_confirmation(
+            vendedor_email=metadata["vendedor_email"],
+            supervisor_email=metadata.get("supervisor_email"),
+            nro_pedido=metadata["nro_pedido"],
+            cliente_nombre=metadata["cliente_nombre"],
+            total_general=metadata["total_general"],
+            total_pares=metadata["total_pares"],
+            pdf_bytes=pdf_bytes,
+            pdf_filename=pdf_filename
+        )
+
+        if email_ok:
+            DBInspector.log(
+                f"[EMAIL] Confirmación enviada: {metadata['nro_pedido']} → {metadata['vendedor_email']}",
+                "SUCCESS"
+            )
+            return True, f"Email enviado a {metadata['vendedor_email']}"
+        else:
+            return False, "Error al enviar email (revisar logs)"
+
+    except Exception as e:
+        DBInspector.log(f"[EMAIL] Error enviando confirmación pedido {pedido_id}: {e}", "ERROR")
+        return False, f"Error al enviar email: {str(e)}"
+
+
+def confirmar_fi(fi_id: int) -> tuple[bool, str]:
+    """
+    APROBAR: RESERVADA → CONFIRMADA.
+
+    Flujo completo:
+    1. Cambiar FI: RESERVADA → CONFIRMADA
+    2. Verificar si TODAS las FIs del pedido están CONFIRMADAS
+    3. Si todas confirmadas:
+       - Cambiar PVR: PENDIENTE → CONFIRMADO
+       - Generar PDF multi-factura
+       - Enviar email automático al vendedor y supervisor
+
+    El descuento de stock ya fue hecho en el soft-discount al crear la FI.
+    """
+    fi_id = int(fi_id)
+
+    try:
+        # 1. Obtener pedido_id asociado (antes de la transacción)
+        pedido_id = _get_pedido_id_from_fi(fi_id)
+        if not pedido_id:
+            DBInspector.log(f"[FI] fi_id={fi_id} no tiene pedido_venta_rimec asociado", "WARNING")
+            # Continuar con confirmación simple (sin email/PDF)
+
+        # 2. Confirmar la FI
         with engine.begin() as conn:
             result = conn.execute(sqlt("""
-                UPDATE factura_interna
+                UPDATE public.factura_interna
                 SET estado = 'CONFIRMADA'
                 WHERE id = :id AND estado = 'RESERVADA'
             """), {"id": fi_id})
+
             if result.rowcount == 0:
                 return False, "FI no encontrada o ya no está en estado RESERVADA."
+
+            # 3. Verificar si todas las FIs están confirmadas
+            if pedido_id:
+                todas_confirmadas = _verificar_todas_fis_confirmadas(pedido_id)
+
+                if todas_confirmadas:
+                    # 4. Confirmar el pedido web
+                    _confirmar_pedido_web(pedido_id, conn)
+                    DBInspector.log(
+                        f"[PEDIDO] pedido_id={pedido_id} CONFIRMADO (todas las FIs aprobadas)",
+                        "SUCCESS"
+                    )
+
+        # 5. Log de auditoría
         log_flujo(
             entidad="factura_interna", entidad_id=fi_id,
             accion="FI_CONFIRMADA",
             estado_antes="RESERVADA", estado_despues="CONFIRMADA",
-            snap={"fi_id": fi_id},
+            snap={"fi_id": fi_id, "pedido_id": pedido_id},
         )
-        DBInspector.log(f"[FI] Confirmada fi_id={fi_id}", "SUCCESS")
-        return True, "FI confirmada exitosamente."
+
+        # 6. Enviar email si el pedido está completo
+        email_msg = ""
+        if pedido_id and todas_confirmadas:
+            email_ok, email_result = _enviar_email_confirmacion(pedido_id)
+            if email_ok:
+                email_msg = f" | Email enviado: {email_result}"
+            else:
+                email_msg = f" | Email fallido: {email_result}"
+
+        DBInspector.log(f"[FI] Confirmada fi_id={fi_id}{email_msg}", "SUCCESS")
+
+        # Mensaje al usuario
+        msg = "FI confirmada exitosamente."
+        if pedido_id and todas_confirmadas:
+            msg += " El pedido ha sido CONFIRMADO y se envió email con el PDF."
+
+        return True, msg
+
     except Exception as e:
         DBInspector.log(f"[FI] Error confirmando {fi_id}: {e}", "ERROR")
+        import traceback
+        traceback.print_exc()
         return False, str(e)
 
 

@@ -148,6 +148,19 @@ class BrandConfig:
     CORE_DIR = os.path.join(BASE_DIR, "core")
     STATIC_REPORTS_DIR = os.path.join(CORE_DIR, "static", "reports")
 
+    # --- 8. CONFIGURACIÓN DE EMAIL (SMTP) ---
+    EMAIL_ENABLED = os.getenv("EMAIL_ENABLED", "False").lower() == "true"
+    EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+    EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+    EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").lower() == "true"
+    EMAIL_USERNAME = os.getenv("EMAIL_USERNAME", "")
+    EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
+    EMAIL_FROM_NAME = os.getenv("EMAIL_FROM_NAME", f"{SYSTEM_NAME} - {COMPANY_NAME}")
+    EMAIL_FROM_ADDRESS = os.getenv("EMAIL_FROM_ADDRESS", EMAIL_USERNAME)
+
+    # Destinatarios por defecto para notificaciones críticas
+    EMAIL_ADMIN_ADDRESSES = os.getenv("EMAIL_ADMIN_ADDRESSES", "").split(",")
+
     @classmethod
     def get_terminal_banner(cls):
         width = 65
