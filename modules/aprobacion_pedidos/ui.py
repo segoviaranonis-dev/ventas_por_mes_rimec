@@ -157,41 +157,34 @@ def rechazar_celula(pedido_id: int, celula: dict, motivo: str):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _ver_pdf_action(fi: dict):
-    """Genera y descarga el PDF del pedido (todas las FIs agrupadas)."""
-    # Obtener el pedido_id desde la FI
-    pedido_id = fi.get("pedido_id")
-    if not pedido_id:
-        st.warning("⚠️ Esta FI no tiene pedido_id asociado. No se puede generar PDF.")
+    """Genera y descarga el PDF de la FI individual."""
+    fi_id = fi.get("id")
+    if not fi_id:
+        st.warning("⚠️ Esta FI no tiene ID válido.")
         return
 
     try:
-        from core.pdf_factura_interna import generar_pdf_factura_interna, obtener_metadata_para_email
+        from core.pdf_factura_individual import generar_pdf_fi_individual
 
         with st.spinner("⏳ Generando PDF..."):
-            # Generar PDF
-            pdf_bytes = generar_pdf_factura_interna(pedido_id)
+            pdf_bytes = generar_pdf_fi_individual(fi_id)
 
             if pdf_bytes:
-                # Obtener metadata para nombre del archivo
-                metadata = obtener_metadata_para_email(pedido_id)
-                filename = f"Factura_Interna_{metadata['nro_pedido']}.pdf" if metadata else "Factura_Interna.pdf"
-
-                # Botón de descarga
+                filename = f"FI_{fi.get('nro_factura', 'Factura')}.pdf"
                 st.download_button(
                     label="⬇️ Descargar PDF",
                     data=pdf_bytes,
                     file_name=filename,
                     mime="application/pdf",
                     type="primary",
-                    key=f"download_pdf_{fi['id']}"
+                    key=f"download_pdf_{fi_id}"
                 )
-
-                st.success("✅ PDF generado exitosamente. Este es el mismo PDF que se enviará por email al confirmar.")
+                st.success("✅ PDF generado exitosamente.")
             else:
                 st.error("❌ Error al generar PDF")
 
     except Exception as e:
-        st.error(f"❌ Error al generar PDF: {str(e)}")
+        st.error(f"❌ Error: {str(e)}")
         import traceback
         with st.expander("🔍 Ver detalles técnicos"):
             st.code(traceback.format_exc())
