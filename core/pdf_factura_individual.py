@@ -132,109 +132,167 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
     story = []
     styles = getSampleStyleSheet()
 
-    # Header
-    title_style = ParagraphStyle(
-        'Title',
+    # Header Corporativo Nexus
+    company_style = ParagraphStyle(
+        'CompanyName',
         parent=styles['Heading1'],
-        fontSize=18,
-        textColor=colors.HexColor('#1E293B'),
+        fontSize=20,
+        textColor=colors.HexColor('#1B3A6B'),  # NAVY
         alignment=TA_CENTER,
-        spaceAfter=10
+        spaceAfter=2,
+        fontName='Helvetica-Bold'
     )
 
-    story.append(Paragraph(f"<b>{settings.COMPANY_NAME}</b>", title_style))
-    story.append(Paragraph(f"{settings.SYSTEM_NAME}", styles['Normal']))
-    story.append(Spacer(1, 10*mm))
+    system_style = ParagraphStyle(
+        'SystemName',
+        parent=styles['Normal'],
+        fontSize=11,
+        textColor=colors.HexColor('#D4AF37'),  # GOLD
+        alignment=TA_CENTER,
+        spaceAfter=3
+    )
 
-    # Título de la factura
+    story.append(Paragraph(f"<b>{settings.COMPANY_NAME}</b>", company_style))
+    story.append(Paragraph(settings.SYSTEM_NAME, system_style))
+    story.append(Spacer(1, 3*mm))
+
+    # Línea dorada separadora
+    from reportlab.platypus import HRFlowable
+    story.append(HRFlowable(
+        width="100%",
+        thickness=2,
+        color=colors.HexColor('#D4AF37'),
+        spaceAfter=8*mm
+    ))
+
+    # Título de la factura (Navy ejecutivo)
     factura_style = ParagraphStyle(
         'FacturaTitle',
         parent=styles['Heading2'],
-        fontSize=14,
+        fontSize=16,
         textColor=colors.white,
-        backColor=colors.HexColor(settings.UI_SECONDARY),
-        borderPadding=5,
-        alignment=TA_CENTER
+        backColor=colors.HexColor('#1B3A6B'),  # NAVY
+        borderPadding=8,
+        alignment=TA_CENTER,
+        fontName='Helvetica-Bold'
     )
 
     story.append(Paragraph(
-        f"<b>FACTURA INTERNA: {fi_data['nro_factura']}</b>",
+        f"FACTURA INTERNA · {fi_data['nro_factura']}",
         factura_style
     ))
-    story.append(Spacer(1, 5*mm))
+    story.append(Spacer(1, 6*mm))
 
-    # Info de la factura
+    # Info de la factura (estilo ejecutivo)
+    fecha_creacion = fi_data.get('created_at')
+    if fecha_creacion:
+        if hasattr(fecha_creacion, 'strftime'):
+            fecha_str = fecha_creacion.strftime('%d/%m/%Y')
+        else:
+            fecha_str = str(fecha_creacion)[:10]
+    else:
+        fecha_str = 'N/A'
+
     info_data = [
-        ['<b>PP:</b>', fi_data.get('pp_nro', 'N/A'), '<b>Marca:</b>', fi_data.get('marca', 'N/A')],
-        ['<b>Caso:</b>', fi_data.get('caso', 'N/A'), '<b>Estado:</b>', fi_data.get('estado', 'N/A')],
-        ['<b>Cliente:</b>', fi_data.get('cliente_nombre', 'N/A')[:40], '<b>Vendedor:</b>', fi_data.get('vendedor_nombre', 'N/A')],
-        ['<b>Plazo:</b>', fi_data.get('plazo_nombre', 'N/A'), '<b>Lista:</b>', f"LP{fi_data.get('lista_precio_id', 1)}"],
+        ['<b>Pedido Proveedor:</b>', fi_data.get('pp_nro', 'N/A'), '<b>Marca:</b>', fi_data.get('marca', 'N/A')],
+        ['<b>Caso:</b>', fi_data.get('caso', 'N/A'), '<b>Estado:</b>', fi_data.get('estado', 'RESERVADA')],
+        ['<b>Cliente:</b>', fi_data.get('cliente_nombre', 'N/A')[:45], '<b>Fecha:</b>', fecha_str],
+        ['<b>Vendedor:</b>', fi_data.get('vendedor_nombre', 'N/A')[:45], '<b>Plazo:</b>', fi_data.get('plazo_nombre', 'N/A')],
+        ['<b>Lista de Precio:</b>', f"Lista {fi_data.get('lista_precio_id', 1)}", '', ''],
     ]
 
-    info_table = Table(info_data, colWidths=[30*mm, 65*mm, 30*mm, 65*mm])
+    info_table = Table(info_data, colWidths=[38*mm, 57*mm, 30*mm, 65*mm])
     info_table.setStyle(TableStyle([
         ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONTNAME', (2, 0), (2, -1), 'Helvetica-Bold'),
         ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#E2E8F0')),
-        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F8FAFC')),
+        ('TEXTCOLOR', (0, 0), (0, -1), colors.HexColor('#1B3A6B')),  # Labels en NAVY
+        ('TEXTCOLOR', (2, 0), (2, -1), colors.HexColor('#1B3A6B')),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
+        ('BACKGROUND', (0, 0), (-1, -1), colors.white),
+        ('ROWBACKGROUNDS', (0, 0), (-1, -1), [colors.white, colors.HexColor('#F8FAFC')]),
     ]))
     story.append(info_table)
-    story.append(Spacer(1, 8*mm))
+    story.append(Spacer(1, 7*mm))
 
-    # Disclaimer
+    # Disclaimer (ejecutivo, menos alarmista)
     disclaimer_style = ParagraphStyle(
         'Disclaimer',
         parent=styles['Normal'],
         fontSize=8,
-        textColor=colors.HexColor('#92400E'),
-        backColor=colors.HexColor('#FEF3C7'),
-        borderPadding=5,
+        textColor=colors.HexColor('#1B3A6B'),
+        backColor=colors.HexColor('#E4EEF7'),  # Azul suave ejecutivo
+        borderPadding=8,
+        alignment=TA_CENTER,
+        leftIndent=10,
+        rightIndent=10
     )
     story.append(Paragraph(
-        "<b>⚠️ FACTURA PROVISORIA INTERNA (SIN VALOR LEGAL)</b><br/>"
-        "Este documento es para uso interno y no genera obligaciones fiscales.",
+        "<b>DOCUMENTO DE USO INTERNO</b><br/>"
+        "Factura provisoria sin valor legal. No genera obligaciones fiscales ni comerciales.",
         disclaimer_style
     ))
-    story.append(Spacer(1, 8*mm))
+    story.append(Spacer(1, 7*mm))
 
-    # Tabla de items
+    # Tabla de items (estilo ejecutivo IMF)
     if items:
-        items_data = [['Producto', 'Gradas', 'Cajas', 'Pares', 'Precio Unit.', 'Subtotal']]
+        items_data = [['Producto', 'Gradas', 'Cajas', 'Pares', 'Precio/Par', 'Subtotal']]
 
         for item in items:
-            nombre = f"L{item['linea_codigo']}:R{item['ref_codigo']}"
+            # Formato producto: Línea:Ref + Color
+            nombre = f"<b>{item['linea_codigo']}-{item['ref_codigo']}</b>"
             if item.get('color_nombre'):
-                nombre += f"\n{item['color_nombre']}"
+                nombre += f"<br/><font size=7>{item['color_nombre']}</font>"
 
             items_data.append([
-                nombre,
-                item.get('gradas_fmt', ''),
+                Paragraph(nombre, styles['Normal']),
+                item.get('gradas_fmt', 'N/A'),
                 str(item['cajas']),
                 str(item['pares']),
-                f"Gs. {item['precio_unit']:,.0f}".replace(',', '.'),
-                f"Gs. {item['subtotal']:,.0f}".replace(',', '.')
+                f"₲ {item['precio_unit']:,.0f}".replace(',', '.'),
+                f"₲ {item['subtotal']:,.0f}".replace(',', '.')
             ])
 
         items_table = Table(
             items_data,
-            colWidths=[60*mm, 40*mm, 20*mm, 20*mm, 25*mm, 25*mm]
+            colWidths=[55*mm, 45*mm, 18*mm, 18*mm, 27*mm, 27*mm]
         )
         items_table.setStyle(TableStyle([
+            # Header (NAVY ejecutivo)
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 8),
-            ('FONTSIZE', (0, 1), (-1, -1), 7),
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor(settings.PDF_PRIMARY)),
+            ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B3A6B')),  # NAVY
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('ALIGN', (2, 0), (-1, -1), 'RIGHT'),
+            ('ALIGN', (0, 0), (1, 0), 'LEFT'),
+            ('ALIGN', (2, 0), (-1, 0), 'CENTER'),
+
+            # Datos
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -1), 8),
+            ('ALIGN', (2, 1), (-1, -1), 'RIGHT'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#E2E8F0')),
+
+            # Padding
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+            ('TOPPADDING', (0, 0), (-1, -1), 5),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+
+            # Bordes y fondos
+            ('LINEBELOW', (0, 0), (-1, 0), 2, colors.HexColor('#D4AF37')),  # Línea dorada bajo header
+            ('GRID', (0, 1), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
             ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F8FAFC')]),
         ]))
         story.append(items_table)
-        story.append(Spacer(1, 5*mm))
+        story.append(Spacer(1, 6*mm))
 
-    # Totales
+    # Totales (sección ejecutiva)
     subtotal = sum(i['subtotal'] for i in items)
     descuentos = [
         fi_data.get('descuento_1', 0) or 0,
@@ -245,37 +303,77 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
     descuentos_activos = [d for d in descuentos if d > 0]
 
     total_neto = subtotal
+    monto_descuento = 0
     for desc in descuentos_activos:
         total_neto = total_neto * (1 - desc / 100)
+    monto_descuento = subtotal - total_neto
 
-    total_data = [
-        ['Subtotal:', f"Gs. {subtotal:,.0f}".replace(',', '.')],
-        ['Descuentos:', ' + '.join([f"{d}%" for d in descuentos_activos]) if descuentos_activos else 'Sin descuento'],
-        ['<b>TOTAL NETO:</b>', f"<b>Gs. {total_neto:,.0f}</b>".replace(',', '.')]
-    ]
+    # Total de pares
+    total_pares = sum(i['pares'] for i in items)
+    total_cajas = sum(i['cajas'] for i in items)
 
-    total_table = Table(total_data, colWidths=[140*mm, 50*mm])
+    total_data = []
+
+    # Subtotal
+    total_data.append(['Subtotal:', f"₲ {subtotal:,.0f}".replace(',', '.')])
+
+    # Descuentos si existen
+    if descuentos_activos:
+        desc_text = ' + '.join([f"{d}%" for d in descuentos_activos])
+        total_data.append([f'Descuentos ({desc_text}):', f"- ₲ {monto_descuento:,.0f}".replace(',', '.')])
+
+    # Total Neto (destacado)
+    total_data.append([
+        '<b>TOTAL NETO:</b>',
+        f'<b>₲ {total_neto:,.0f}</b>'.replace(',', '.')
+    ])
+
+    # Resumen cantidades
+    total_data.append([
+        f'<font size=8>({total_cajas} cajas · {total_pares} pares)</font>',
+        ''
+    ])
+
+    total_table = Table(total_data, colWidths=[135*mm, 55*mm])
     total_table.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('FONTNAME', (0, 0), (-1, -2), 'Helvetica'),
+        ('FONTNAME', (0, -2), (-1, -2), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -3), 10),
+        ('FONTSIZE', (0, -2), (-1, -2), 14),
+        ('FONTSIZE', (0, -1), (-1, -1), 8),
         ('ALIGN', (0, 0), (-1, -1), 'RIGHT'),
-        ('LINEABOVE', (0, 2), (-1, 2), 2, colors.HexColor(settings.PDF_PRIMARY)),
-        ('TEXTCOLOR', (0, 2), (-1, 2), colors.HexColor(settings.PDF_PRIMARY)),
+        ('TEXTCOLOR', (0, 0), (-1, -3), colors.HexColor('#334155')),
+        ('TEXTCOLOR', (0, -2), (-1, -2), colors.HexColor('#1B3A6B')),  # NAVY para total
+        ('TEXTCOLOR', (0, -1), (-1, -1), colors.HexColor('#64748B')),
+        ('LINEABOVE', (0, -2), (-1, -2), 2, colors.HexColor('#D4AF37')),  # Línea dorada
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
     ]))
     story.append(total_table)
 
-    # Footer
-    story.append(Spacer(1, 10*mm))
+    # Footer corporativo
+    story.append(Spacer(1, 12*mm))
+
+    # Línea separadora antes del footer
+    story.append(HRFlowable(
+        width="100%",
+        thickness=1,
+        color=colors.HexColor('#CBD5E1'),
+        spaceAfter=4*mm
+    ))
+
     footer_style = ParagraphStyle(
         'Footer',
         parent=styles['Normal'],
         fontSize=7,
-        textColor=colors.HexColor('#94A3B8'),
+        textColor=colors.HexColor('#64748B'),
         alignment=TA_CENTER
     )
+
     timestamp = datetime.now().strftime('%d/%m/%Y %H:%M')
     story.append(Paragraph(
-        f"Generado por {settings.SYSTEM_NAME} · {timestamp}",
+        f"<b>{settings.COMPANY_NAME}</b> · {settings.SYSTEM_NAME} v{settings.VERSION}<br/>"
+        f"Generado el {timestamp}",
         footer_style
     ))
 
