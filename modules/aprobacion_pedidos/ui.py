@@ -158,7 +158,8 @@ def rechazar_celula(pedido_id: int, celula: dict, motivo: str):
 
 def _ver_pdf_action(fi: dict):
     """Genera y descarga el PDF del pedido (todas las FIs agrupadas)."""
-    from core.pdf_factura_interna import generar_pdf_factura_interna, obtener_metadata_para_email
+    import sys
+    import subprocess
 
     # Obtener el pedido_id desde la FI
     pedido_id = fi.get("pedido_id")
@@ -166,7 +167,53 @@ def _ver_pdf_action(fi: dict):
         st.warning("⚠️ Esta FI no tiene pedido_id asociado. No se puede generar PDF.")
         return
 
+    # Verificar si weasyprint está instalado
     try:
+        import weasyprint
+    except ImportError:
+        st.error("❌ **Falta instalar `weasyprint`**")
+        st.markdown("""
+        **Para instalar, ejecutá este comando en tu terminal:**
+
+        ```bash
+        python -m pip install weasyprint
+        ```
+
+        **O copiá y ejecutá este comando directamente:**
+        """)
+
+        python_exe = sys.executable
+        install_cmd = f'"{python_exe}" -m pip install weasyprint'
+
+        st.code(install_cmd, language="bash")
+
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            if st.button("🔧 Instalar Ahora", key=f"install_weasy_{fi['id']}", type="primary"):
+                with st.spinner("Instalando weasyprint..."):
+                    try:
+                        result = subprocess.run(
+                            [python_exe, "-m", "pip", "install", "weasyprint"],
+                            capture_output=True,
+                            text=True,
+                            timeout=120
+                        )
+
+                        if result.returncode == 0:
+                            st.success("✅ weasyprint instalado exitosamente. Recargá la página (F5) y volvé a intentar.")
+                            st.balloons()
+                        else:
+                            st.error(f"❌ Error al instalar:\n{result.stderr}")
+                    except Exception as e:
+                        st.error(f"❌ Error: {e}")
+
+        st.info(f"**Python detectado:** `{python_exe}`")
+        return
+
+    # Si weasyprint está instalado, proceder
+    try:
+        from core.pdf_factura_interna import generar_pdf_factura_interna, obtener_metadata_para_email
+
         with st.spinner("Generando PDF..."):
             # Generar PDF
             pdf_bytes = generar_pdf_factura_interna(pedido_id)
@@ -193,7 +240,8 @@ def _ver_pdf_action(fi: dict):
     except Exception as e:
         st.error(f"❌ Error al generar PDF: {str(e)}")
         import traceback
-        st.code(traceback.format_exc())
+        with st.expander("🔍 Ver detalles técnicos"):
+            st.code(traceback.format_exc())
 
 
 def _confirmar_fi_action(fi: dict):
