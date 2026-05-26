@@ -158,74 +158,16 @@ def rechazar_celula(pedido_id: int, celula: dict, motivo: str):
 
 def _ver_pdf_action(fi: dict):
     """Genera y descarga el PDF del pedido (todas las FIs agrupadas)."""
-    import sys
-    import subprocess
-
     # Obtener el pedido_id desde la FI
     pedido_id = fi.get("pedido_id")
     if not pedido_id:
         st.warning("⚠️ Esta FI no tiene pedido_id asociado. No se puede generar PDF.")
         return
 
-    # Verificar si weasyprint está instalado
-    try:
-        import weasyprint
-    except ImportError:
-        st.error("❌ **Falta instalar `weasyprint`**")
-
-        python_exe = sys.executable
-
-        st.warning("""
-        ⚠️ **IMPORTANTE:** Detené Streamlit (Ctrl+C) y ejecutá este comando
-        EN LA MISMA TERMINAL donde corriste Streamlit:
-        """)
-
-        install_cmd = f'"{python_exe}" -m pip install weasyprint'
-        st.code(install_cmd, language="bash")
-
-        st.markdown("**Después de instalar:**")
-        st.markdown("1. Volvé a ejecutar Streamlit")
-        st.markdown("2. Presioná este botón de nuevo")
-
-        st.divider()
-
-        st.info("💡 **O dejá que lo instale automáticamente (puede tardar 1-2 minutos):**")
-
-        if st.button("🔧 Instalar Automáticamente", key=f"install_weasy_{fi['id']}", type="primary", use_container_width=True):
-            with st.spinner("⏳ Instalando weasyprint... (esto puede tardar 1-2 minutos)"):
-                try:
-                    result = subprocess.run(
-                        [python_exe, "-m", "pip", "install", "weasyprint"],
-                        capture_output=True,
-                        text=True,
-                        timeout=180
-                    )
-
-                    if result.returncode == 0:
-                        st.success("✅ weasyprint instalado exitosamente!")
-                        st.balloons()
-                        st.info("🔄 **Recargá esta página (F5)** y volvé a presionar 'Ver PDF'")
-                    else:
-                        st.error("❌ Error al instalar. Probá con el comando manual de arriba.")
-                        with st.expander("Ver error"):
-                            st.code(result.stderr)
-                except subprocess.TimeoutExpired:
-                    st.error("❌ La instalación tardó demasiado. Probá con el comando manual.")
-                except Exception as e:
-                    st.error(f"❌ Error: {e}")
-                    st.info("Usá el comando manual de arriba.")
-
-        with st.expander("🔍 Información técnica"):
-            st.caption(f"Python detectado: `{python_exe}`")
-            st.caption(f"Versión: {sys.version}")
-
-        return
-
-    # Si weasyprint está instalado, proceder
     try:
         from core.pdf_factura_interna import generar_pdf_factura_interna, obtener_metadata_para_email
 
-        with st.spinner("Generando PDF..."):
+        with st.spinner("⏳ Generando PDF..."):
             # Generar PDF
             pdf_bytes = generar_pdf_factura_interna(pedido_id)
 
