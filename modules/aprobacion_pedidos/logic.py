@@ -1218,28 +1218,28 @@ def actualizar_fi_encabezado(
                     except:
                         snapshot = {}
 
-                linea_id = snapshot.get("linea_id")
-                ref_id = snapshot.get("ref_id")
-                color_id = snapshot.get("color_id")
+                linea_codigo = snapshot.get("linea_codigo")
+                ref_codigo = snapshot.get("ref_codigo")
+                color_nombre = snapshot.get("color_nombre", "")
 
-                if not all([linea_id, ref_id, color_id]):
-                    DBInspector.log(f"[FI] Detalle {det.id} sin IDs completos en snapshot", "WARNING")
+                if not all([linea_codigo, ref_codigo]):
+                    DBInspector.log(f"[FI] Detalle {det.id} sin códigos completos en snapshot", "WARNING")
                     continue
 
-                # Buscar precio en v_stock_rimec
+                # Buscar precio en v_stock_rimec usando códigos
+                # Nota: color_code puede no coincidir exactamente con color_nombre,
+                # así que buscamos por linea_codigo y referencia_codigo solamente
                 precio_query = sqlt(f"""
                     SELECT {lp_col} as precio_base
                     FROM v_stock_rimec
-                    WHERE linea_id = :linea_id
-                      AND referencia_id = :ref_id
-                      AND color_id = :color_id
+                    WHERE linea_codigo = :linea_codigo
+                      AND referencia_codigo = :ref_codigo
                     LIMIT 1
                 """)
 
                 precio_row = conn.execute(precio_query, {
-                    "linea_id": linea_id,
-                    "ref_id": ref_id,
-                    "color_id": color_id
+                    "linea_codigo": str(linea_codigo),
+                    "ref_codigo": str(ref_codigo)
                 }).fetchone()
 
                 if not precio_row or not precio_row.precio_base:
