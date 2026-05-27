@@ -20,7 +20,10 @@ from modules.aprobacion_pedidos.logic import (
     # Flujo Reserva → Liberación
     get_fi_reservadas, get_fi_confirmadas, get_fi_anuladas,
     confirmar_fi, anular_fi,
+    # Edición de encabezado
+    actualizar_fi_encabezado,
 )
+from core.database import get_dataframe
 from core.fi_card import render_fi_card
 
 
@@ -54,6 +57,14 @@ def _descuentos_label(p: dict) -> str:
     return " + ".join(activos) if activos else "Sin descuento"
 
 
+def _get_plazos() -> list[dict]:
+    """Obtiene lista de plazos disponibles."""
+    df = get_dataframe("SELECT id_plazo, descp_plazo FROM plazo_v2 ORDER BY id_plazo")
+    if df is None or df.empty:
+        return []
+    return df.to_dict("records")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CONSTRUCCIÓN DE CÉLULAS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -76,6 +87,7 @@ def construir_celulas(lotes: list) -> list:
     for lote in lotes:
         pp_id  = lote.get("pp_id")
         pp_nro = lote.get("pp_nro", str(pp_id))
+        proforma = lote.get("proforma", "")
 
         # ── Formato NUEVO: lote.facturas[] ──────────────────────────────
         facturas_block = lote.get("facturas")
@@ -86,7 +98,7 @@ def construir_celulas(lotes: list) -> list:
                 clave = f"{pp_id}|{marca}|{caso}"
                 if clave not in grupos:
                     grupos[clave] = {
-                        "pp_id": pp_id, "pp_nro": pp_nro,
+                        "pp_id": pp_id, "pp_nro": pp_nro, "proforma": proforma,
                         "marca": marca, "caso": caso,
                         "items": [], "total_pares": 0, "total_neto": 0,
                     }
@@ -105,7 +117,7 @@ def construir_celulas(lotes: list) -> list:
                 clave = f"{pp_id}|{marca}|{caso}"
                 if clave not in grupos:
                     grupos[clave] = {
-                        "pp_id": pp_id, "pp_nro": pp_nro,
+                        "pp_id": pp_id, "pp_nro": pp_nro, "proforma": proforma,
                         "marca": marca, "caso": caso,
                         "items": [], "total_pares": 0, "total_neto": 0,
                     }
@@ -264,13 +276,38 @@ _FI_ACTIONS_RESERVADA = [
 def _render_celula_fi(pedido_id: int, fi: dict):
     """Render canónico (core/fi_card) + acciones específicas del módulo Aprobación."""
     fi_id = int(fi["id"])
+    estado = (fi.get("estado") or "").upper()
     detalles = get_fi_detalles_lite(fi_id)
+
+    # Callback para actualizar encabezado
+    def on_actualizar_callback(fi_id, lista_precio_id, desc1, desc2, desc3, desc4, plazo_id):
+        ok, msg = actualizar_fi_encabezado(
+            fi_id, lista_precio_id, desc1, desc2, desc3, desc4, plazo_id
+        )
+        if ok:
+            celebrate_save(
+                msg,
+                modulo="Aprobaciones",
+                contexto="fi_actualizada",
+                balloons=False,
+            )
+            import time; time.sleep(0.5)
+            st.rerun()
+        else:
+            st.error(f"❌ {msg}")
+
+    # Obtener plazos disponibles
+    plazos = _get_plazos()
+
     render_fi_card(
         fi,
         detalles=detalles,
         actions=_FI_ACTIONS_RESERVADA,
         key_prefix=f"aprob_pvr_{pedido_id}",
-        mostrar_descuentos=False,
+        mostrar_descuentos=True,
+        modo_edicion=(estado == "RESERVADA"),
+        on_actualizar=on_actualizar_callback,
+        plazos_disponibles=plazos,
     )
     _render_dialogo_anulacion(fi_id, key_suffix=f"_pvr{pedido_id}")
     st.markdown("---")
@@ -291,8 +328,13 @@ def _render_celula(pedido_id: int, celula: dict):
     with st.container():
         col_header, col_estado, col_confirm = st.columns([4, 1, 1])
         with col_header:
+            # Matrimonio PP + Proforma
+            pp_display = celula['pp_nro']
+            if celula.get('proforma'):
+                pp_display = f"{pp_display} ({celula['proforma']})"
+
             st.markdown(
-                f"📦 **PP-{celula['pp_nro']}** · "
+                f"📦 **{pp_display}** · "
                 f"**{celula['marca']}** · "
                 f"Caso: `{celula['caso']}` · "
                 f"{celula['total_pares']:,} pares · "

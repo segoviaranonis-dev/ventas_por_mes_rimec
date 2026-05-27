@@ -156,7 +156,8 @@ def get_fis_de_pedido(pedido_id: int) -> list[dict]:
           fi.cliente_id, fi.vendedor_id, fi.plazo_id, fi.lista_precio_id,
           fi.descuento_1, fi.descuento_2, fi.descuento_3, fi.descuento_4,
           fi.created_at,
-          pp.numero_registro AS nro_pp
+          pp.numero_registro AS nro_pp,
+          pp.numero_proforma AS proforma
         FROM public.factura_interna fi
         LEFT JOIN public.pedido_proveedor pp ON pp.id = fi.pp_id
         WHERE
@@ -475,6 +476,19 @@ def autorizar_pedido(pedido_id: int) -> tuple[bool, str, list[str]]:
     nros_pv_map = _generar_nros_pv_por_pp(grupos)
     preventas_generadas: list[str] = []
 
+    # Cable de acero: pre-cargar quincenas de cada PP
+    quincenas_por_pp: dict[int, int | None] = {}
+    for pp_id in {g["pp_id"] for g in grupos.values()}:
+        df_pp = get_dataframe("""
+            SELECT quincena_arribo_id
+            FROM pedido_proveedor
+            WHERE id = :pp_id
+        """, {"pp_id": pp_id})
+        if df_pp is not None and not df_pp.empty:
+            quincenas_por_pp[pp_id] = _si(df_pp.iloc[0]["quincena_arribo_id"])
+        else:
+            quincenas_por_pp[pp_id] = None
+
     try:
         with engine.begin() as conn:
             for clave, grupo in grupos.items():
@@ -489,12 +503,12 @@ def autorizar_pedido(pedido_id: int) -> tuple[bool, str, list[str]]:
                         (nro_factura, pp_id, marca, caso,
                          cliente_id, vendedor_id, plazo_id, lista_precio_id,
                          descuento_1, descuento_2, descuento_3, descuento_4,
-                         total_pares, total_monto, estado)
+                         total_pares, total_monto, estado, quincena_arribo_id)
                     VALUES
                         (:nro, :pp_id, :marca, :caso,
                          :cli, :vend, :plazo, :lista,
                          :d1, :d2, :d3, :d4,
-                         :tp, :tn, 'RESERVADA')
+                         :tp, :tn, 'RESERVADA', :qid)
                     RETURNING id
                 """), {
                     "nro":   nro_pv,
@@ -511,6 +525,7 @@ def autorizar_pedido(pedido_id: int) -> tuple[bool, str, list[str]]:
                     "d4": float(pedido.get("descuento_4") or 0),
                     "tp":    total_pares,
                     "tn":    total_neto,
+                    "qid":   quincenas_por_pp.get(grupo["pp_id"]),  # Cable de acero reforzado
                 })
                 fi_id = res.fetchone()[0]
 
@@ -669,6 +684,17 @@ def crear_preventa_desde_celula(pedido_id: int, celula: dict) -> tuple[bool, str
     total_monto = sum(i.get("subtotal", 0) for i in items)
     nro_pv      = _get_next_nro_pv(pp_id)  # genera el número ANTES de abrir la tx
 
+    # Cable de acero: leer quincena del PP para propagarla a FI
+    quincena_id = None
+    if pp_id:
+        df_pp = get_dataframe("""
+            SELECT quincena_arribo_id
+            FROM pedido_proveedor
+            WHERE id = :pp_id
+        """, {"pp_id": pp_id})
+        if df_pp is not None and not df_pp.empty:
+            quincena_id = _si(df_pp.iloc[0]["quincena_arribo_id"])
+
     try:
         with engine.begin() as conn:
             # ── Crear Preventa ────────────────────────────────────────────────
@@ -677,12 +703,12 @@ def crear_preventa_desde_celula(pedido_id: int, celula: dict) -> tuple[bool, str
                     (nro_factura, pp_id, marca, caso,
                      cliente_id, vendedor_id, plazo_id, lista_precio_id,
                      descuento_1, descuento_2, descuento_3, descuento_4,
-                     total_pares, total_monto, estado)
+                     total_pares, total_monto, estado, quincena_arribo_id)
                 VALUES
                     (:nro, :pp_id, :marca, :caso,
                      :cli, :vend, :plazo, :lista,
                      :d1, :d2, :d3, :d4,
-                     :tp, :tn, 'RESERVADA')
+                     :tp, :tn, 'RESERVADA', :qid)
                 RETURNING id
             """), {
                 "nro":   nro_pv,
@@ -698,6 +724,7 @@ def crear_preventa_desde_celula(pedido_id: int, celula: dict) -> tuple[bool, str
                 "d3": float(p.get("descuento_3") or 0),
                 "d4": float(p.get("descuento_4") or 0),
                 "tp": total_pares, "tn": total_monto,
+                "qid": quincena_id,  # Cable de acero reforzado
             })
             fi_id = res.fetchone()[0]
 
@@ -755,21 +782,64 @@ def crear_preventa_desde_celula(pedido_id: int, celula: dict) -> tuple[bool, str
 
 
 def rechazar_pedido(pedido_id: int, motivo: str) -> tuple[bool, str]:
+    """
+    Rechaza un pedido COMPLETO.
+
+    CRÍTICO: Anula TODAS las FIs asociadas (revirtiendo stock) antes de
+    marcar el pedido como rechazado. Esto evita FIs huérfanas en estado RESERVADA.
+    """
     try:
+        # 1. Buscar todas las FIs asociadas a este pedido
+        df_fis = get_dataframe("""
+            SELECT id, nro_factura, estado
+            FROM factura_interna
+            WHERE pedido_id = :pid AND estado = 'RESERVADA'
+        """, {"pid": pedido_id})
+
+        fis_anuladas = []
+        fis_errores = []
+
+        # 2. Anular cada FI RESERVADA (esto revierte el stock automáticamente)
+        if df_fis is not None and not df_fis.empty:
+            for _, fi_row in df_fis.iterrows():
+                fi_id = int(fi_row['id'])
+                nro_fi = fi_row['nro_factura']
+                ok, msg = anular_fi(fi_id, motivo=f"Pedido rechazado: {motivo}")
+                if ok:
+                    fis_anuladas.append(nro_fi)
+                    DBInspector.log(f"[RECHAZO] FI {nro_fi} anulada automáticamente", "SUCCESS")
+                else:
+                    fis_errores.append(f"{nro_fi}: {msg}")
+                    DBInspector.log(f"[RECHAZO] Error anulando FI {nro_fi}: {msg}", "ERROR")
+
+        # 3. Cambiar estado del pedido a RECHAZADO
         with engine.begin() as conn:
             conn.execute(sqlt("""
                 UPDATE pedido_venta_rimec
                 SET estado='RECHAZADO', motivo_rechazo=:motivo
                 WHERE id=:pid AND estado='PENDIENTE'
             """), {"pid": pedido_id, "motivo": motivo.strip()})
+
         log_flujo(
             entidad="pedido_venta_rimec", entidad_id=pedido_id,
             accion="PVR_RECHAZADO",
             estado_antes="PENDIENTE", estado_despues="RECHAZADO",
-            snap={"motivo": motivo},
+            snap={
+                "motivo": motivo,
+                "fis_anuladas": fis_anuladas,
+                "fis_errores": fis_errores,
+            },
         )
-        return True, "Pedido rechazado."
+
+        msg_base = "Pedido rechazado."
+        if fis_anuladas:
+            msg_base += f" {len(fis_anuladas)} FI(s) anulada(s): {', '.join(fis_anuladas)}"
+        if fis_errores:
+            msg_base += f" ADVERTENCIA: Errores anulando algunas FIs: {'; '.join(fis_errores)}"
+
+        return True, msg_base
     except Exception as e:
+        DBInspector.log(f"[RECHAZO] Error rechazando pedido {pedido_id}: {e}", "ERROR")
         return False, str(e)
 
 
@@ -789,11 +859,14 @@ def get_fi_reservadas() -> list[dict]:
                fi.created_at,
                c.descp_cliente AS cliente_nombre,
                v.descp_usuario AS vendedor_nombre,
-               pp.numero_registro AS nro_pp
+               pp.numero_registro AS nro_pp,
+               pp.numero_proforma AS proforma,
+               qa.descripcion AS quincena_llegada
         FROM factura_interna fi
         LEFT JOIN cliente_v2 c ON c.id_cliente = fi.cliente_id
         LEFT JOIN usuario_v2 v ON v.id_usuario = fi.vendedor_id
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
+        LEFT JOIN quincena_arribo qa ON qa.id = pp.quincena_arribo_id
         WHERE fi.estado = 'RESERVADA'
         ORDER BY fi.created_at DESC
     """)
@@ -810,11 +883,14 @@ def get_fi_confirmadas() -> list[dict]:
                c.descp_cliente AS cliente_nombre,
                v.descp_usuario AS vendedor_nombre,
                pp.numero_registro AS nro_pp,
+               pp.numero_proforma AS proforma,
+               qa.descripcion AS quincena_llegada,
                fi.created_at
         FROM factura_interna fi
         LEFT JOIN cliente_v2 c ON c.id_cliente = fi.cliente_id
         LEFT JOIN usuario_v2 v ON v.id_usuario = fi.vendedor_id
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
+        LEFT JOIN quincena_arribo qa ON qa.id = pp.quincena_arribo_id
         WHERE fi.estado = 'CONFIRMADA'
         ORDER BY fi.created_at DESC
         LIMIT 50
@@ -857,6 +933,7 @@ def get_fi_anuladas() -> list[dict]:
                fi.total_pares, fi.total_monto, fi.notas,
                c.descp_cliente AS cliente_nombre,
                pp.numero_registro AS nro_pp,
+               pp.numero_proforma AS proforma,
                fi.created_at
         FROM factura_interna fi
         LEFT JOIN cliente_v2 c ON c.id_cliente = fi.cliente_id
@@ -1068,3 +1145,171 @@ def anular_fi(fi_id: int, motivo: str = "") -> tuple[bool, str]:
     except Exception as e:
         DBInspector.log(f"[FI] Error anulando {fi_id}: {e}", "ERROR")
         return False, str(e)
+
+
+def actualizar_fi_encabezado(
+    fi_id: int,
+    lista_precio_id: int,
+    descuento_1: float,
+    descuento_2: float,
+    descuento_3: float,
+    descuento_4: float,
+    plazo_id: int
+) -> tuple[bool, str]:
+    """Actualiza encabezado de FI (lista_precio, descuentos, plazo) y recalcula precios.
+
+    Flujo:
+    1. Obtener detalles actuales de FI
+    2. Para cada detalle, buscar nuevo precio en v_stock_rimec según lista
+    3. Recalcular precio_neto aplicando descuentos en cascada
+    4. Actualizar factura_interna_detalle con nuevos precios
+    5. Actualizar factura_interna con nuevo encabezado y total_monto
+    """
+    fi_id = int(fi_id)
+    lista_precio_id = int(lista_precio_id)
+    plazo_id = int(plazo_id)
+
+    # Mapeo de lista_precio_id a columna en v_stock_rimec
+    LP_COL_MAP = {1: "lpn", 2: "lpc02", 3: "lpc03", 4: "lpc04"}
+    lp_col = LP_COL_MAP.get(lista_precio_id, "lpn")
+
+    try:
+        with engine.begin() as conn:
+            # 1. Verificar que FI existe y está RESERVADA
+            fi_check = conn.execute(sqlt("""
+                SELECT id, estado FROM factura_interna WHERE id = :id
+            """), {"id": fi_id}).fetchone()
+
+            if not fi_check:
+                return False, f"FI ID {fi_id} no encontrada."
+
+            if fi_check.estado != "RESERVADA":
+                return False, f"Solo se pueden editar FIs en estado RESERVADA (actual: {fi_check.estado})."
+
+            # 2. Obtener detalles actuales
+            detalles = conn.execute(sqlt("""
+                SELECT
+                    id,
+                    cajas,
+                    pares,
+                    linea_snapshot
+                FROM factura_interna_detalle
+                WHERE factura_id = :fi_id
+            """), {"fi_id": fi_id}).fetchall()
+
+            if not detalles:
+                return False, "FI no tiene detalles."
+
+            total_monto_nuevo = 0
+
+            # 3. Para cada detalle, obtener nuevo precio y recalcular
+            for det in detalles:
+                # Parsear snapshot para obtener identificadores
+                snapshot = {}
+                if det.linea_snapshot:
+                    try:
+                        if isinstance(det.linea_snapshot, dict):
+                            snapshot = det.linea_snapshot
+                        elif isinstance(det.linea_snapshot, str):
+                            try:
+                                snapshot = json.loads(det.linea_snapshot)
+                            except:
+                                snapshot = ast.literal_eval(det.linea_snapshot)
+                    except:
+                        snapshot = {}
+
+                linea_id = snapshot.get("linea_id")
+                ref_id = snapshot.get("ref_id")
+                color_id = snapshot.get("color_id")
+
+                if not all([linea_id, ref_id, color_id]):
+                    DBInspector.log(f"[FI] Detalle {det.id} sin IDs completos en snapshot", "WARNING")
+                    continue
+
+                # Buscar precio en v_stock_rimec
+                precio_query = sqlt(f"""
+                    SELECT {lp_col} as precio_base
+                    FROM v_stock_rimec
+                    WHERE linea_id = :linea_id
+                      AND referencia_id = :ref_id
+                      AND color_id = :color_id
+                    LIMIT 1
+                """)
+
+                precio_row = conn.execute(precio_query, {
+                    "linea_id": linea_id,
+                    "ref_id": ref_id,
+                    "color_id": color_id
+                }).fetchone()
+
+                if not precio_row or not precio_row.precio_base:
+                    DBInspector.log(f"[FI] No se encontró precio para detalle {det.id}", "WARNING")
+                    continue
+
+                precio_base = float(precio_row.precio_base)
+
+                # Aplicar descuentos en cascada
+                precio_con_desc = precio_base
+                for desc in [descuento_1, descuento_2, descuento_3, descuento_4]:
+                    if desc > 0:
+                        precio_con_desc = precio_con_desc * (1 - desc / 100)
+
+                # Redondear a entero
+                precio_neto = round(precio_con_desc)
+                subtotal = precio_neto * det.pares
+                total_monto_nuevo += subtotal
+
+                # Actualizar detalle
+                conn.execute(sqlt("""
+                    UPDATE factura_interna_detalle
+                    SET precio_unit = :precio_base,
+                        precio_neto = :precio_neto,
+                        subtotal = :subtotal
+                    WHERE id = :id
+                """), {
+                    "id": det.id,
+                    "precio_base": precio_base,
+                    "precio_neto": precio_neto,
+                    "subtotal": subtotal
+                })
+
+            # 4. Actualizar encabezado de FI
+            conn.execute(sqlt("""
+                UPDATE factura_interna
+                SET lista_precio_id = :lista,
+                    descuento_1 = :d1,
+                    descuento_2 = :d2,
+                    descuento_3 = :d3,
+                    descuento_4 = :d4,
+                    plazo_id = :plazo,
+                    total_monto = :total
+                WHERE id = :id
+            """), {
+                "id": fi_id,
+                "lista": lista_precio_id,
+                "d1": descuento_1,
+                "d2": descuento_2,
+                "d3": descuento_3,
+                "d4": descuento_4,
+                "plazo": plazo_id,
+                "total": round(total_monto_nuevo)
+            })
+
+        # Log de auditoría
+        log_flujo(
+            entidad="factura_interna", entidad_id=fi_id,
+            accion="FI_ENCABEZADO_ACTUALIZADO",
+            snap={
+                "lista_precio_id": lista_precio_id,
+                "descuentos": [descuento_1, descuento_2, descuento_3, descuento_4],
+                "plazo_id": plazo_id,
+                "total_monto_nuevo": round(total_monto_nuevo)
+            }
+        )
+
+        DBInspector.log(f"[FI] Encabezado actualizado fi_id={fi_id} LP={lista_precio_id}", "SUCCESS")
+        return True, f"Encabezado actualizado. Nuevo total: Gs. {round(total_monto_nuevo):,}".replace(",", ".")
+
+    except Exception as e:
+        DBInspector.log(f"[FI] Error actualizando encabezado {fi_id}: {e}", "ERROR")
+        return False, f"Error: {str(e)}"
