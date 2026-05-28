@@ -1313,3 +1313,114 @@ def actualizar_fi_encabezado(
     except Exception as e:
         DBInspector.log(f"[FI] Error actualizando encabezado {fi_id}: {e}", "ERROR")
         return False, f"Error: {str(e)}"
+
+
+def editar_descuentos_fi_confirmada(
+    fi_id: int,
+    lista_precio_id: int,
+    descuento_1: float,
+    descuento_2: float,
+    descuento_3: float,
+    descuento_4: float,
+    plazo_id: int
+) -> tuple[bool, str]:
+    """Permite editar descuentos de una FI CONFIRMADA.
+
+    Flujo:
+    1. Verificar que FI está CONFIRMADA
+    2. Cambiar temporalmente a RESERVADA
+    3. Aplicar actualizar_fi_encabezado()
+    4. Volver a CONFIRMADA
+
+    USO: Corregir descuentos mal aplicados en FIs ya confirmadas.
+    """
+    fi_id = int(fi_id)
+
+    try:
+        # 1. Verificar estado actual
+        fi_data = get_dataframe("""
+            SELECT id, nro_factura, estado, pedido_id
+            FROM factura_interna
+            WHERE id = :id
+        """, {"id": fi_id})
+
+        if fi_data is None or fi_data.empty:
+            return False, f"FI ID {fi_id} no encontrada."
+
+        estado_original = fi_data.iloc[0]['estado']
+        nro_factura = fi_data.iloc[0]['nro_factura']
+        pedido_id = fi_data.iloc[0].get('pedido_id')
+
+        if estado_original != "CONFIRMADA":
+            return False, f"Esta función solo edita FIs CONFIRMADAS (actual: {estado_original})."
+
+        # 2. Cambiar temporalmente a RESERVADA
+        with engine.begin() as conn:
+            conn.execute(sqlt("""
+                UPDATE factura_interna
+                SET estado = 'RESERVADA'
+                WHERE id = :id AND estado = 'CONFIRMADA'
+            """), {"id": fi_id})
+
+        DBInspector.log(f"[FI] {nro_factura} temporalmente RESERVADA para edición", "INFO")
+
+        # 3. Aplicar actualización de encabezado
+        ok, msg = actualizar_fi_encabezado(
+            fi_id=fi_id,
+            lista_precio_id=lista_precio_id,
+            descuento_1=descuento_1,
+            descuento_2=descuento_2,
+            descuento_3=descuento_3,
+            descuento_4=descuento_4,
+            plazo_id=plazo_id
+        )
+
+        if not ok:
+            # Si falla, intentar revertir a CONFIRMADA
+            with engine.begin() as conn:
+                conn.execute(sqlt("""
+                    UPDATE factura_interna
+                    SET estado = 'CONFIRMADA'
+                    WHERE id = :id
+                """), {"id": fi_id})
+            return False, f"Error al actualizar encabezado: {msg}"
+
+        # 4. Volver a CONFIRMADA
+        with engine.begin() as conn:
+            conn.execute(sqlt("""
+                UPDATE factura_interna
+                SET estado = 'CONFIRMADA'
+                WHERE id = :id AND estado = 'RESERVADA'
+            """), {"id": fi_id})
+
+        # 5. Log de auditoría
+        log_flujo(
+            entidad="factura_interna", entidad_id=fi_id,
+            nro_registro=nro_factura,
+            accion="FI_DESCUENTOS_EDITADOS_POST_CONFIRMACION",
+            estado_antes="CONFIRMADA", estado_despues="CONFIRMADA",
+            snap={
+                "lista_precio_id": lista_precio_id,
+                "descuentos": [descuento_1, descuento_2, descuento_3, descuento_4],
+                "plazo_id": plazo_id,
+                "pedido_id": pedido_id
+            }
+        )
+
+        DBInspector.log(f"[FI] {nro_factura} descuentos editados y vuelta a CONFIRMADA", "SUCCESS")
+        return True, f"Descuentos actualizados exitosamente. {msg}"
+
+    except Exception as e:
+        # Intentar revertir a CONFIRMADA en caso de error
+        try:
+            with engine.begin() as conn:
+                conn.execute(sqlt("""
+                    UPDATE factura_interna
+                    SET estado = 'CONFIRMADA'
+                    WHERE id = :id AND estado = 'RESERVADA'
+                """), {"id": fi_id})
+        except:
+            pass
+
+        DBInspector.log(f"[FI] Error editando descuentos de FI confirmada {fi_id}: {e}", "ERROR")
+        return False, f"Error: {str(e)}"

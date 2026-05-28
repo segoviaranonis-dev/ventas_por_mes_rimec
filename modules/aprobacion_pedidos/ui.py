@@ -273,6 +273,82 @@ _FI_ACTIONS_RESERVADA = [
 ]
 
 
+def _editar_descuentos_confirmada_action(fi: dict):
+    """Acción 'Editar Descuentos' para FIs CONFIRMADAS."""
+    fi_id = int(fi["id"])
+    nro_factura = fi.get("nro_factura", f"FI {fi_id}")
+
+    with st.form(key=f"form_edit_desc_{fi_id}"):
+        st.subheader(f"✏️ Editar descuentos: {nro_factura}")
+        st.caption("Permite corregir descuentos de facturas ya confirmadas")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            lista = st.selectbox(
+                "Lista de Precio",
+                options=[1, 2, 3, 4],
+                format_func=lambda x: f"Lista {x}",
+                index=(fi.get("lista_precio_id", 1) - 1),
+                key=f"edit_lista_{fi_id}"
+            )
+            d1 = st.number_input("Descuento 1 (%)", 0.0, 100.0, float(fi.get("descuento_1") or 0), key=f"edit_d1_{fi_id}")
+            d2 = st.number_input("Descuento 2 (%)", 0.0, 100.0, float(fi.get("descuento_2") or 0), key=f"edit_d2_{fi_id}")
+        with col2:
+            # Obtener plazos disponibles
+            plazos = get_dataframe("SELECT id_plazo, descp_plazo FROM plazo_venta ORDER BY id_plazo")
+            if plazos is not None and not plazos.empty:
+                plazo_actual_id = fi.get("plazo_id", 1)
+                plazo_options = plazos["id_plazo"].tolist()
+                plazo_labels = plazos["descp_plazo"].tolist()
+                try:
+                    plazo_idx = plazo_options.index(plazo_actual_id)
+                except ValueError:
+                    plazo_idx = 0
+                plazo = st.selectbox(
+                    "Plazo",
+                    options=plazo_options,
+                    format_func=lambda x: plazo_labels[plazo_options.index(x)],
+                    index=plazo_idx,
+                    key=f"edit_plazo_{fi_id}"
+                )
+            else:
+                plazo = st.number_input("Plazo ID", value=fi.get("plazo_id", 1), key=f"edit_plazo_{fi_id}")
+
+            d3 = st.number_input("Descuento 3 (%)", 0.0, 100.0, float(fi.get("descuento_3") or 0), key=f"edit_d3_{fi_id}")
+            d4 = st.number_input("Descuento 4 (%)", 0.0, 100.0, float(fi.get("descuento_4") or 0), key=f"edit_d4_{fi_id}")
+
+        submitted = st.form_submit_button("💾 Guardar cambios", type="primary")
+
+        if submitted:
+            from .logic import editar_descuentos_fi_confirmada
+            ok, msg = editar_descuentos_fi_confirmada(
+                fi_id=fi_id,
+                lista_precio_id=int(lista),
+                descuento_1=float(d1),
+                descuento_2=float(d2),
+                descuento_3=float(d3),
+                descuento_4=float(d4),
+                plazo_id=int(plazo)
+            )
+            if ok:
+                celebrate_save(msg, emoji="✅")
+                st.rerun()
+            else:
+                st.error(f"❌ {msg}")
+
+
+_FI_ACTIONS_CONFIRMADA = [
+    {
+        "label": "📄 Ver PDF", "key": "pdf",
+        "on_click": _ver_pdf_action, "show_if": "CONFIRMADA",
+    },
+    {
+        "label": "✏️ Editar Descuentos", "key": "edit_desc",
+        "on_click": _editar_descuentos_confirmada_action, "show_if": "CONFIRMADA",
+    },
+]
+
+
 def _render_celula_fi(pedido_id: int, fi: dict):
     """Render canónico (core/fi_card) + acciones específicas del módulo Aprobación."""
     fi_id = int(fi["id"])
@@ -546,6 +622,7 @@ def render_aprobacion():
                 render_fi_card(
                     fi,
                     detalles=detalles,
+                    actions=_FI_ACTIONS_CONFIRMADA,
                     key_prefix="aprob_conf",
                     detalle_colapsado=True,
                     mostrar_descuentos=True,
