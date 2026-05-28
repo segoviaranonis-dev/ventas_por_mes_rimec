@@ -814,14 +814,15 @@ def render_aprobacion():
             st.markdown("---")
             for fi in fis_reservadas:
                 fi_id = int(fi["id"])
-                detalles = get_fi_detalles_lite(fi_id)
+                # NO cargar detalles aquí (lazy loading)
                 render_fi_card(
                     fi,
-                    detalles=detalles,
+                    detalles=None,  # ⚡ CRÍTICO: No cargar hasta que usuario lo pida
                     actions=_FI_ACTIONS_RESERVADA,
                     key_prefix="aprob_res",
                     detalle_colapsado=True,
                     mostrar_descuentos=True,
+                    mostrar_detalle=False,  # ⚡ No mostrar items en listado
                 )
                 _render_dialogo_anulacion(fi_id, key_suffix="_res")
                 st.markdown("---")
@@ -835,14 +836,15 @@ def render_aprobacion():
             st.caption(f"Últimas {len(fis)} facturas confirmadas")
             st.markdown("---")
             for fi in fis:
-                detalles = get_fi_detalles(int(fi["id"]))
+                # NO cargar detalles aquí (lazy loading solo cuando se necesiten)
                 render_fi_card(
                     fi,
-                    detalles=detalles,
+                    detalles=None,  # ⚡ CRÍTICO: No cargar hasta que usuario lo pida
                     actions=_FI_ACTIONS_CONFIRMADA,
                     key_prefix="aprob_conf",
                     detalle_colapsado=True,
                     mostrar_descuentos=True,
+                    mostrar_detalle=False,  # ⚡ No mostrar items en listado
                 )
                 st.markdown("---")
 
