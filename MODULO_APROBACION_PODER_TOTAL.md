@@ -240,6 +240,8 @@ Todos los cambios se registran en `log_flujo()`:
 2. **cfdbf00** - Feat: Edición de descuentos en FIs CONFIRMADAS
 3. **c778d5f** - Fix: Constraint de estados + funciones de edición completa
 4. **175c15c** - Feat: UI POTENTE de edición completa en módulo de aprobación
+5. **35cf361** - Fix: Definir acciones antes de usarlas (movido constantes)
+6. **9c20bad** - Fix: Agregar campo estado a queries de FIs (botones de acción ahora visibles)
 
 ---
 
