@@ -287,7 +287,7 @@ def _get_clientes_cached():
 @st.cache_data(ttl=300)
 def _get_plazos_cached():
     """Cache de plazos por 5 minutos."""
-    df = get_dataframe("SELECT id_plazo, descp_plazo FROM plazo_venta ORDER BY id_plazo")
+    df = get_dataframe("SELECT id_plazo, descp_plazo FROM plazo_v2 ORDER BY id_plazo")
     if df is not None and not df.empty:
         return df
     return None
