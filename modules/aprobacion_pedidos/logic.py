@@ -1315,6 +1315,272 @@ def actualizar_fi_encabezado(
         return False, f"Error: {str(e)}"
 
 
+def modificar_cantidad_item_fi(
+    fi_detalle_id: int,
+    nuevas_cajas: int,
+    nuevos_pares: int
+) -> tuple[bool, str]:
+    """Modifica la cantidad de un item existente en una FI.
+
+    Recalcula el subtotal basándose en el precio_neto actual.
+    Solo para FIs en RESERVADA o CONFIRMADA.
+    """
+    fi_detalle_id = int(fi_detalle_id)
+    nuevas_cajas = int(nuevas_cajas)
+    nuevos_pares = int(nuevos_pares)
+
+    if nuevos_pares <= 0:
+        return False, "Los pares deben ser mayor a 0."
+
+    try:
+        with engine.begin() as conn:
+            # Obtener detalle actual
+            detalle = conn.execute(sqlt("""
+                SELECT
+                    fid.id,
+                    fid.factura_id,
+                    fid.ppd_id,
+                    fid.pares as pares_antiguos,
+                    fid.precio_neto,
+                    fi.estado
+                FROM factura_interna_detalle fid
+                JOIN factura_interna fi ON fi.id = fid.factura_id
+                WHERE fid.id = :id
+            """), {"id": fi_detalle_id}).fetchone()
+
+            if not detalle:
+                return False, "Item no encontrado."
+
+            if detalle.estado not in ('RESERVADA', 'CONFIRMADA'):
+                return False, f"No se puede editar FI en estado {detalle.estado}."
+
+            fi_id = detalle.factura_id
+            ppd_id = detalle.ppd_id
+            pares_antiguos = detalle.pares_antiguos
+            precio_neto = float(detalle.precio_neto)
+
+            # Calcular diferencia de stock
+            diferencia_pares = nuevos_pares - pares_antiguos
+
+            # Actualizar item
+            nuevo_subtotal = precio_neto * nuevos_pares
+            conn.execute(sqlt("""
+                UPDATE factura_interna_detalle
+                SET cajas = :cajas,
+                    pares = :pares,
+                    subtotal = :subtotal
+                WHERE id = :id
+            """), {
+                "id": fi_detalle_id,
+                "cajas": nuevas_cajas,
+                "pares": nuevos_pares,
+                "subtotal": nuevo_subtotal
+            })
+
+            # Ajustar stock en PPD
+            if diferencia_pares != 0 and ppd_id:
+                if diferencia_pares > 0:
+                    # Aumentaron pares → descontar más stock
+                    conn.execute(sqlt("""
+                        SELECT descontar_stock_pp(:det_id, :pares)
+                    """), {"det_id": ppd_id, "pares": diferencia_pares})
+                else:
+                    # Disminuyeron pares → devolver stock
+                    conn.execute(sqlt("""
+                        UPDATE pedido_proveedor_detalle
+                        SET pares_vendidos = GREATEST(0, COALESCE(pares_vendidos, 0) + :diff)
+                        WHERE id = :det_id
+                    """), {"det_id": ppd_id, "diff": diferencia_pares})
+
+            # Recalcular total de FI
+            total_nuevo = conn.execute(sqlt("""
+                SELECT SUM(subtotal) as total
+                FROM factura_interna_detalle
+                WHERE factura_id = :fi_id
+            """), {"fi_id": fi_id}).fetchone().total or 0
+
+            total_pares_nuevo = conn.execute(sqlt("""
+                SELECT SUM(pares) as total
+                FROM factura_interna_detalle
+                WHERE factura_id = :fi_id
+            """), {"fi_id": fi_id}).fetchone().total or 0
+
+            conn.execute(sqlt("""
+                UPDATE factura_interna
+                SET total_monto = :total_monto,
+                    total_pares = :total_pares
+                WHERE id = :fi_id
+            """), {"fi_id": fi_id, "total_monto": total_nuevo, "total_pares": total_pares_nuevo})
+
+        log_flujo(
+            entidad="factura_interna_detalle", entidad_id=fi_detalle_id,
+            accion="ITEM_CANTIDAD_MODIFICADA",
+            snap={
+                "pares_antiguos": pares_antiguos,
+                "pares_nuevos": nuevos_pares,
+                "diferencia": diferencia_pares
+            }
+        )
+
+        DBInspector.log(f"[FI] Item {fi_detalle_id} cantidad modificada: {pares_antiguos} → {nuevos_pares} pares", "SUCCESS")
+        return True, f"Cantidad actualizada exitosamente. Nuevo subtotal: Gs. {nuevo_subtotal:,.0f}"
+
+    except Exception as e:
+        DBInspector.log(f"[FI] Error modificando cantidad item {fi_detalle_id}: {e}", "ERROR")
+        return False, f"Error: {str(e)}"
+
+
+def eliminar_item_fi(fi_detalle_id: int) -> tuple[bool, str]:
+    """Elimina un item de una FI y revierte su stock.
+
+    Solo para FIs en RESERVADA o CONFIRMADA.
+    """
+    fi_detalle_id = int(fi_detalle_id)
+
+    try:
+        with engine.begin() as conn:
+            # Obtener detalle
+            detalle = conn.execute(sqlt("""
+                SELECT
+                    fid.id,
+                    fid.factura_id,
+                    fid.ppd_id,
+                    fid.pares,
+                    fi.estado,
+                    fi.nro_factura
+                FROM factura_interna_detalle fid
+                JOIN factura_interna fi ON fi.id = fid.factura_id
+                WHERE fid.id = :id
+            """), {"id": fi_detalle_id}).fetchone()
+
+            if not detalle:
+                return False, "Item no encontrado."
+
+            if detalle.estado not in ('RESERVADA', 'CONFIRMADA'):
+                return False, f"No se puede editar FI en estado {detalle.estado}."
+
+            fi_id = detalle.factura_id
+            ppd_id = detalle.ppd_id
+            pares = detalle.pares
+            nro_factura = detalle.nro_factura
+
+            # Verificar que no es el único item
+            count_items = conn.execute(sqlt("""
+                SELECT COUNT(*) as total
+                FROM factura_interna_detalle
+                WHERE factura_id = :fi_id
+            """), {"fi_id": fi_id}).fetchone().total
+
+            if count_items <= 1:
+                return False, "No se puede eliminar el único item de la FI. Anula la FI completa en su lugar."
+
+            # Revertir stock
+            if ppd_id and pares > 0:
+                conn.execute(sqlt("""
+                    UPDATE pedido_proveedor_detalle
+                    SET pares_vendidos = GREATEST(0, COALESCE(pares_vendidos, 0) - :pares)
+                    WHERE id = :det_id
+                """), {"det_id": ppd_id, "pares": pares})
+
+            # Eliminar item
+            conn.execute(sqlt("""
+                DELETE FROM factura_interna_detalle
+                WHERE id = :id
+            """), {"id": fi_detalle_id})
+
+            # Recalcular total de FI
+            total_nuevo = conn.execute(sqlt("""
+                SELECT SUM(subtotal) as total
+                FROM factura_interna_detalle
+                WHERE factura_id = :fi_id
+            """), {"fi_id": fi_id}).fetchone().total or 0
+
+            total_pares_nuevo = conn.execute(sqlt("""
+                SELECT SUM(pares) as total
+                FROM factura_interna_detalle
+                WHERE factura_id = :fi_id
+            """), {"fi_id": fi_id}).fetchone().total or 0
+
+            conn.execute(sqlt("""
+                UPDATE factura_interna
+                SET total_monto = :total_monto,
+                    total_pares = :total_pares
+                WHERE id = :fi_id
+            """), {"fi_id": fi_id, "total_monto": total_nuevo, "total_pares": total_pares_nuevo})
+
+        log_flujo(
+            entidad="factura_interna", entidad_id=fi_id,
+            accion="ITEM_ELIMINADO",
+            snap={"item_id": fi_detalle_id, "pares_revertidos": pares}
+        )
+
+        DBInspector.log(f"[FI] Item {fi_detalle_id} eliminado de {nro_factura}", "SUCCESS")
+        return True, f"Item eliminado. Stock revertido: {pares} pares."
+
+    except Exception as e:
+        DBInspector.log(f"[FI] Error eliminando item {fi_detalle_id}: {e}", "ERROR")
+        return False, f"Error: {str(e)}"
+
+
+def cambiar_cliente_fi(
+    fi_id: int,
+    nuevo_cliente_id: int
+) -> tuple[bool, str]:
+    """Cambia el cliente de una FI (RESERVADA o CONFIRMADA).
+
+    Útil cuando el vendedor se equivocó de cliente al crear el pedido.
+    """
+    fi_id = int(fi_id)
+    nuevo_cliente_id = int(nuevo_cliente_id)
+
+    try:
+        # Verificar que el cliente existe
+        cliente_check = get_dataframe("""
+            SELECT id_cliente, descp_cliente
+            FROM cliente_v2
+            WHERE id_cliente = :id
+        """, {"id": nuevo_cliente_id})
+
+        if cliente_check is None or cliente_check.empty:
+            return False, f"Cliente ID {nuevo_cliente_id} no encontrado."
+
+        cliente_nombre = cliente_check.iloc[0]['descp_cliente']
+
+        # Actualizar FI
+        with engine.begin() as conn:
+            result = conn.execute(sqlt("""
+                UPDATE factura_interna
+                SET cliente_id = :cliente_id
+                WHERE id = :fi_id
+                  AND estado IN ('RESERVADA', 'CONFIRMADA')
+            """), {"fi_id": fi_id, "cliente_id": nuevo_cliente_id})
+
+            if result.rowcount == 0:
+                return False, "FI no encontrada o en estado no editable (ANULADA)."
+
+            # También actualizar el pedido si existe
+            conn.execute(sqlt("""
+                UPDATE pedido_venta_rimec pvr
+                SET cliente_id = :cliente_id
+                WHERE id = (
+                    SELECT pedido_id FROM factura_interna WHERE id = :fi_id
+                )
+            """), {"fi_id": fi_id, "cliente_id": nuevo_cliente_id})
+
+        log_flujo(
+            entidad="factura_interna", entidad_id=fi_id,
+            accion="FI_CLIENTE_CAMBIADO",
+            snap={"nuevo_cliente_id": nuevo_cliente_id, "nuevo_cliente_nombre": cliente_nombre}
+        )
+
+        DBInspector.log(f"[FI] Cliente cambiado fi_id={fi_id} → {cliente_nombre}", "SUCCESS")
+        return True, f"Cliente actualizado a: {cliente_nombre}"
+
+    except Exception as e:
+        DBInspector.log(f"[FI] Error cambiando cliente {fi_id}: {e}", "ERROR")
+        return False, f"Error: {str(e)}"
+
+
 def editar_descuentos_fi_confirmada(
     fi_id: int,
     lista_precio_id: int,
