@@ -267,10 +267,139 @@ _FI_ACTIONS_RESERVADA = [
         "on_click": _confirmar_fi_action, "show_if": "RESERVADA",
     },
     {
+        "label": "👤 Cliente", "key": "change_client",
+        "on_click": _cambiar_cliente_action, "show_if": "RESERVADA",
+    },
+    {
+        "label": "📦 Items", "key": "edit_items",
+        "on_click": _editar_items_action, "show_if": "RESERVADA",
+    },
+    {
         "label": "❌ Anular", "key": "anul",
         "on_click": _anular_fi_action,    "show_if": "RESERVADA",
     },
 ]
+
+
+def _cambiar_cliente_action(fi: dict):
+    """Acción 'Cambiar Cliente' para FIs."""
+    fi_id = int(fi["id"])
+    nro_factura = fi.get("nro_factura", f"FI {fi_id}")
+    cliente_actual_id = fi.get("cliente_id")
+
+    with st.form(key=f"form_change_client_{fi_id}"):
+        st.subheader(f"👤 Cambiar cliente: {nro_factura}")
+        st.caption("Útil cuando el vendedor se equivocó de cliente")
+
+        # Obtener clientes
+        clientes = get_dataframe("SELECT id_cliente, descp_cliente FROM cliente_v2 ORDER BY descp_cliente")
+        if clientes is not None and not clientes.empty:
+            cliente_options = clientes["id_cliente"].tolist()
+            cliente_labels = clientes["descp_cliente"].tolist()
+
+            # Buscar índice del cliente actual
+            try:
+                cliente_idx = cliente_options.index(cliente_actual_id) if cliente_actual_id else 0
+            except ValueError:
+                cliente_idx = 0
+
+            nuevo_cliente = st.selectbox(
+                "Nuevo Cliente",
+                options=cliente_options,
+                format_func=lambda x: f"{cliente_labels[cliente_options.index(x)]} (ID: {x})",
+                index=cliente_idx,
+                key=f"new_client_{fi_id}"
+            )
+
+            st.info(f"Cliente actual: {fi.get('cliente_nombre', 'N/A')}")
+
+            submitted = st.form_submit_button("💾 Cambiar Cliente", type="primary")
+
+            if submitted:
+                if nuevo_cliente == cliente_actual_id:
+                    st.warning("⚠️ Seleccionaste el mismo cliente.")
+                else:
+                    from .logic import cambiar_cliente_fi
+                    ok, msg = cambiar_cliente_fi(fi_id=fi_id, nuevo_cliente_id=nuevo_cliente)
+                    if ok:
+                        celebrate_save(msg, emoji="✅")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {msg}")
+        else:
+            st.error("No se pudieron cargar los clientes.")
+
+
+def _editar_items_action(fi: dict):
+    """Acción 'Editar Items' para FIs."""
+    fi_id = int(fi["id"])
+    nro_factura = fi.get("nro_factura", f"FI {fi_id}")
+
+    st.subheader(f"📦 Editar items: {nro_factura}")
+    st.caption("Modifica cantidades o elimina items de la factura")
+
+    # Obtener items actuales
+    from .logic import get_fi_detalles
+    detalles = get_fi_detalles(fi_id)
+
+    if not detalles:
+        st.warning("Esta FI no tiene items.")
+        return
+
+    st.markdown("---")
+
+    for idx, item in enumerate(detalles):
+        item_id = int(item["id"])
+        col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+
+        with col1:
+            st.markdown(f"**{item['linea_codigo']}-{item['ref_codigo']}**")
+            st.caption(f"{item['color_nombre']} • {item['gradas_fmt']}")
+
+        with col2:
+            new_cajas = st.number_input(
+                "Cajas",
+                min_value=0,
+                value=int(item.get("cajas", 0)),
+                key=f"cajas_{item_id}_{idx}",
+                label_visibility="collapsed"
+            )
+
+        with col3:
+            new_pares = st.number_input(
+                "Pares",
+                min_value=1,
+                value=int(item.get("pares", 1)),
+                key=f"pares_{item_id}_{idx}",
+                label_visibility="collapsed"
+            )
+
+        with col4:
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                if st.button("💾", key=f"save_{item_id}_{idx}", help="Guardar cambios"):
+                    if new_pares != item.get("pares") or new_cajas != item.get("cajas"):
+                        from .logic import modificar_cantidad_item_fi
+                        ok, msg = modificar_cantidad_item_fi(item_id, new_cajas, new_pares)
+                        if ok:
+                            celebrate_save(msg, emoji="✅")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {msg}")
+            with col_btn2:
+                if st.button("🗑️", key=f"del_{item_id}_{idx}", help="Eliminar item"):
+                    if len(detalles) <= 1:
+                        st.error("No puedes eliminar el único item. Anula la FI completa.")
+                    else:
+                        from .logic import eliminar_item_fi
+                        ok, msg = eliminar_item_fi(item_id)
+                        if ok:
+                            celebrate_save(msg, emoji="🗑️")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {msg}")
+
+        st.markdown("---")
 
 
 def _editar_descuentos_confirmada_action(fi: dict):
@@ -343,8 +472,16 @@ _FI_ACTIONS_CONFIRMADA = [
         "on_click": _ver_pdf_action, "show_if": "CONFIRMADA",
     },
     {
-        "label": "✏️ Editar Descuentos", "key": "edit_desc",
+        "label": "✏️ Descuentos", "key": "edit_desc",
         "on_click": _editar_descuentos_confirmada_action, "show_if": "CONFIRMADA",
+    },
+    {
+        "label": "👤 Cliente", "key": "change_client",
+        "on_click": _cambiar_cliente_action, "show_if": "CONFIRMADA",
+    },
+    {
+        "label": "📦 Items", "key": "edit_items",
+        "on_click": _editar_items_action, "show_if": "CONFIRMADA",
     },
 ]
 
