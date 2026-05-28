@@ -869,15 +869,33 @@ def render_aprobacion():
 
     # ── Formularios inline RÁPIDOS ────────────────────────────────────────
     # Se renderizan inline inmediatamente (sin overhead de modal)
+
+    # DEBUG: Verificar flags
+    flag_desc = st.session_state.get("dialog_descuentos_fi")
+    flag_cli = st.session_state.get("dialog_cliente_fi")
+    flag_items = st.session_state.get("dialog_items_fi")
+
+    if flag_desc or flag_cli or flag_items:
+        st.write("🔍 DEBUG - Flags detectados:")
+        if flag_desc:
+            st.write(f"  - Descuentos: {flag_desc.get('nro_factura', '?')}")
+        if flag_cli:
+            st.write(f"  - Cliente: {flag_cli.get('nro_factura', '?')}")
+        if flag_items:
+            st.write(f"  - Items: {flag_items.get('nro_factura', '?')}")
+
     from .ui_fast import (
         render_editar_descuentos_inline,
         render_cambiar_cliente_inline,
         render_editar_items_inline
     )
 
-    if st.session_state.get("dialog_descuentos_fi"):
-        render_editar_descuentos_inline(st.session_state["dialog_descuentos_fi"])
-    if st.session_state.get("dialog_cliente_fi"):
-        render_cambiar_cliente_inline(st.session_state["dialog_cliente_fi"])
-    if st.session_state.get("dialog_items_fi"):
-        render_editar_items_inline(st.session_state["dialog_items_fi"])
+    if flag_desc:
+        st.write("⚡ Renderizando formulario de descuentos...")
+        render_editar_descuentos_inline(flag_desc)
+    if flag_cli:
+        st.write("⚡ Renderizando formulario de cliente...")
+        render_cambiar_cliente_inline(flag_cli)
+    if flag_items:
+        st.write("⚡ Renderizando formulario de items...")
+        render_editar_items_inline(flag_items)
