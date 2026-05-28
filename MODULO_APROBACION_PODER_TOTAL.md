@@ -242,6 +242,8 @@ Todos los cambios se registran en `log_flujo()`:
 4. **175c15c** - Feat: UI POTENTE de edición completa en módulo de aprobación
 5. **35cf361** - Fix: Definir acciones antes de usarlas (movido constantes)
 6. **9c20bad** - Fix: Agregar campo estado a queries de FIs (botones de acción ahora visibles)
+7. **2e99cf1** - Docs: Actualizar registro de commits
+8. **46e1f47** - UI: Botones de acción más compactos (diseño mejorado)
 
 ---
 
