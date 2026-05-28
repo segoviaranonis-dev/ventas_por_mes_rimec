@@ -865,11 +865,17 @@ def render_aprobacion():
                     st.caption(f"📝 Motivo: _{fi['notas']}_")
                 st.markdown("---")
 
-    # ── Diálogos emergentes ────────────────────────────────────────────────
-    # Se abren cuando session_state tiene los flags correspondientes
+    # ── Formularios inline RÁPIDOS ────────────────────────────────────────
+    # Se renderizan inline inmediatamente (sin overhead de modal)
+    from .ui_fast import (
+        render_editar_descuentos_inline,
+        render_cambiar_cliente_inline,
+        render_editar_items_inline
+    )
+
     if st.session_state.get("dialog_descuentos_fi"):
-        _dialog_editar_descuentos()
+        render_editar_descuentos_inline(st.session_state["dialog_descuentos_fi"])
     if st.session_state.get("dialog_cliente_fi"):
-        _dialog_cambiar_cliente()
+        render_cambiar_cliente_inline(st.session_state["dialog_cliente_fi"])
     if st.session_state.get("dialog_items_fi"):
-        _dialog_editar_items()
+        render_editar_items_inline(st.session_state["dialog_items_fi"])
