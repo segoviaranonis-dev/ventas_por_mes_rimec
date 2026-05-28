@@ -257,30 +257,6 @@ def _render_dialogo_anulacion(fi_id: int, key_suffix: str = ""):
             st.rerun()
 
 
-_FI_ACTIONS_RESERVADA = [
-    {
-        "label": "📄 Ver PDF", "key": "pdf",
-        "on_click": _ver_pdf_action, "show_if": "RESERVADA",
-    },
-    {
-        "label": "✅ Confirmar", "key": "conf", "type": "primary",
-        "on_click": _confirmar_fi_action, "show_if": "RESERVADA",
-    },
-    {
-        "label": "👤 Cliente", "key": "change_client",
-        "on_click": _cambiar_cliente_action, "show_if": "RESERVADA",
-    },
-    {
-        "label": "📦 Items", "key": "edit_items",
-        "on_click": _editar_items_action, "show_if": "RESERVADA",
-    },
-    {
-        "label": "❌ Anular", "key": "anul",
-        "on_click": _anular_fi_action,    "show_if": "RESERVADA",
-    },
-]
-
-
 def _cambiar_cliente_action(fi: dict):
     """Acción 'Cambiar Cliente' para FIs."""
     fi_id = int(fi["id"])
@@ -465,6 +441,31 @@ def _editar_descuentos_confirmada_action(fi: dict):
             else:
                 st.error(f"❌ {msg}")
 
+
+# ── Acciones disponibles por estado ────────────────────────────────────────
+
+_FI_ACTIONS_RESERVADA = [
+    {
+        "label": "📄 Ver PDF", "key": "pdf",
+        "on_click": _ver_pdf_action, "show_if": "RESERVADA",
+    },
+    {
+        "label": "✅ Confirmar", "key": "conf", "type": "primary",
+        "on_click": _confirmar_fi_action, "show_if": "RESERVADA",
+    },
+    {
+        "label": "👤 Cliente", "key": "change_client",
+        "on_click": _cambiar_cliente_action, "show_if": "RESERVADA",
+    },
+    {
+        "label": "📦 Items", "key": "edit_items",
+        "on_click": _editar_items_action, "show_if": "RESERVADA",
+    },
+    {
+        "label": "❌ Anular", "key": "anul",
+        "on_click": _anular_fi_action, "show_if": "RESERVADA",
+    },
+]
 
 _FI_ACTIONS_CONFIRMADA = [
     {
