@@ -258,173 +258,84 @@ def _render_dialogo_anulacion(fi_id: int, key_suffix: str = ""):
 
 
 def _cambiar_cliente_action(fi: dict):
-    """Acción 'Cambiar Cliente' para FIs."""
+    """Acción 'Cambiar Cliente' — abre el diálogo de cambio de cliente."""
     fi_id = int(fi["id"])
-    nro_factura = fi.get("nro_factura", f"FI {fi_id}")
-    cliente_actual_id = fi.get("cliente_id")
-
-    with st.form(key=f"form_change_client_{fi_id}"):
-        st.subheader(f"👤 Cambiar cliente: {nro_factura}")
-        st.caption("Útil cuando el vendedor se equivocó de cliente")
-
-        # Obtener clientes
-        clientes = get_dataframe("SELECT id_cliente, descp_cliente FROM cliente_v2 ORDER BY descp_cliente")
-        if clientes is not None and not clientes.empty:
-            cliente_options = clientes["id_cliente"].tolist()
-            cliente_labels = clientes["descp_cliente"].tolist()
-
-            # Buscar índice del cliente actual
-            try:
-                cliente_idx = cliente_options.index(cliente_actual_id) if cliente_actual_id else 0
-            except ValueError:
-                cliente_idx = 0
-
-            nuevo_cliente = st.selectbox(
-                "Nuevo Cliente",
-                options=cliente_options,
-                format_func=lambda x: f"{cliente_labels[cliente_options.index(x)]} (ID: {x})",
-                index=cliente_idx,
-                key=f"new_client_{fi_id}"
-            )
-
-            st.info(f"Cliente actual: {fi.get('cliente_nombre', 'N/A')}")
-
-            submitted = st.form_submit_button("💾 Cambiar Cliente", type="primary")
-
-            if submitted:
-                if nuevo_cliente == cliente_actual_id:
-                    st.warning("⚠️ Seleccionaste el mismo cliente.")
-                else:
-                    from .logic import cambiar_cliente_fi
-                    ok, msg = cambiar_cliente_fi(fi_id=fi_id, nuevo_cliente_id=nuevo_cliente)
-                    if ok:
-                        celebrate_save(msg, emoji="✅")
-                        st.rerun()
-                    else:
-                        st.error(f"❌ {msg}")
-        else:
-            st.error("No se pudieron cargar los clientes.")
+    st.session_state["dialog_cliente_fi"] = fi
+    st.rerun()
 
 
 def _editar_items_action(fi: dict):
-    """Acción 'Editar Items' para FIs."""
-    fi_id = int(fi["id"])
-    nro_factura = fi.get("nro_factura", f"FI {fi_id}")
-
-    st.subheader(f"📦 Editar items: {nro_factura}")
-    st.caption("Modifica cantidades o elimina items de la factura")
-
-    # Obtener items actuales
-    from .logic import get_fi_detalles
-    detalles = get_fi_detalles(fi_id)
-
-    if not detalles:
-        st.warning("Esta FI no tiene items.")
-        return
-
-    st.markdown("---")
-
-    for idx, item in enumerate(detalles):
-        item_id = int(item["id"])
-        col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-
-        with col1:
-            st.markdown(f"**{item['linea_codigo']}-{item['ref_codigo']}**")
-            st.caption(f"{item['color_nombre']} • {item['gradas_fmt']}")
-
-        with col2:
-            new_cajas = st.number_input(
-                "Cajas",
-                min_value=0,
-                value=int(item.get("cajas", 0)),
-                key=f"cajas_{item_id}_{idx}",
-                label_visibility="collapsed"
-            )
-
-        with col3:
-            new_pares = st.number_input(
-                "Pares",
-                min_value=1,
-                value=int(item.get("pares", 1)),
-                key=f"pares_{item_id}_{idx}",
-                label_visibility="collapsed"
-            )
-
-        with col4:
-            col_btn1, col_btn2 = st.columns(2)
-            with col_btn1:
-                if st.button("💾", key=f"save_{item_id}_{idx}", help="Guardar cambios"):
-                    if new_pares != item.get("pares") or new_cajas != item.get("cajas"):
-                        from .logic import modificar_cantidad_item_fi
-                        ok, msg = modificar_cantidad_item_fi(item_id, new_cajas, new_pares)
-                        if ok:
-                            celebrate_save(msg, emoji="✅")
-                            st.rerun()
-                        else:
-                            st.error(f"❌ {msg}")
-            with col_btn2:
-                if st.button("🗑️", key=f"del_{item_id}_{idx}", help="Eliminar item"):
-                    if len(detalles) <= 1:
-                        st.error("No puedes eliminar el único item. Anula la FI completa.")
-                    else:
-                        from .logic import eliminar_item_fi
-                        ok, msg = eliminar_item_fi(item_id)
-                        if ok:
-                            celebrate_save(msg, emoji="🗑️")
-                            st.rerun()
-                        else:
-                            st.error(f"❌ {msg}")
-
-        st.markdown("---")
+    """Acción 'Editar Items' — abre el diálogo de edición de items."""
+    st.session_state["dialog_items_fi"] = fi
+    st.rerun()
 
 
 def _editar_descuentos_confirmada_action(fi: dict):
-    """Acción 'Editar Descuentos' para FIs CONFIRMADAS."""
+    """Acción 'Editar Descuentos' — abre el diálogo de edición de descuentos."""
+    st.session_state["dialog_descuentos_fi"] = fi
+    st.rerun()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DIÁLOGOS EMERGENTES (MODALS)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@st.dialog("✏️ Editar Descuentos", width="large")
+def _dialog_editar_descuentos():
+    """Diálogo modal para editar descuentos de una FI CONFIRMADA."""
+    fi = st.session_state.get("dialog_descuentos_fi")
+    if not fi:
+        st.error("Error: No se encontró la factura.")
+        return
+
     fi_id = int(fi["id"])
     nro_factura = fi.get("nro_factura", f"FI {fi_id}")
 
-    with st.form(key=f"form_edit_desc_{fi_id}"):
-        st.subheader(f"✏️ Editar descuentos: {nro_factura}")
-        st.caption("Permite corregir descuentos de facturas ya confirmadas")
+    st.caption(f"**Factura:** {nro_factura}")
+    st.caption("Todos los precios se recalcularán automáticamente según v_stock_rimec")
+    st.divider()
 
-        col1, col2 = st.columns(2)
-        with col1:
-            lista = st.selectbox(
-                "Lista de Precio",
-                options=[1, 2, 3, 4],
-                format_func=lambda x: f"Lista {x}",
-                index=(fi.get("lista_precio_id", 1) - 1),
-                key=f"edit_lista_{fi_id}"
+    col1, col2 = st.columns(2)
+    with col1:
+        lista = st.selectbox(
+            "Lista de Precio",
+            options=[1, 2, 3, 4],
+            format_func=lambda x: ["LPN", "LPC02", "LPC03", "LPC04"][x-1],
+            index=(fi.get("lista_precio_id", 1) - 1),
+            key=f"dlg_lista_{fi_id}"
+        )
+        d1 = st.number_input("Descuento 1 (%)", 0.0, 100.0, float(fi.get("descuento_1") or 0), step=0.5, key=f"dlg_d1_{fi_id}")
+        d2 = st.number_input("Descuento 2 (%)", 0.0, 100.0, float(fi.get("descuento_2") or 0), step=0.5, key=f"dlg_d2_{fi_id}")
+
+    with col2:
+        # Obtener plazos
+        plazos = get_dataframe("SELECT id_plazo, descp_plazo FROM plazo_venta ORDER BY id_plazo")
+        if plazos is not None and not plazos.empty:
+            plazo_actual_id = fi.get("plazo_id", 1)
+            plazo_options = plazos["id_plazo"].tolist()
+            plazo_labels = plazos["descp_plazo"].tolist()
+            try:
+                plazo_idx = plazo_options.index(plazo_actual_id)
+            except ValueError:
+                plazo_idx = 0
+            plazo = st.selectbox(
+                "Plazo",
+                options=plazo_options,
+                format_func=lambda x: plazo_labels[plazo_options.index(x)],
+                index=plazo_idx,
+                key=f"dlg_plazo_{fi_id}"
             )
-            d1 = st.number_input("Descuento 1 (%)", 0.0, 100.0, float(fi.get("descuento_1") or 0), key=f"edit_d1_{fi_id}")
-            d2 = st.number_input("Descuento 2 (%)", 0.0, 100.0, float(fi.get("descuento_2") or 0), key=f"edit_d2_{fi_id}")
-        with col2:
-            # Obtener plazos disponibles
-            plazos = get_dataframe("SELECT id_plazo, descp_plazo FROM plazo_venta ORDER BY id_plazo")
-            if plazos is not None and not plazos.empty:
-                plazo_actual_id = fi.get("plazo_id", 1)
-                plazo_options = plazos["id_plazo"].tolist()
-                plazo_labels = plazos["descp_plazo"].tolist()
-                try:
-                    plazo_idx = plazo_options.index(plazo_actual_id)
-                except ValueError:
-                    plazo_idx = 0
-                plazo = st.selectbox(
-                    "Plazo",
-                    options=plazo_options,
-                    format_func=lambda x: plazo_labels[plazo_options.index(x)],
-                    index=plazo_idx,
-                    key=f"edit_plazo_{fi_id}"
-                )
-            else:
-                plazo = st.number_input("Plazo ID", value=fi.get("plazo_id", 1), key=f"edit_plazo_{fi_id}")
+        else:
+            plazo = st.number_input("Plazo ID", value=fi.get("plazo_id", 1), key=f"dlg_plazo_{fi_id}")
 
-            d3 = st.number_input("Descuento 3 (%)", 0.0, 100.0, float(fi.get("descuento_3") or 0), key=f"edit_d3_{fi_id}")
-            d4 = st.number_input("Descuento 4 (%)", 0.0, 100.0, float(fi.get("descuento_4") or 0), key=f"edit_d4_{fi_id}")
+        d3 = st.number_input("Descuento 3 (%)", 0.0, 100.0, float(fi.get("descuento_3") or 0), step=0.5, key=f"dlg_d3_{fi_id}")
+        d4 = st.number_input("Descuento 4 (%)", 0.0, 100.0, float(fi.get("descuento_4") or 0), step=0.5, key=f"dlg_d4_{fi_id}")
 
-        submitted = st.form_submit_button("💾 Guardar cambios", type="primary")
+    st.divider()
+    col_btn1, col_btn2 = st.columns([1, 1])
 
-        if submitted:
+    with col_btn1:
+        if st.button("💾 Guardar Cambios", type="primary", use_container_width=True):
             from .logic import editar_descuentos_fi_confirmada
             ok, msg = editar_descuentos_fi_confirmada(
                 fi_id=fi_id,
@@ -436,10 +347,161 @@ def _editar_descuentos_confirmada_action(fi: dict):
                 plazo_id=int(plazo)
             )
             if ok:
-                celebrate_save(msg, emoji="✅")
+                st.session_state.pop("dialog_descuentos_fi", None)
+                celebrate_save(msg, emoji="✅", modulo="Aprobaciones")
                 st.rerun()
             else:
                 st.error(f"❌ {msg}")
+
+    with col_btn2:
+        if st.button("❌ Cancelar", use_container_width=True):
+            st.session_state.pop("dialog_descuentos_fi", None)
+            st.rerun()
+
+
+@st.dialog("👤 Cambiar Cliente", width="large")
+def _dialog_cambiar_cliente():
+    """Diálogo modal para cambiar el cliente de una FI."""
+    fi = st.session_state.get("dialog_cliente_fi")
+    if not fi:
+        st.error("Error: No se encontró la factura.")
+        return
+
+    fi_id = int(fi["id"])
+    nro_factura = fi.get("nro_factura", f"FI {fi_id}")
+    cliente_actual_id = fi.get("cliente_id")
+
+    st.caption(f"**Factura:** {nro_factura}")
+    st.info(f"**Cliente actual:** {fi.get('cliente_nombre', 'N/A')}")
+    st.divider()
+
+    # Obtener clientes
+    clientes = get_dataframe("SELECT id_cliente, descp_cliente FROM cliente_v2 ORDER BY descp_cliente")
+    if clientes is None or clientes.empty:
+        st.error("No se pudieron cargar los clientes.")
+        return
+
+    cliente_options = clientes["id_cliente"].tolist()
+    cliente_labels = clientes["descp_cliente"].tolist()
+
+    # Buscar índice del cliente actual
+    try:
+        cliente_idx = cliente_options.index(cliente_actual_id) if cliente_actual_id else 0
+    except ValueError:
+        cliente_idx = 0
+
+    nuevo_cliente = st.selectbox(
+        "Seleccionar Nuevo Cliente",
+        options=cliente_options,
+        format_func=lambda x: f"{cliente_labels[cliente_options.index(x)]}",
+        index=cliente_idx,
+        key=f"dlg_new_client_{fi_id}"
+    )
+
+    st.divider()
+    col_btn1, col_btn2 = st.columns([1, 1])
+
+    with col_btn1:
+        if st.button("💾 Cambiar Cliente", type="primary", use_container_width=True):
+            if nuevo_cliente == cliente_actual_id:
+                st.warning("⚠️ Seleccionaste el mismo cliente.")
+            else:
+                from .logic import cambiar_cliente_fi
+                ok, msg = cambiar_cliente_fi(fi_id=fi_id, nuevo_cliente_id=nuevo_cliente)
+                if ok:
+                    st.session_state.pop("dialog_cliente_fi", None)
+                    celebrate_save(msg, emoji="✅", modulo="Aprobaciones")
+                    st.rerun()
+                else:
+                    st.error(f"❌ {msg}")
+
+    with col_btn2:
+        if st.button("❌ Cancelar", use_container_width=True):
+            st.session_state.pop("dialog_cliente_fi", None)
+            st.rerun()
+
+
+@st.dialog("📦 Editar Items", width="large")
+def _dialog_editar_items():
+    """Diálogo modal para editar items de una FI."""
+    fi = st.session_state.get("dialog_items_fi")
+    if not fi:
+        st.error("Error: No se encontró la factura.")
+        return
+
+    fi_id = int(fi["id"])
+    nro_factura = fi.get("nro_factura", f"FI {fi_id}")
+
+    st.caption(f"**Factura:** {nro_factura}")
+    st.caption("Modifica cantidades o elimina items (los totales se recalcularán automáticamente)")
+    st.divider()
+
+    # Obtener items actuales
+    from .logic import get_fi_detalles
+    detalles = get_fi_detalles(fi_id)
+
+    if not detalles:
+        st.warning("Esta FI no tiene items.")
+        return
+
+    for idx, item in enumerate(detalles):
+        item_id = int(item["id"])
+
+        col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+
+        with col1:
+            st.markdown(f"**{item['linea_codigo']}-{item['ref_codigo']}**")
+            st.caption(f"{item['color_nombre']} • {item['gradas_fmt']}")
+
+        with col2:
+            new_cajas = st.number_input(
+                "Cajas",
+                min_value=0,
+                value=int(item.get("cajas", 0)),
+                key=f"dlg_cajas_{item_id}_{idx}",
+                label_visibility="collapsed"
+            )
+
+        with col3:
+            new_pares = st.number_input(
+                "Pares",
+                min_value=1,
+                value=int(item.get("pares", 1)),
+                key=f"dlg_pares_{item_id}_{idx}",
+                label_visibility="collapsed"
+            )
+
+        with col4:
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                if st.button("💾", key=f"dlg_save_{item_id}_{idx}", help="Guardar cambios"):
+                    if new_pares != item.get("pares") or new_cajas != item.get("cajas"):
+                        from .logic import modificar_cantidad_item_fi
+                        ok, msg = modificar_cantidad_item_fi(item_id, new_cajas, new_pares)
+                        if ok:
+                            celebrate_save(msg, emoji="✅", modulo="Aprobaciones")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {msg}")
+            with col_btn2:
+                if st.button("🗑️", key=f"dlg_del_{item_id}_{idx}", help="Eliminar item"):
+                    if len(detalles) <= 1:
+                        st.error("No puedes eliminar el único item. Anula la FI completa.")
+                    else:
+                        from .logic import eliminar_item_fi
+                        ok, msg = eliminar_item_fi(item_id)
+                        if ok:
+                            celebrate_save(msg, emoji="🗑️", modulo="Aprobaciones")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {msg}")
+
+        st.markdown("---")
+
+    st.divider()
+    if st.button("✅ Cerrar", type="primary", use_container_width=True):
+        st.session_state.pop("dialog_items_fi", None)
+        st.rerun()
 
 
 # ── Acciones disponibles por estado ────────────────────────────────────────
@@ -785,3 +847,12 @@ def render_aprobacion():
                 if fi.get("notas"):
                     st.caption(f"📝 Motivo: _{fi['notas']}_")
                 st.markdown("---")
+
+    # ── Diálogos emergentes ────────────────────────────────────────────────
+    # Se abren cuando session_state tiene los flags correspondientes
+    if st.session_state.get("dialog_descuentos_fi"):
+        _dialog_editar_descuentos()
+    if st.session_state.get("dialog_cliente_fi"):
+        _dialog_cambiar_cliente()
+    if st.session_state.get("dialog_items_fi"):
+        _dialog_editar_items()
