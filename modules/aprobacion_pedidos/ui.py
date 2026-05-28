@@ -259,21 +259,38 @@ def _render_dialogo_anulacion(fi_id: int, key_suffix: str = ""):
 
 def _cambiar_cliente_action(fi: dict):
     """Acción 'Cambiar Cliente' — abre el diálogo de cambio de cliente."""
-    fi_id = int(fi["id"])
     st.session_state["dialog_cliente_fi"] = fi
-    st.rerun()
 
 
 def _editar_items_action(fi: dict):
     """Acción 'Editar Items' — abre el diálogo de edición de items."""
     st.session_state["dialog_items_fi"] = fi
-    st.rerun()
 
 
 def _editar_descuentos_confirmada_action(fi: dict):
     """Acción 'Editar Descuentos' — abre el diálogo de edición de descuentos."""
     st.session_state["dialog_descuentos_fi"] = fi
-    st.rerun()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CACHE DE QUERIES PESADAS
+# ─────────────────────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=300)
+def _get_clientes_cached():
+    """Cache de clientes por 5 minutos."""
+    df = get_dataframe("SELECT id_cliente, descp_cliente FROM cliente_v2 ORDER BY descp_cliente")
+    if df is not None and not df.empty:
+        return df
+    return None
+
+@st.cache_data(ttl=300)
+def _get_plazos_cached():
+    """Cache de plazos por 5 minutos."""
+    df = get_dataframe("SELECT id_plazo, descp_plazo FROM plazo_venta ORDER BY id_plazo")
+    if df is not None and not df.empty:
+        return df
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -308,9 +325,9 @@ def _dialog_editar_descuentos():
         d2 = st.number_input("Descuento 2 (%)", 0.0, 100.0, float(fi.get("descuento_2") or 0), step=0.5, key=f"dlg_d2_{fi_id}")
 
     with col2:
-        # Obtener plazos
-        plazos = get_dataframe("SELECT id_plazo, descp_plazo FROM plazo_venta ORDER BY id_plazo")
-        if plazos is not None and not plazos.empty:
+        # Obtener plazos (cacheado)
+        plazos = _get_plazos_cached()
+        if plazos is not None:
             plazo_actual_id = fi.get("plazo_id", 1)
             plazo_options = plazos["id_plazo"].tolist()
             plazo_labels = plazos["descp_plazo"].tolist()
@@ -375,9 +392,9 @@ def _dialog_cambiar_cliente():
     st.info(f"**Cliente actual:** {fi.get('cliente_nombre', 'N/A')}")
     st.divider()
 
-    # Obtener clientes
-    clientes = get_dataframe("SELECT id_cliente, descp_cliente FROM cliente_v2 ORDER BY descp_cliente")
-    if clientes is None or clientes.empty:
+    # Obtener clientes (cacheado)
+    clientes = _get_clientes_cached()
+    if clientes is None:
         st.error("No se pudieron cargar los clientes.")
         return
 
