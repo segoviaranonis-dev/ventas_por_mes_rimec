@@ -186,7 +186,7 @@ def render_fi_card(
                             action["label"],
                             key=f"{key_safe}_{action['key']}",
                             type=action.get("type") or "secondary",
-                            use_container_width=True,
+                            use_container_width=False,
                         ):
                             if action.get("on_click"):
                                 action["on_click"](fi)
