@@ -852,7 +852,7 @@ def get_fi_reservadas() -> list[dict]:
     El módulo de Aprobación las encuentra por estado — no recibe objetos."""
     df = get_dataframe("""
         SELECT fi.id, fi.nro_factura, fi.pp_id, fi.pedido_id, fi.marca, fi.caso,
-               fi.total_pares, fi.total_monto,
+               fi.estado, fi.total_pares, fi.total_monto,
                fi.cliente_id, fi.vendedor_id, fi.plazo_id,
                fi.lista_precio_id,
                fi.descuento_1, fi.descuento_2, fi.descuento_3, fi.descuento_4,
@@ -877,7 +877,7 @@ def get_fi_confirmadas() -> list[dict]:
     """Lee FIs confirmadas (aprobadas) para el historial con detalle."""
     df = get_dataframe("""
         SELECT fi.id, fi.nro_factura, fi.pp_id, fi.pedido_id, fi.marca, fi.caso,
-               fi.total_pares, fi.total_monto,
+               fi.estado, fi.total_pares, fi.total_monto,
                fi.cliente_id, fi.vendedor_id,
                fi.descuento_1, fi.descuento_2, fi.descuento_3, fi.descuento_4,
                c.descp_cliente AS cliente_nombre,
@@ -930,7 +930,7 @@ def get_fi_anuladas() -> list[dict]:
     """Lee FIs anuladas (rechazadas) para el historial."""
     df = get_dataframe("""
         SELECT fi.id, fi.nro_factura, fi.pp_id, fi.marca, fi.caso,
-               fi.total_pares, fi.total_monto, fi.notas,
+               fi.estado, fi.total_pares, fi.total_monto, fi.notas,
                c.descp_cliente AS cliente_nombre,
                pp.numero_registro AS nro_pp,
                pp.numero_proforma AS proforma,
