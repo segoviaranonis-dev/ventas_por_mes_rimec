@@ -91,6 +91,7 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
             fi.nro_factura,
             fi.pp_id,
             pp.numero_registro as pp_nro,
+            pp.numero_proforma as proforma,
             qa.descripcion as quincena_llegada,
             fi.marca,
             fi.caso,
@@ -99,6 +100,7 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
             fi.estado,
             fi.cliente_id,
             c.descp_cliente as cliente_nombre,
+            c.id_cliente as cliente_codigo,
             fi.vendedor_id,
             v.descp_usuario as vendedor_nombre,
             fi.plazo_id,
@@ -178,6 +180,7 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
                 'cajas': int(row['cajas']) if row['cajas'] else 0,
                 'pares': int(row['pares']) if row['pares'] else 0,
                 'precio_unit': float(row['precio_unit'] or 0),
+                'precio_neto': float(row['precio_neto'] or 0),
                 'subtotal': float(row['subtotal'] or 0),
             })
 
@@ -241,7 +244,13 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
     )
 
     cliente_nombre = fi_data.get('cliente_nombre', 'CLIENTE NO ASIGNADO')
-    story.append(Paragraph(cliente_nombre, cliente_header_style))
+    cliente_codigo = fi_data.get('cliente_codigo', '')
+    # Agregar código de cliente al lado del nombre
+    if cliente_codigo:
+        cliente_display = f"{cliente_nombre} ({cliente_codigo})"
+    else:
+        cliente_display = cliente_nombre
+    story.append(Paragraph(cliente_display, cliente_header_style))
     story.append(Spacer(1, 5*mm))
 
     # JERARQUÍA 1: ETA LLEGADA (fecha del pedido proveedor)
@@ -285,10 +294,26 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
     else:
         fecha_str = 'N/A'
 
+    # Matrimonio PP + Proforma
+    pp_display = fi_data.get('pp_nro', 'N/A')
+    if fi_data.get('proforma'):
+        pp_display = f"{pp_display} ({fi_data['proforma']})"
+
+    # Plazo de la factura
+    plazo_nombre = fi_data.get('plazo_nombre', 'N/A')
+
+    # Descuentos (siempre mostrar las 4 casillas)
+    desc_1 = fi_data.get('descuento_1', 0) or 0
+    desc_2 = fi_data.get('descuento_2', 0) or 0
+    desc_3 = fi_data.get('descuento_3', 0) or 0
+    desc_4 = fi_data.get('descuento_4', 0) or 0
+    descuentos_display = f"{desc_1}% / {desc_2}% / {desc_3}% / {desc_4}%"
+
     info_data = [
-        ['Nro. FI:', fi_data.get('nro_factura', 'N/A'), 'PP:', fi_data.get('pp_nro', 'N/A')],
-        ['Marca:', fi_data.get('marca', 'N/A'), 'Caso:', fi_data.get('caso', 'N/A')],
+        ['Nro. FI:', fi_data.get('nro_factura', 'N/A'), 'PP:', pp_display],
+        ['Marca:', fi_data.get('marca', 'N/A'), 'Plazo:', plazo_nombre],
         ['Estado:', fi_data.get('estado', 'RESERVADA'), 'Fecha:', fecha_str],
+        ['Descuentos:', descuentos_display, '', ''],
     ]
 
     info_table = Table(info_data, colWidths=[22*mm, 73*mm, 22*mm, 73*mm])
@@ -328,7 +353,7 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
 
     # Tabla de items (estilo ejecutivo IMF con imágenes)
     if items:
-        items_data = [['Foto', 'Producto', 'Gradas', 'Cajas', 'Pares', 'Precio/Par', 'Subtotal']]
+        items_data = [['Foto', 'Producto', 'Gradas', 'Cajas', 'Pares', 'Precio Sin Desc.', 'Precio Con Desc.', 'Subtotal']]
 
         for item in items:
             # Descargar imagen del producto
@@ -348,18 +373,19 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
                 item.get('gradas_fmt', 'N/A'),
                 str(item['cajas']),
                 str(item['pares']),
-                f"₲ {item['precio_unit']:,.0f}".replace(',', '.'),
-                f"₲ {item['subtotal']:,.0f}".replace(',', '.')
+                f"Gs. {item['precio_unit']:,.0f}".replace(',', '.'),
+                f"Gs. {item['precio_neto']:,.0f}".replace(',', '.'),
+                f"Gs. {item['subtotal']:,.0f}".replace(',', '.')
             ])
 
         items_table = Table(
             items_data,
-            colWidths=[15*mm, 42*mm, 38*mm, 16*mm, 16*mm, 25*mm, 25*mm]
+            colWidths=[15*mm, 35*mm, 30*mm, 14*mm, 14*mm, 22*mm, 22*mm, 25*mm]
         )
         items_table.setStyle(TableStyle([
             # Header (NAVY ejecutivo)
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('FONTSIZE', (0, 0), (-1, 0), 8),
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B3A6B')),  # NAVY
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
             ('ALIGN', (0, 0), (0, 0), 'CENTER'),  # Foto centrada
@@ -368,16 +394,16 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
 
             # Datos
             ('FONTNAME', (1, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (1, 1), (-1, -1), 8),
+            ('FONTSIZE', (1, 1), (-1, -1), 7),
             ('ALIGN', (0, 1), (0, -1), 'CENTER'),  # Imágenes centradas
             ('ALIGN', (3, 1), (-1, -1), 'RIGHT'),  # Números a la derecha
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
 
-            # Padding
-            ('LEFTPADDING', (0, 0), (-1, -1), 4),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
-            ('TOPPADDING', (0, 0), (-1, -1), 5),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            # Padding (reducido para acomodar más columnas)
+            ('LEFTPADDING', (0, 0), (-1, -1), 2),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 2),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
 
             # Bordes y fondos
             ('LINEBELOW', (0, 0), (-1, 0), 2, colors.HexColor('#D4AF37')),  # Línea dorada bajo header
@@ -388,20 +414,10 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
         story.append(Spacer(1, 6*mm))
 
     # Totales (sección ejecutiva)
-    subtotal = sum(i['subtotal'] for i in items)
-    descuentos = [
-        fi_data.get('descuento_1', 0) or 0,
-        fi_data.get('descuento_2', 0) or 0,
-        fi_data.get('descuento_3', 0) or 0,
-        fi_data.get('descuento_4', 0) or 0
-    ]
-    descuentos_activos = [d for d in descuentos if d > 0]
-
-    total_neto = subtotal
-    monto_descuento = 0
-    for desc in descuentos_activos:
-        total_neto = total_neto * (1 - desc / 100)
-    monto_descuento = subtotal - total_neto
+    # IMPORTANTE: Los subtotales de cada item YA tienen el descuento aplicado
+    # porque usan precio_neto (que incluye descuentos).
+    # NO debemos aplicar descuentos otra vez aquí.
+    total_neto = sum(i['subtotal'] for i in items)
 
     # Total de pares
     total_pares = sum(i['pares'] for i in items)
@@ -409,15 +425,7 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
 
     total_data = []
 
-    # Subtotal
-    total_data.append(['Subtotal:', f"Gs. {subtotal:,.0f}".replace(',', '.')])
-
-    # Descuentos si existen
-    if descuentos_activos:
-        desc_text = ' + '.join([f"{d}%" for d in descuentos_activos])
-        total_data.append([f'Descuentos ({desc_text}):', f"- Gs. {monto_descuento:,.0f}".replace(',', '.')])
-
-    # Total Neto (sin tags HTML, solo estilo)
+    # Total Neto directo (sin línea de descuentos porque ya está aplicado en precios)
     total_data.append([
         'TOTAL NETO:',
         f"Gs. {total_neto:,.0f}".replace(',', '.')
