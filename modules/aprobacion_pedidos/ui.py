@@ -835,17 +835,47 @@ def render_aprobacion():
         else:
             st.caption(f"Últimas {len(fis)} facturas confirmadas")
             st.markdown("---")
+
+            from .ui_fast import (
+                render_editar_descuentos_inline,
+                render_cambiar_cliente_inline,
+                render_editar_items_inline
+            )
+
             for fi in fis:
-                # NO cargar detalles aquí (lazy loading solo cuando se necesiten)
+                fi_id = int(fi["id"])
+                nro_factura = fi.get("nro_factura", f"FI {fi_id}")
+
+                # Mostrar tarjeta básica SIN botones de acción
                 render_fi_card(
                     fi,
-                    detalles=None,  # ⚡ CRÍTICO: No cargar hasta que usuario lo pida
-                    actions=_FI_ACTIONS_CONFIRMADA,
+                    detalles=None,
+                    actions=None,  # ⚡ Sin botones, usamos expanders abajo
                     key_prefix="aprob_conf",
                     detalle_colapsado=True,
                     mostrar_descuentos=True,
-                    mostrar_detalle=False,  # ⚡ No mostrar items en listado
+                    mostrar_detalle=False,
                 )
+
+                # Expanders de edición DIRECTOS (se abren instantáneamente)
+                col1, col2, col3, col4 = st.columns(4)
+
+                with col1:
+                    if st.button("📄 Ver PDF", key=f"pdf_conf_{fi_id}", use_container_width=True):
+                        _ver_pdf_action(fi)
+
+                with col2:
+                    with st.expander("✏️ Descuentos", expanded=False):
+                        render_editar_descuentos_inline(fi)
+
+                with col3:
+                    with st.expander("👤 Cliente", expanded=False):
+                        render_cambiar_cliente_inline(fi)
+
+                with col4:
+                    with st.expander("📦 Items", expanded=False):
+                        render_editar_items_inline(fi)
+
                 st.markdown("---")
 
     # ── Tab Anuladas: historial de FIs rechazadas (formato canónico) ─────
@@ -867,35 +897,3 @@ def render_aprobacion():
                     st.caption(f"📝 Motivo: _{fi['notas']}_")
                 st.markdown("---")
 
-    # ── Formularios inline RÁPIDOS ────────────────────────────────────────
-    # Se renderizan inline inmediatamente (sin overhead de modal)
-
-    # DEBUG: Verificar flags
-    flag_desc = st.session_state.get("dialog_descuentos_fi")
-    flag_cli = st.session_state.get("dialog_cliente_fi")
-    flag_items = st.session_state.get("dialog_items_fi")
-
-    if flag_desc or flag_cli or flag_items:
-        st.write("🔍 DEBUG - Flags detectados:")
-        if flag_desc:
-            st.write(f"  - Descuentos: {flag_desc.get('nro_factura', '?')}")
-        if flag_cli:
-            st.write(f"  - Cliente: {flag_cli.get('nro_factura', '?')}")
-        if flag_items:
-            st.write(f"  - Items: {flag_items.get('nro_factura', '?')}")
-
-    from .ui_fast import (
-        render_editar_descuentos_inline,
-        render_cambiar_cliente_inline,
-        render_editar_items_inline
-    )
-
-    if flag_desc:
-        st.write("⚡ Renderizando formulario de descuentos...")
-        render_editar_descuentos_inline(flag_desc)
-    if flag_cli:
-        st.write("⚡ Renderizando formulario de cliente...")
-        render_cambiar_cliente_inline(flag_cli)
-    if flag_items:
-        st.write("⚡ Renderizando formulario de items...")
-        render_editar_items_inline(flag_items)
