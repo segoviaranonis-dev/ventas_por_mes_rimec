@@ -136,36 +136,46 @@ AUTORIZADO (pedido procesable)
 **Acciones disponibles**:
 - 📄 Ver PDF
 - ✅ **Confirmar** (principal)
-- 👤 Cliente
-- 📦 Items
+- 👤 Cliente (abre modal)
+- 📦 Items (abre modal)
 - ❌ Anular
 
 ### **Tab CONFIRMADAS**
 
 **Acciones disponibles**:
 - 📄 Ver PDF
-- ✏️ **Descuentos**
-- 👤 **Cliente**
-- 📦 **Items**
+- ✏️ **Descuentos** (abre modal)
+- 👤 **Cliente** (abre modal)
+- 📦 **Items** (abre modal)
 
-### **Edición de Items - UI Inline**
+### **⭐ VENTANAS MODALES - Sala de Control Unificada**
 
-```
-┌─────────────────────────────────────────────────┐
-│ LÍNEA-REF                                       │
-│ Color • Gradas                                  │
-│                                                 │
-│ [Cajas] [Pares] [💾] [🗑️]                      │
-│                                                 │
-└─────────────────────────────────────────────────┘
-```
+**Todas las ediciones ahora se hacen en ventanas emergentes (modals)** con interfaz centralizada:
 
-**Características**:
-- Edición inline por cada item
-- Botón 💾 para guardar cambios
+#### **Modal Descuentos**
+- Lista de precio (1-4)
+- 4 descuentos en cascada
+- Plazo de pago
+- Botones: 💾 Guardar / ❌ Cancelar
+
+#### **Modal Cliente**
+- Selector con todos los clientes
+- Muestra cliente actual
+- Búsqueda visual
+- Botones: 💾 Cambiar / ❌ Cancelar
+
+#### **Modal Items**
+- Lista completa de items de la FI
+- Edición de cantidades (cajas/pares) por item
+- Botón 💾 para guardar cambios en cada item
 - Botón 🗑️ para eliminar item
-- Feedback inmediato con celebración
-- Recarga automática después de cada cambio
+- Botón ✅ Cerrar al terminar
+
+**Ventajas**:
+- **Interfaz limpia**: No satura la página principal
+- **Foco total**: Una sola tarea a la vez
+- **Mejor UX**: Todo en una "sala de control" dedicada
+- **Cancelación fácil**: Cierra el modal sin cambios
 
 ---
 
@@ -244,6 +254,7 @@ Todos los cambios se registran en `log_flujo()`:
 6. **9c20bad** - Fix: Agregar campo estado a queries de FIs (botones de acción ahora visibles)
 7. **2e99cf1** - Docs: Actualizar registro de commits
 8. **46e1f47** - UI: Botones de acción más compactos (diseño mejorado)
+9. **8d1f576** - ⭐ Feat: VENTANAS EMERGENTES MODALES para edición (UX mejorada)
 
 ---
 
