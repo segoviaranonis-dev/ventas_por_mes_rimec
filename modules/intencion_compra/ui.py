@@ -91,10 +91,13 @@ def _cb_valor(ic_id: int, campo: str, key: str):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _cargar_catalogos() -> dict:
+    from core.database import get_dataframe
+
     df_tipos  = get_tipos()
     df_cats   = get_categorias()
     df_marcas = get_marcas()
     df_evs    = get_eventos_precio_cerrados()
+    df_quincenas = get_dataframe("SELECT id, descripcion FROM quincena_arribo ORDER BY id")
 
     opts_tipos  = {r["descp_tipo"]:      int(r["id_tipo"])      for _, r in df_tipos.iterrows()}
     opts_cats   = {r["descp_categoria"]: int(r["id_categoria"]) for _, r in df_cats.iterrows()}
@@ -106,11 +109,18 @@ def _cargar_catalogos() -> dict:
             lbl = f"{ev['nombre_evento']}  ·  {str(ev['fecha_vigencia_desde'])[:10]}"
             opts_evs[lbl] = int(ev["id"])
 
+    # Quincenas: lookup id -> descripcion
+    quincena_lookup = {}
+    if df_quincenas is not None and not df_quincenas.empty:
+        for _, q in df_quincenas.iterrows():
+            quincena_lookup[int(q['id'])] = q['descripcion']
+
     return {
         "tipos":  opts_tipos,
         "cats":   opts_cats,
         "marcas": opts_marcas,
         "evs":    opts_evs,
+        "quincenas": quincena_lookup,
     }
 
 
@@ -118,7 +128,7 @@ def _cargar_catalogos() -> dict:
 # TARJETA IC EDITABLE
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _render_tarjeta(ic: dict, cats: dict, tipos: dict, marcas: dict, evs: dict):
+def _render_tarjeta(ic: dict, cats: dict, tipos: dict, marcas: dict, evs: dict, quincenas: dict):
     ic_id   = int(ic["id"])
     nro     = ic["numero_registro"]
     cliente = str(ic.get("cliente") or "—")
@@ -171,19 +181,25 @@ def _render_tarjeta(ic: dict, cats: dict, tipos: dict, marcas: dict, evs: dict):
         on_change=_cb_select, args=(ic_id, "id_marca", key_marc, marcas),
     )
 
-    eta_val = None
-    try:
-        raw = ic.get("fecha_llegada")
-        if raw and str(raw) not in ("None", "nan", "NaT"):
-            eta_val = pd.to_datetime(raw).date()
-    except Exception:
-        pass
+    # Leer quincena_arribo_id (cable de acero reforzado)
+    quincena_val = ic.get("quincena_arribo_id")
+    if quincena_val is not None:
+        quincena_val = int(quincena_val)
+    else:
+        quincena_val = 0
+
     key_eta = f"eta_{ic_id}"
-    c4.date_input(
-        "ETA", value=eta_val,
+    c4.slider(
+        "Llegada", min_value=0, max_value=24, value=quincena_val, step=1,
         key=key_eta,
-        on_change=_cb_valor, args=(ic_id, "fecha_llegada", key_eta),
+        on_change=_cb_valor, args=(ic_id, "quincena_arribo_id", key_eta),
+        help="Deslizar o usar flechas/rueda. 0 = sin definir"
     )
+    # Mostrar descripción debajo
+    if quincena_val > 0 and quincena_val in quincenas:
+        c4.caption(f"📦 {quincenas[quincena_val]}")
+    elif quincena_val == 0:
+        c4.caption("⚠️ Sin definir")
 
     key_pares = f"par_{ic_id}"
     c5.number_input(
@@ -234,7 +250,7 @@ def _render_tarjeta(ic: dict, cats: dict, tipos: dict, marcas: dict, evs: dict):
             ic.get("tipo_id") is not None
             and ic.get("categoria_id") is not None
             and int(ic.get("pares") or 0) > 0
-            and eta_val is not None
+            and quincena_val > 0
         )
         if col_auth.button("✓ AUTORIZAR", key=f"auth_{ic_id}", type="primary",
                            use_container_width=True, disabled=not _ok):
@@ -244,7 +260,7 @@ def _render_tarjeta(ic: dict, cats: dict, tipos: dict, marcas: dict, evs: dict):
             else:
                 st.error(f"No se pudo autorizar: {err}")
         if not _ok:
-            ca.caption("⚠ Tipo, Categoría, Pares y ETA son obligatorios.")
+            ca.caption("⚠ Tipo, Categoría, Pares y Llegada son obligatorios.")
 
     st.divider()
 
@@ -253,14 +269,14 @@ def _render_tarjeta(ic: dict, cats: dict, tipos: dict, marcas: dict, evs: dict):
 # TARJETA DEVUELTA — misma tarjeta editable + banner de motivo + acciones
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _render_tarjeta_devuelta(ic: dict, cats: dict, tipos: dict, marcas: dict, evs: dict):
+def _render_tarjeta_devuelta(ic: dict, cats: dict, tipos: dict, marcas: dict, evs: dict, quincenas: dict):
     motivo    = ic.get("motivo_devolucion") or "Sin motivo registrado"
     devuelto  = str(ic.get("devuelto_at") or "")[:16].replace("T", " ")
     st.error(f"**Devuelta por Digitación** ({devuelto}): {motivo}")
 
     # Reutiliza la misma tarjeta editable — update_campo_ic bloquea por estado,
     # así que extendemos la whitelist habilitando edición en DEVUELTO_ADMIN también.
-    _render_tarjeta(ic, cats, tipos, marcas, evs)
+    _render_tarjeta(ic, cats, tipos, marcas, evs, quincenas)
 
     ic_id = int(ic["id"])
     col1, col2 = st.columns(2)
@@ -324,7 +340,7 @@ def _render_dashboard():
             for _, ic in df_pend.iterrows():
                 _render_tarjeta(
                     ic.to_dict(),
-                    cats["cats"], cats["tipos"], cats["marcas"], cats["evs"],
+                    cats["cats"], cats["tipos"], cats["marcas"], cats["evs"], cats["quincenas"],
                 )
 
     # ── PESTAÑA DEVUELTAS ─────────────────────────────────────────────────────
@@ -336,7 +352,7 @@ def _render_dashboard():
             for _, ic in df_dev.iterrows():
                 _render_tarjeta_devuelta(
                     ic.to_dict(),
-                    cats["cats"], cats["tipos"], cats["marcas"], cats["evs"],
+                    cats["cats"], cats["tipos"], cats["marcas"], cats["evs"], cats["quincenas"],
                 )
 
     # ── PESTAÑA HISTORIAL ─────────────────────────────────────────────────────
@@ -535,21 +551,39 @@ def _render_form():
     pares     = c6.number_input("Total Pares",    min_value=0, step=12, value=0, key="ic_pares")
     fecha_reg = c7.date_input("Fecha Registro",   value=date.today(), key="ic_fecha_reg")
 
-    # ETA: Dropdown de quincenas (NUEVO - cable de acero reforzado)
+    # ETA: Slider de quincenas (NUEVO - cable de acero reforzado)
     from core.database import get_dataframe
     df_quincenas = get_dataframe("SELECT id, descripcion FROM quincena_arribo ORDER BY id")
-    opts_quincena = {"— Sin definir —": None}
+
+    # Construir lookup id -> descripcion
+    quincena_lookup = {}
     if df_quincenas is not None and not df_quincenas.empty:
         for _, q in df_quincenas.iterrows():
-            opts_quincena[q['descripcion']] = int(q['id'])
+            quincena_lookup[int(q['id'])] = q['descripcion']
 
-    sel_quincena_label = c8.selectbox(
+    # Slider 1-24 (0 = sin definir)
+    quincena_id = c8.slider(
         "Llegada",
-        list(opts_quincena.keys()),
+        min_value=0,
+        max_value=24,
+        value=0,
+        step=1,
         key="ic_quincena",
-        help="Quincena estimada de arribo del contenedor"
+        help="Deslizar o usar flechas/rueda del mouse. 0 = sin definir"
     )
-    quincena_id = opts_quincena[sel_quincena_label]
+
+    # Mostrar descripción de la quincena seleccionada
+    if quincena_id > 0 and quincena_id in quincena_lookup:
+        c8.caption(f"📦 {quincena_lookup[quincena_id]}")
+        quincena_label = quincena_lookup[quincena_id]
+    elif quincena_id == 0:
+        c8.caption("⚠️ Sin definir")
+        quincena_label = "Sin definir"
+    else:
+        quincena_label = "Sin definir"
+
+    # Convertir 0 a None para la base de datos
+    quincena_id_db = quincena_id if quincena_id > 0 else None
 
     # Pre-llenado Hiedra
     _hm = st.session_state.get("hiedra_meta", {})
@@ -703,7 +737,7 @@ def _render_form():
             "descuento_1": d1, "descuento_2": d2,
             "descuento_3": d3, "descuento_4": d4,
             "fecha_registro":           fecha_reg,
-            "quincena_arribo_id":       quincena_id,  # NUEVO
+            "quincena_arribo_id":       quincena_id_db,  # NUEVO
             "nota_pedido":              nota_pedido,
             "observaciones":            observaciones,
             "precio_evento_id":         precio_ev_id,
@@ -713,7 +747,7 @@ def _render_form():
         })
 
         if ok:
-            st.success(f"Registrado: **{resultado}** | {sel_marc} | {pares:,} pares | Llegada: {sel_quincena_label}")
+            st.success(f"Registrado: **{resultado}** | {sel_marc} | {pares:,} pares | Llegada: {quincena_label}")
             st.session_state["ic_vista"] = VISTA_DASHBOARD
             st.session_state.pop("ic_tipo_id",  None)
             st.session_state.pop("ic_cat_id",   None)

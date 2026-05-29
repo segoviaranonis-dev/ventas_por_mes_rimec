@@ -64,13 +64,14 @@ def _render_bandeja():
     else:
         for _, row in df_pend.iterrows():
             ic_id = int(row["id"])
-            eta   = str(row.get("eta", "—"))[:10] if row.get("eta") else "—"
+            # Priorizar quincena_llegada (nuevo), fallback a eta viejo
+            llegada = row.get("quincena_llegada") or str(row.get("eta", "—"))[:10] if row.get("eta") else "None"
             evento = row.get("evento_precio") or "Sin evento"
 
             col_info, col_asig, col_dev = st.columns([5, 1.2, 1.2])
             col_info.markdown(
                 f"**{row['nro_ic']}** · {row['marca']} · {row['categoria']} · "
-                f"ETA: {eta} · {int(row['pares']):,} pares · 📋 {evento}"
+                f"ETA: {llegada} · {int(row['pares']):,} pares · 📋 {evento}"
             )
             if col_asig.button("Asignar →", key=f"asig_{ic_id}", type="primary",
                                use_container_width=True):
@@ -174,7 +175,7 @@ def _render_asignacion():
         f"{ic.get('nro_ic','—')} &nbsp;·&nbsp; {ic.get('marca','—')} &nbsp;·&nbsp; {ic.get('categoria','—')}"
         f"</div>"
         f"<div style='color:#64748b;font-size:0.78rem;margin-top:4px;'>"
-        f"ETA: {str(ic.get('eta','—'))[:10]} &nbsp;·&nbsp; {int(ic.get('pares',0)):,} pares"
+        f"Llegada: {ic.get('quincena_llegada') or (str(ic.get('eta','—'))[:10] if ic.get('eta') else 'Sin definir')} &nbsp;·&nbsp; {int(ic.get('pares',0)):,} pares"
         f"</div>"
         f"</div>",
         unsafe_allow_html=True

@@ -49,12 +49,15 @@ def get_ics_pendientes() -> pd.DataFrame:
             pe.nombre_evento                        AS evento_precio,
             ic.precio_evento_id,
             ic.fecha_llegada                        AS eta,
+            ic.quincena_arribo_id,
+            qa.descripcion                          AS quincena_llegada,
             ic.cantidad_total_pares                 AS pares,
             ic.estado
         FROM intencion_compra ic
         JOIN marca_v2       mv ON mv.id_marca       = ic.id_marca
         LEFT JOIN categoria_v2 cv ON cv.id_categoria = ic.categoria_id
         LEFT JOIN precio_evento pe ON pe.id          = ic.precio_evento_id
+        LEFT JOIN quincena_arribo qa ON qa.id        = ic.quincena_arribo_id
         WHERE ic.estado = 'AUTORIZADO'
           AND ic.id NOT IN (
               SELECT intencion_compra_id FROM intencion_compra_pedido
@@ -64,21 +67,23 @@ def get_ics_pendientes() -> pd.DataFrame:
 
 
 def get_pps_abiertos() -> pd.DataFrame:
-    """PPs con estado_digitacion ABIERTO con conteo de ICs asignadas."""
+    """PPs editables (no enviados a Compras) — incluye ABIERTO y CERRADO."""
     return get_dataframe("""
         SELECT
             pp.id,
             pp.numero_registro                          AS nro_pp,
             pp.nro_factura_importacion                  AS factura,
             pp.estado_digitacion,
+            pp.estado,
             pp.fecha_pedido,
             COUNT(icp.id)                               AS ics_asignadas
         FROM pedido_proveedor pp
         LEFT JOIN intencion_compra_pedido icp ON icp.pedido_proveedor_id = pp.id
-        WHERE pp.estado_digitacion = 'ABIERTO'
+        WHERE pp.estado IN ('ABIERTO', 'CERRADO')
+          AND pp.estado != 'ENVIADO'
         GROUP BY pp.id, pp.numero_registro, pp.nro_factura_importacion,
-                 pp.estado_digitacion, pp.fecha_pedido
-        ORDER BY pp.fecha_pedido DESC
+                 pp.estado_digitacion, pp.estado, pp.fecha_pedido
+        ORDER BY pp.fecha_pedido DESC NULLS LAST, pp.numero_registro DESC
     """)
 
 

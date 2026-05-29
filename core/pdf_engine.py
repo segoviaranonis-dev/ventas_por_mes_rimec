@@ -201,9 +201,13 @@ class PDFEngine:
         story.append(Spacer(1, 5*mm))
 
         # Información del pedido
+        cliente_codigo = context.get('cliente_codigo', 0)
+        cliente_nombre = context.get('cliente_nombre', 'N/A')
+        cliente_display = f"{cliente_nombre} ({cliente_codigo})" if cliente_codigo else cliente_nombre
+
         pedido_data = [
             ['<b>Pedido:</b>', context.get('nro_pedido', 'N/A')],
-            ['<b>Cliente:</b>', context.get('cliente_nombre', 'N/A')],
+            ['<b>Cliente:</b>', cliente_display],
             ['<b>Vendedor:</b>', context.get('vendedor_nombre', 'N/A')],
             ['<b>Plazo:</b>', context.get('plazo_nombre', 'N/A')],
             ['<b>Lista:</b>', context.get('lista_nombre', 'N/A')],

@@ -1,0 +1,24 @@
+CHECKLIST DE SEGURIDAD - ESTADO ACTUAL
+========================================
+
+1. 2FA GITHUB ✅ HECHO
+   - Códigos guardados en: C:\Users\hecto\Documents\Prg_locales\github-recovery-codes.txt
+
+2. GITHUB ACTIONS SECRETS ⚠️ VERIFICAR
+   - Ir a: https://github.com/segoviaranonis-dev/ventas_por_mes_rimec/settings/secrets/actions
+   - Debe haber 5 secrets: DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
+   
+3. 2FA VERCEL ⚠️ PENDIENTE
+   - Ir a: https://vercel.com/account/security
+   - Activar "Enable 2FA"
+   
+4. 2FA SUPABASE ⚠️ PENDIENTE
+   - Ir a: https://supabase.com/dashboard/account/security
+   - Activar "Enable 2FA"
+   
+5. 2FA GMAIL ⚠️ PENDIENTE
+   - Ir a: https://myaccount.google.com/security
+   - Activar "Verificación en 2 pasos"
+
+6. PROBAR BACKUP ⚠️ PENDIENTE
+   - Solo después de configurar secrets en GitHub Actions

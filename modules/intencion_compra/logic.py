@@ -94,6 +94,7 @@ def get_ics_pendientes() -> pd.DataFrame:
                cv.descp_cliente                                  AS cliente,
                vv.descp_usuario                                  AS vendedor,
                ic.fecha_llegada,
+               ic.quincena_arribo_id,
                ic.cantidad_total_pares AS pares,
                ic.monto_neto,
                ic.precio_evento_id,
@@ -141,7 +142,7 @@ def get_ics_historial() -> pd.DataFrame:
 def update_campo_ic(ic_id: int, campo: str, valor) -> bool:
     """Actualiza un campo de una IC editable (PENDIENTE_OPERATIVO o DEVUELTO_ADMIN)."""
     _PERMITIDOS = {
-        "tipo_id", "categoria_id", "id_marca", "fecha_llegada",
+        "tipo_id", "categoria_id", "id_marca", "fecha_llegada", "quincena_arribo_id",
         "cantidad_total_pares", "precio_evento_id", "nota_pedido", "monto_neto",
     }
     if campo not in _PERMITIDOS:
@@ -286,6 +287,7 @@ def get_ics_devueltas() -> pd.DataFrame:
                cv.descp_cliente                                  AS cliente,
                vv.descp_usuario                                 AS vendedor,
                ic.fecha_llegada,
+               ic.quincena_arribo_id,
                ic.cantidad_total_pares AS pares,
                ic.monto_neto,
                ic.precio_evento_id,

@@ -13,6 +13,7 @@ import streamlit as st
 import pandas as pd
 
 from core.constants import MES_NOMBRES
+from core.database import get_dataframe
 from core.ux_celebrate import celebrate_import_done, celebrate_save, celebrate_step
 from core.tabla_articulos import render_tabla_5pilares
 from modules.pedido_proveedor.logic import (
@@ -203,14 +204,15 @@ def _render_lista_pp():
                 col_info, col_eta, col_pares, col_estado, col_btn = st.columns([3, 2, 1.5, 1.5, 2.2])
 
                 with col_info:
+                    # Matrimonio PP + Proforma
+                    pp_proforma = f"{pp['numero_registro']} ({proforma_val})" if proforma_val != "—" else pp['numero_registro']
                     st.markdown(
                         f"<div style='line-height:1.4;'>"
                         f"<span style='font-weight:700;color:#F1F5F9;font-size:.9rem;'>"
-                        f"{pp['numero_registro']}</span>"
+                        f"{pp_proforma}</span>"
                         f"<span style='color:#64748B;font-size:.78rem;'> · {marcas_val}</span><br>"
                         f"<span style='color:#D4AF37;font-size:.75rem;'>{cliente_val}</span>"
-                        f"<span style='color:#475569;font-size:.72rem;'> · {vendedor_val}</span><br>"
-                        f"<span style='color:#475569;font-size:.68rem;'>Proforma {proforma_val}</span>"
+                        f"<span style='color:#475569;font-size:.72rem;'> · {vendedor_val}</span>"
                         f"</div>",
                         unsafe_allow_html=True,
                     )
@@ -239,11 +241,17 @@ def _render_lista_pp():
                         except Exception:
                             dias = None
 
+                    # Cable de acero: mostrar quincena al lado del ETA
+                    quincena_desc = pp.get("quincena_desc")
+                    quincena_str = ""
+                    if quincena_desc:
+                        quincena_str = f"<br><span style='color:#D4AF37;font-size:.7rem;font-weight:600;'>📦 {quincena_desc}</span>"
+
                     dias_str = f"<br><span style='color:#94A3B8;font-size:.7rem;'>{dias} días</span>" if dias is not None else ""
                     st.markdown(
                         f"<div style='line-height:1.5;'>"
                         f"<span style='color:{_eta_color};font-size:.88rem;font-weight:700;'>"
-                        f"📅 {eta_val}</span>{dias_str}"
+                        f"📅 {eta_val}</span>{dias_str}{quincena_str}"
                         f"</div>",
                         unsafe_allow_html=True,
                     )
@@ -272,6 +280,47 @@ def _render_lista_pp():
                                 st.rerun()
                         if c_no.button("✗", key=f"_eta_no_{int(pp['id'])}"):
                             st.session_state.pop(key_edit, None)
+                            st.rerun()
+
+                    # Botón para asignar QUINCENA inline (dato duro independiente)
+                    key_edit_q = f"_q_edit_{int(pp['id'])}"
+                    if st.button("📦 Quincena", key=f"_q_btn_{int(pp['id'])}", help="Asignar quincena (dato duro)"):
+                        st.session_state[key_edit_q] = True
+                    if st.session_state.get(key_edit_q):
+                        from core.database import get_dataframe
+                        from modules.pedido_proveedor.logic import update_quincena_pp
+
+                        df_quincenas = get_dataframe("SELECT id, descripcion FROM quincena_arribo ORDER BY id")
+                        quincena_lookup = {}
+                        if df_quincenas is not None and not df_quincenas.empty:
+                            for _, q in df_quincenas.iterrows():
+                                quincena_lookup[int(q['id'])] = q['descripcion']
+
+                        quincena_actual = pp.get("quincena_arribo_id")
+                        try:
+                            if quincena_actual is None or str(quincena_actual).strip() in ("", "None", "nan", "NaN"):
+                                quincena_actual = 0
+                            else:
+                                quincena_actual = int(quincena_actual)
+                        except (ValueError, TypeError):
+                            quincena_actual = 0
+
+                        st.caption(f"ETA actual (fecha): {eta_val}")
+                        nueva_q = st.slider(
+                            "Quincena", min_value=0, max_value=24, value=quincena_actual, step=1,
+                            key=f"_q_val_{int(pp['id'])}",
+                            help="0 = sin definir"
+                        )
+                        if nueva_q > 0 and nueva_q in quincena_lookup:
+                            st.caption(f"📦 {quincena_lookup[nueva_q]}")
+                        c_ok_q, c_no_q = st.columns(2)
+                        if c_ok_q.button("✓", key=f"_q_ok_{int(pp['id'])}", type="primary"):
+                            qid = nueva_q if nueva_q > 0 else None
+                            if update_quincena_pp(int(pp["id"]), qid):
+                                st.session_state.pop(key_edit_q, None)
+                                st.rerun()
+                        if c_no_q.button("✗", key=f"_q_no_{int(pp['id'])}"):
+                            st.session_state.pop(key_edit_q, None)
                             st.rerun()
 
                 with col_pares:
@@ -694,6 +743,46 @@ def _render_detalle_pp(id_pp: int):
         f"</div>",
         unsafe_allow_html=True,
     )
+
+    # ── EDICIÓN DE QUINCENA (migración de datos) ──────────────────────────────
+    with st.expander("⚙️ Asignar Quincena de Arribo (dato duro)", expanded=False):
+        from core.database import get_dataframe
+        from modules.pedido_proveedor.logic import update_quincena_pp
+
+        df_quincenas = get_dataframe("SELECT id, descripcion FROM quincena_arribo ORDER BY id")
+        quincena_lookup = {}
+        if df_quincenas is not None and not df_quincenas.empty:
+            for _, q in df_quincenas.iterrows():
+                quincena_lookup[int(q['id'])] = q['descripcion']
+
+        quincena_actual = header.get("quincena_arribo_id")
+        if quincena_actual:
+            quincena_actual = int(quincena_actual)
+        else:
+            quincena_actual = 0
+
+        st.caption(f"**ETA actual (fecha vieja):** {_fmt_date(header.get('fecha_promesa'))} → usar para comparación")
+
+        quincena_nueva = st.slider(
+            "Quincena de arribo",
+            min_value=0, max_value=24, value=quincena_actual, step=1,
+            key=f"quincena_slider_{id_pp}",
+            help="0 = sin definir. Deslizar o usar flechas/rueda del mouse."
+        )
+
+        if quincena_nueva > 0 and quincena_nueva in quincena_lookup:
+            st.caption(f"📦 {quincena_lookup[quincena_nueva]}")
+        elif quincena_nueva == 0:
+            st.caption("⚠️ Sin definir")
+
+        if quincena_nueva != quincena_actual:
+            if st.button("💾 Guardar quincena", key=f"save_quincena_{id_pp}", type="primary"):
+                qid = quincena_nueva if quincena_nueva > 0 else None
+                if update_quincena_pp(id_pp, qid):
+                    st.success(f"✓ Quincena actualizada: {quincena_lookup.get(quincena_nueva, 'Sin definir')}")
+                    st.rerun()
+                else:
+                    st.error("Error al actualizar quincena")
 
     # ── Métricas de resumen ───────────────────────────────────────────────────
     c1, c2, c3, c4 = st.columns(4)
@@ -1157,6 +1246,73 @@ def _render_listado_precio_pp(pp_id: int, header: dict):
 # HIJO MENOR — Facturas Internas (doble candado sin stock)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _render_boton_reparar_stock(pp_id: int):
+    """
+    Botón de reparación: detecta FIs RESERVADAS huérfanas (con pedido RECHAZADO
+    o sin pedido) y las anula automáticamente, liberando el stock bloqueado.
+    """
+    from modules.aprobacion_pedidos.logic import anular_fi
+
+    # Buscar FIs problemáticas
+    df_problemas = get_dataframe("""
+        SELECT
+            fi.id,
+            fi.nro_factura,
+            fi.estado,
+            fi.total_pares,
+            fi.pedido_id,
+            pvr.estado as pedido_estado
+        FROM factura_interna fi
+        LEFT JOIN pedido_venta_rimec pvr ON pvr.id = fi.pedido_id
+        WHERE fi.pp_id = :pp_id
+          AND fi.estado = 'RESERVADA'
+          AND (pvr.estado = 'RECHAZADO' OR fi.pedido_id IS NULL)
+    """, {"pp_id": pp_id})
+
+    if df_problemas is None or df_problemas.empty:
+        return  # No hay problemas, no mostrar nada
+
+    # Hay FIs problemáticas - mostrar botón de reparación
+    pares_bloqueados = int(df_problemas['total_pares'].sum())
+
+    if st.button(
+        f"🔧 Reparar Stock ({pares_bloqueados}p)",
+        key=f"reparar_stock_{pp_id}",
+        help=f"Liberar {pares_bloqueados} pares bloqueados por FIs huérfanas",
+        type="secondary"
+    ):
+        # Anular cada FI problemática
+        anuladas = []
+        errores = []
+
+        for _, fi_row in df_problemas.iterrows():
+            fi_id = int(fi_row['id'])
+            nro_fi = fi_row['nro_factura']
+
+            motivo = ("Pedido rechazado - stock bloqueado"
+                     if fi_row['pedido_estado'] == 'RECHAZADO'
+                     else "FI huérfana sin pedido - stock bloqueado")
+
+            ok, msg = anular_fi(fi_id, motivo=motivo)
+
+            if ok:
+                anuladas.append(nro_fi)
+            else:
+                errores.append(f"{nro_fi}: {msg}")
+
+        # Mostrar resultado
+        if anuladas and not errores:
+            st.success(f"✅ {len(anuladas)} FI(s) anulada(s): {', '.join(anuladas)}")
+            st.balloons()
+            import time
+            time.sleep(1)
+            st.rerun()
+        elif errores:
+            st.error(f"❌ Errores: {'; '.join(errores)}")
+        elif anuladas:
+            st.warning(f"⚠️ {len(anuladas)} FI(s) anulada(s), pero hubo errores: {'; '.join(errores)}")
+
+
 def _render_hijo_menor(pp_id: int, tiene_stock: bool, header: dict):
     if not tiene_stock:
         st.warning(
@@ -1176,11 +1332,17 @@ def _render_hijo_menor(pp_id: int, tiene_stock: bool, header: dict):
     st.divider()
 
     # ── FACTURAS INTERNAS (nueva tabla) ───────────────────────────────────────
-    st.subheader("Facturas Internas")
-    if es_programado:
-        st.caption("Intermediación directa — facturas al cliente sin stock en tránsito.")
-    else:
-        st.caption("Ventas en tránsito + stock físico post-arribo.")
+    col_titulo, col_reparar = st.columns([3, 1])
+    with col_titulo:
+        st.subheader("Facturas Internas")
+        if es_programado:
+            st.caption("Intermediación directa — facturas al cliente sin stock en tránsito.")
+        else:
+            st.caption("Ventas en tránsito + stock físico post-arribo.")
+
+    # Botón de reparación de stock bloqueado
+    with col_reparar:
+        _render_boton_reparar_stock(pp_id)
 
     _render_facturas_internas(pp_id, header)
     st.divider()

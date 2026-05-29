@@ -21,7 +21,7 @@ import pandas as pd
 from datetime import date
 from sqlalchemy import text as sqlt
 
-from core.database import get_dataframe, engine, DBInspector
+from core.database import get_dataframe, commit_query, engine, DBInspector
 from core.auditoria import log_flujo, A
 
 
@@ -198,6 +198,8 @@ def get_pedidos_proveedor(filtros: dict | None = None) -> pd.DataFrame:
             pp.estado,
             pp.fecha_pedido,
             pp.fecha_arribo_estimada                                  AS fecha_eta,
+            pp.quincena_arribo_id,
+            qa.descripcion                                            AS quincena_desc,
             pp.fecha_arribo_real,
             COALESCE(pi2.nombre, '—')                                 AS proveedor,
             COALESCE(ic.numero_registro, '—')                         AS ic_nro,
@@ -246,9 +248,25 @@ def get_pedidos_proveedor(filtros: dict | None = None) -> pd.DataFrame:
         LEFT JOIN intencion_compra      ic  ON ic.id           = pp.id_intencion_compra
         LEFT JOIN cliente_v2            c   ON c.id_cliente    = ic.id_cliente
         LEFT JOIN usuario_v2            v   ON v.id_usuario    = ic.id_vendedor
+        LEFT JOIN quincena_arribo       qa  ON qa.id           = pp.quincena_arribo_id
         WHERE {where}
         ORDER BY pp.numero_registro ASC
     """, params or None)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EDICIÓN DE CAMPOS — para migración de datos
+# ─────────────────────────────────────────────────────────────────────────────
+
+def update_quincena_pp(pp_id: int, quincena_id: int | None) -> bool:
+    """
+    Actualiza quincena_arribo_id de un PP existente.
+    Usado para asignar manualmente quincenas a PPs antiguos (migración de datos).
+    """
+    return commit_query(
+        "UPDATE pedido_proveedor SET quincena_arribo_id = :qid WHERE id = :pp_id",
+        {"qid": quincena_id, "pp_id": pp_id}
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -274,6 +292,7 @@ def get_pp_header(id_pp: int) -> dict:
             pp.categoria_id,
             pp.fecha_pedido,
             pp.fecha_arribo_estimada            AS fecha_promesa,
+            pp.quincena_arribo_id,
             pp.fecha_arribo_real,
             pp.estado_arribo,
             pp.fecha_arribo,
@@ -2089,26 +2108,27 @@ def save_pp(header: dict, detalle_rows: list[dict]) -> tuple[bool, str]:
             #   PRE VENTA  → cliente asignado antes de llegar
             #   PROGRAMADO → proyección sin cliente
             #   STOCK      → saldo no vendido (NO origina en IC)
-            # quincena_arribo_id: Cable de acero reforzado (1-24)
+            # DUAL-FIELD: Propagamos AMBOS campos (viejo + nuevo) desde IC
             ic_row = conn.execute(sqlt(
-                "SELECT categoria_id, quincena_arribo_id FROM intencion_compra WHERE id = :id_ic"
+                "SELECT categoria_id, quincena_arribo_id, fecha_llegada FROM intencion_compra WHERE id = :id_ic"
             ), {"id_ic": int(header["id_intencion_compra"])}).fetchone()
             categoria_id = ic_row[0] if ic_row and ic_row[0] is not None else None
-            quincena_id = ic_row[1] if ic_row and ic_row[1] is not None else None  # PROPAGACIÓN
+            quincena_id = ic_row[1] if ic_row and ic_row[1] is not None else None  # NUEVO
+            fecha_eta_vieja = ic_row[2] if ic_row and ic_row[2] is not None else None  # VIEJO (crítico para RIMEC Web)
 
             row = conn.execute(sqlt("""
                 INSERT INTO pedido_proveedor (
                     numero_registro,    anio_fiscal,
                     id_intencion_compra, proveedor_importacion_id,
                     numero_proforma,    entidad_comercial,
-                    fecha_pedido,       quincena_arribo_id,
+                    fecha_pedido,       fecha_arribo_estimada,  quincena_arribo_id,
                     estado,             pares_comprometidos,
                     categoria_id,       notas
                 ) VALUES (
                     :numero,    :anio,
                     :id_ic,     :id_prov,
                     :proforma,  'COMPRA_PREVIA',
-                    :fecha_ped, :quincena_id,
+                    :fecha_ped, :fecha_eta,        :quincena_id,
                     'ABIERTO',  :pares,
                     :categoria_id, :notas
                 )
@@ -2120,7 +2140,8 @@ def save_pp(header: dict, detalle_rows: list[dict]) -> tuple[bool, str]:
                 "id_prov":      int(header["id_proveedor"]),
                 "proforma":     str(header["numero_proforma"]).strip(),
                 "fecha_ped":    header.get("fecha_pedido")          or date.today(),
-                "quincena_id":  quincena_id,  # PROPAGADO DESDE IC
+                "fecha_eta":    fecha_eta_vieja,  # VIEJO - crítico para RIMEC Web
+                "quincena_id":  quincena_id,      # NUEVO - cable de acero reforzado
                 "pares":        total_pares,
                 "categoria_id": categoria_id,
                 "notas":        header.get("observaciones")         or None,
