@@ -222,6 +222,12 @@ def get_pedidos_pendientes() -> list[dict]:
         LEFT JOIN usuario_v2 v ON v.id_usuario = pvr.vendedor_id
         LEFT JOIN plazo_v2 p ON p.id_plazo = pvr.plazo_id
         WHERE pvr.estado = 'PENDIENTE'
+          -- Solo mostrar pedidos que tienen FIs en estado RESERVADA (pendientes de confirmar)
+          AND EXISTS (
+              SELECT 1 FROM factura_interna fi
+              WHERE fi.pedido_id = pvr.id
+                AND fi.estado = 'RESERVADA'
+          )
         ORDER BY pvr.created_at DESC
     """)
     if df is None or df.empty:
