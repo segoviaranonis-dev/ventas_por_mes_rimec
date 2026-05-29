@@ -417,7 +417,7 @@ def provisionar_linea_pilar_clonando_inferior(
                     SELECT DISTINCT referencia_codigo::bigint AS rc
                     FROM precio_lista
                     WHERE evento_id = CAST(:eid AS bigint)
-                      AND linea_codigo = CAST(:ln AS bigint)
+                      AND linea_codigo::bigint = :ln
                       AND referencia_codigo IS NOT NULL
                     """
                 ),
