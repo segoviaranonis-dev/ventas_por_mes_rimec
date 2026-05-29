@@ -142,6 +142,7 @@ def _obtener_facturas_del_pedido(pedido_id: int) -> List[Dict]:
             fi.nro_factura,
             fi.pp_id,
             pp.numero_registro as pp_nro,
+            qa.descripcion as quincena_llegada,
             fi.marca_id,
             fi.marca as marca_nombre,
             fi.caso_id,
@@ -165,6 +166,7 @@ def _obtener_facturas_del_pedido(pedido_id: int) -> List[Dict]:
             pc.imagen_url,
             ppd.id_color,
             col.nombre as color_nombre,
+            ppd.descp_material as material_nombre,
             fid.gradas,
             fid.cajas,
             fid.pares,
@@ -175,6 +177,7 @@ def _obtener_facturas_del_pedido(pedido_id: int) -> List[Dict]:
 
         FROM public.factura_interna fi
         LEFT JOIN public.pedido_proveedor pp ON pp.id = fi.pp_id
+        LEFT JOIN public.quincena_arribo qa ON qa.id = pp.quincena_arribo_id
         LEFT JOIN public.factura_interna_detalle fid ON fid.factura_id = fi.id
         LEFT JOIN public.pedido_proveedor_det ppd ON ppd.id = fid.ppd_id
         LEFT JOIN public.producto_cab pc ON pc.id = ppd.id_producto_cab
@@ -211,6 +214,7 @@ def _obtener_facturas_del_pedido(pedido_id: int) -> List[Dict]:
                 "nro_factura": row["nro_factura"],
                 "pp_id": int(row["pp_id"]) if row["pp_id"] else None,
                 "pp_nro": row["pp_nro"] or "SIN PP",
+                "quincena": row.get("quincena_llegada") or "Sin definir",
                 "marca": row["marca_nombre"] or "SIN MARCA",
                 "caso": row["caso_nombre"] or "SIN CASO",
                 "items": [],
@@ -243,13 +247,14 @@ def _obtener_facturas_del_pedido(pedido_id: int) -> List[Dict]:
                 "sku": row["sku"] or "N/A",
                 "linea_codigo": row["linea_codigo"] or linea_snapshot.get("linea_codigo", "N/A"),
                 "ref_codigo": row["ref_codigo"] or linea_snapshot.get("ref_codigo", "N/A"),
-                "nombre": row["producto_nombre"] or linea_snapshot.get("material_nombre", "Sin nombre"),
+                "nombre": row["material_nombre"] or linea_snapshot.get("material_nombre", "Sin material"),
                 "imagen_url": row["imagen_url"] or linea_snapshot.get("imagen_url"),
                 "color_nombre": row["color_nombre"] or linea_snapshot.get("color_nombre", "Sin color"),
                 "gradas": row["gradas"],
                 "gradas_fmt": linea_snapshot.get("gradas_fmt") or _formatear_gradas(row["gradas"]),
                 "cajas": int(row["cajas"]) if row["cajas"] else 0,
                 "pares": int(row["pares"]) if row["pares"] else 0,
+                "precio_unit": float(row["precio_unit"] or 0),
                 "precio_neto": float(row["precio_neto"] or 0),
                 "subtotal": float(row["subtotal"] or 0)
             }
