@@ -788,8 +788,15 @@ def _render_tarjeta_pendiente(p: dict):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def render_aprobacion():
-    st.markdown("## ✅ Aprobación de Pedidos RIMEC")
-    st.caption("Flujo: Aprobar célula → FI RESERVADA → Confirmar individualmente → FI CONFIRMADA")
+    # Header con botón de refresh
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        st.markdown("## ✅ Aprobación de Pedidos RIMEC")
+        st.caption("Flujo: Aprobar célula → FI RESERVADA → Confirmar individualmente → FI CONFIRMADA")
+    with col2:
+        if st.button("🔄 Refrescar", use_container_width=True, help="Recargar pedidos sin perder sesión"):
+            st.cache_data.clear()
+            st.rerun()
 
     tab_pend, tab_res, tab_conf, tab_anul = st.tabs([
         "📋 Pendientes",
