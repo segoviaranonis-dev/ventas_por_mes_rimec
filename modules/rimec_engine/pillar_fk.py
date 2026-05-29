@@ -421,7 +421,7 @@ def provisionar_linea_pilar_clonando_inferior(
                       AND referencia_codigo IS NOT NULL
                     """
                 ),
-                {"eid": int(evento_id), "ln": ln},
+                {"eid": int(evento_id), "ln": int(ln)},
             ).fetchall()
             for row in ev_rows:
                 if row[0] is not None:
