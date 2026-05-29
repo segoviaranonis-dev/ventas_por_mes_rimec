@@ -271,26 +271,48 @@ class PDFEngine:
             story.append(meta_table)
             story.append(Spacer(1, 3*mm))
 
-            # Tabla de items
-            items_data = [['Producto', 'Gradas', 'Cajas', 'Pares', 'Precio Unit.', 'Subtotal']]
+            # Tabla de items (con imagen y material)
+            items_data = [['', 'Producto', 'Gradas', 'Cj', 'Ps', 'Sin Desc', 'Con Desc', 'Subtotal']]
 
             for item in factura.get('items', []):
-                nombre = f"L{item['linea_codigo']}:R{item['ref_codigo']}"
+                # Imagen del producto (thumbnail pequeño)
+                img_cell = ""
+                if item.get('imagen_url'):
+                    try:
+                        import urllib.request
+                        from urllib.error import URLError
+                        # Intentar cargar imagen desde URL
+                        with urllib.request.urlopen(item['imagen_url'], timeout=3) as response:
+                            img_data = BytesIO(response.read())
+                            img = RLImage(img_data, width=12*mm, height=12*mm)
+                            img_cell = img
+                    except (URLError, Exception):
+                        # Si falla, usar placeholder
+                        img_cell = "📦"
+                else:
+                    img_cell = "📦"
+
+                # Nombre del producto con material
+                producto_nombre = f"{item['linea_codigo']}-{item['ref_codigo']}"
+                if item.get('nombre'):  # Material
+                    producto_nombre += f"\n{item['nombre']}"
                 if item.get('color_nombre'):
-                    nombre += f"\n{item['color_nombre']}"
+                    producto_nombre += f"\n{item['color_nombre']}"
 
                 items_data.append([
-                    nombre,
+                    img_cell,
+                    producto_nombre,
                     item.get('gradas_fmt', ''),
                     str(item.get('cajas', 0)),
                     str(item.get('pares', 0)),
+                    f"Gs. {item.get('precio_unit', 0):,.0f}".replace(',', '.'),
                     f"Gs. {item.get('precio_neto', 0):,.0f}".replace(',', '.'),
                     f"Gs. {item.get('subtotal', 0):,.0f}".replace(',', '.')
                 ])
 
             items_table = Table(
                 items_data,
-                colWidths=[60*mm, 40*mm, 20*mm, 20*mm, 25*mm, 25*mm]
+                colWidths=[15*mm, 45*mm, 28*mm, 12*mm, 12*mm, 22*mm, 22*mm, 24*mm]
             )
             items_table.setStyle(TableStyle([
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
