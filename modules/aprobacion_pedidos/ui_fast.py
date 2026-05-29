@@ -176,11 +176,22 @@ def render_editar_items_inline(fi: dict):
 
         for idx, item in enumerate(detalles):
             item_id = int(item["id"])
+
+            # Parsear linea_snapshot
+            snap = item.get("linea_snapshot", {})
+            if not isinstance(snap, dict):
+                snap = {}
+
+            linea_codigo = snap.get("linea_codigo", "?")
+            ref_codigo = snap.get("ref_codigo", "?")
+            color_nombre = snap.get("color_nombre", "?")
+            gradas_fmt = snap.get("gradas_fmt", "")
+
             col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
 
             with col1:
-                st.markdown(f"**{item['linea_codigo']}-{item['ref_codigo']}**")
-                st.caption(f"{item['color_nombre']} • {item['gradas_fmt']}")
+                st.markdown(f"**{linea_codigo}-{ref_codigo}**")
+                st.caption(f"{color_nombre} • {gradas_fmt}")
 
             with col2:
                 new_cajas = st.number_input(
