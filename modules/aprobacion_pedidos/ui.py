@@ -858,7 +858,8 @@ def render_aprobacion():
                 )
 
                 # Expanders de edición DIRECTOS (se abren instantáneamente)
-                col1, col2, col3, col4 = st.columns(4)
+                # Fila 1: Acciones rápidas (compactas)
+                col1, col2, col3 = st.columns(3)
 
                 with col1:
                     if st.button("📄 Ver PDF", key=f"pdf_conf_{fi_id}", use_container_width=True):
@@ -872,9 +873,9 @@ def render_aprobacion():
                     with st.expander("👤 Cliente", expanded=False):
                         render_cambiar_cliente_inline(fi)
 
-                with col4:
-                    with st.expander("📦 Items", expanded=False):
-                        render_editar_items_inline(fi)
+                # Fila 2: Items (necesita más espacio por su contenido extenso)
+                with st.expander("📦 Items - Editar Cantidades", expanded=False):
+                    render_editar_items_inline(fi)
 
                 st.markdown("---")
 
