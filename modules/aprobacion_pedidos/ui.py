@@ -209,6 +209,8 @@ def _confirmar_fi_action(fi: dict):
     if ok:
         celebrate_save(msg, modulo="Aprobaciones", contexto="factura_creada", balloons=True)
         import time; time.sleep(0.5)
+        # Limpiar cache para forzar refresh de datos
+        st.cache_data.clear()
         st.rerun()
     else:
         st.error(msg)
@@ -248,6 +250,8 @@ def _render_dialogo_anulacion(fi_id: int, key_suffix: str = ""):
                         balloons=False,
                     )
                     import time; time.sleep(0.5)
+                    # Limpiar cache para forzar refresh de datos
+                    st.cache_data.clear()
                     st.rerun()
                 else:
                     st.error(msg)
