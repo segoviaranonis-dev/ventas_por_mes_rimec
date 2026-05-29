@@ -74,7 +74,7 @@ def _obtener_metadata_pedido(pedido_id: int) -> Optional[Dict]:
             c.id_cliente as cliente_codigo,
             c.descp_cliente as cliente_nombre,
             pvr.vendedor_id,
-            v.nombre as vendedor_nombre,
+            v.descp_usuario as vendedor_nombre,
             pvr.lista_precio_id,
             'Lista ' || CAST(pvr.lista_precio_id AS TEXT) as lista_nombre,
             pvr.plazo_id,
