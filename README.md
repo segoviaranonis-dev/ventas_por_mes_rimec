@@ -1,13 +1,19 @@
-# RIMEC — Nexus (ventas_por_mes_rimec-main)
+# RIMEC — Nexus Core
 
 Plataforma operativa Importadora RIMEC: Streamlit + Supabase.  
-Tienda Bazar: repo hermano **`rimec-web`** (Next.js).
+Repos hermanos:
+
+- **`report`**: Sales Report, Retail y Ventas con Fotos.
+- **`rimec-web`**: venta mayorista / tránsito.
+- **`bazzar-web`**: tienda Bazar / venta final.
 
 ## Documentación principal
 
 | Documento | Uso |
 |-----------|-----|
-| [docs/RIMEC_CONTEXTO.md](docs/RIMEC_CONTEXTO.md) | Contexto sesión Maestro de Obras |
+| [docs/NEXUS_CORE_INDEX.md](docs/NEXUS_CORE_INDEX.md) | **Entrada canónica documental** |
+| [docs/NEXUS_HOLDING_MEMORIA_ESTRATEGICA.md](docs/NEXUS_HOLDING_MEMORIA_ESTRATEGICA.md) | Estrategia del holding |
+| [docs/NEXUS_HOLDING_REGLAS_CANONICAS.md](docs/NEXUS_HOLDING_REGLAS_CANONICAS.md) | Reglas unificadas |
 | [docs/OT_REGISTRO_ESTADO.md](docs/OT_REGISTRO_ESTADO.md) | **Estado de todas las OT** |
 | [docs/RIMEC_MISION_VISION_POLITICA.md](docs/RIMEC_MISION_VISION_POLITICA.md) | Norte estratégico |
 | [docs/RIMEC_PILARES_CINCO.md](docs/RIMEC_PILARES_CINCO.md) | 5 pilares + grada |
@@ -23,7 +29,7 @@ Próximo recomendado: **OT-FI-CASO-508 Fase 2** (persistir caso al crear FI).
 
 ```powershell
 cd ventas_por_mes_rimec-main
-streamlit run app.py
+streamlit run main.py
 ```
 
 Credenciales: `.streamlit/secrets.toml`

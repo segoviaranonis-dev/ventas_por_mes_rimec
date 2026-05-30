@@ -1,6 +1,8 @@
 # RIMEC — Contexto del Proyecto
-> Subir este archivo al inicio de cada sesión con el Maestro de Obras.
-> **Norte macro (misión/visión/política única):** `docs/RIMEC_MISION_VISION_POLITICA.md`
+> **Rol actual:** contexto histórico/operativo de mayo 2026.  
+> Para sesiones nuevas, entrar por `docs/NEXUS_CORE_INDEX.md`.
+> **Norte macro:** `docs/RIMEC_MISION_VISION_POLITICA.md`
+> **Memoria estratégica:** `docs/NEXUS_HOLDING_MEMORIA_ESTRATEGICA.md`
 > Última actualización: **17/05/2026** — Hilo operativo PP-2026-0001 **cerrado** (traspaso + depósito + precio web Bazar)  
 > **Registro OT:** `docs/OT_REGISTRO_ESTADO.md`
 
