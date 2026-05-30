@@ -64,22 +64,50 @@ class AuthManager:
         print(f"\n[KEY] [AUTH-MIC] >>> INICIANDO PROTOCOLO DE ACCESO")
         print(f"[SEARCH] [AUTH-MIC] Evaluando analista: '{user_clean}'")
 
-        # QUERY ACTUALIZADA: Apuntando a la estructura real de Supabase (usuario_v2)
+        # SECURITY: Query actualizada para bcrypt (incluye password_hash)
         query = """
-            SELECT id_usuario, descp_usuario, categoria
+            SELECT id_usuario, descp_usuario, categoria, password, password_hash
             FROM public.usuario_v2
             WHERE descp_usuario = :usuario
-            AND password = :pass
             LIMIT 1
         """
-        params = {"usuario": user_clean, "pass": password}
+        params = {"usuario": user_clean}
 
         try:
+            import bcrypt
+
             # Ejecución via Motor Central
             df = get_dataframe(query, params=params)
 
             if df is None or df.empty:
-                print(f"[WARN] [AUTH-MIC] RECHAZO: Credenciales inválidas para '{user_clean}'.")
+                print(f"[WARN] [AUTH-MIC] RECHAZO: Usuario '{user_clean}' no encontrado.")
+                AuthManager._registrar_fallo()
+                return False
+
+            user_data = df.iloc[0]
+            password_hash = user_data.get('password_hash')
+            password_plain = user_data.get('password')
+
+            # SECURITY: Verificar con bcrypt si existe hash
+            if password_hash:
+                if not bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8')):
+                    print(f"[WARN] [AUTH-MIC] RECHAZO: Contraseña incorrecta para '{user_clean}'.")
+                    AuthManager._registrar_fallo()
+                    return False
+            # FALLBACK temporal: Si no hay hash, verificar contra texto plano
+            elif password_plain and password_plain == password:
+                print(f"[WARN] [AUTH-MIC] Usuario '{user_clean}' usando password legacy - actualizando...")
+                # Actualizar a hash en próximo login
+                hash_new = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                from core.database import engine
+                from sqlalchemy import text
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("UPDATE usuario_v2 SET password_hash = :h WHERE id_usuario = :id"),
+                        {"h": hash_new, "id": user_data['id_usuario']}
+                    )
+            else:
+                print(f"[WARN] [AUTH-MIC] RECHAZO: Contraseña incorrecta para '{user_clean}'.")
                 AuthManager._registrar_fallo()
                 return False
 
