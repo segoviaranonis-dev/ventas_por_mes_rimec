@@ -834,10 +834,11 @@ def render_aprobacion():
             st.cache_data.clear()
             st.rerun()
 
-    tab_pend, tab_res, tab_conf, tab_anul = st.tabs([
+    tab_pend, tab_res, tab_conf, tab_edit, tab_anul = st.tabs([
         "📋 Pendientes",
         "⏳ Reservadas",
         "✅ Confirmadas",
+        "✏️ Editados",
         "❌ Anuladas",
     ])
 
@@ -919,6 +920,34 @@ def render_aprobacion():
                     with st.expander("📦 Items - Editar cantidades", expanded=False):
                         render_editar_items_inline(fi)
                     st.markdown('</div>', unsafe_allow_html=True)
+
+                st.markdown("---")
+
+    # ── Tab Editados: pedidos web confirmados y luego modificados ─────────
+    with tab_edit:
+        from .logic import get_pedidos_editados
+        pedidos_editados = get_pedidos_editados()
+        if not pedidos_editados:
+            st.info("No hay pedidos editados después de confirmación.", icon="✏️")
+        else:
+            st.caption(f"{len(pedidos_editados)} pedido(s) modificado(s) post-confirmación")
+            st.markdown("---")
+            for p in pedidos_editados:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.markdown(f"### {p.get('nro_pedido', 'Sin número')}")
+                    st.caption(f"Cliente: {p.get('cliente_nombre', 'N/A')}")
+                with col2:
+                    st.metric("Pares", p.get('total_pares', 0))
+                    st.caption(_fmt_gs(p.get('total_monto', 0)))
+
+                # Mostrar FI asociadas
+                fis_del_pedido = get_fis_de_pedido(p['id'])
+                if fis_del_pedido:
+                    with st.expander(f"📦 {len(fis_del_pedido)} Factura(s) Interna(s)", expanded=False):
+                        for fi in fis_del_pedido:
+                            if fi.get('estado') != 'ANULADA':
+                                st.markdown(f"**{fi.get('nro_factura')}**: {fi.get('total_pares')} pares | {_fmt_gs(fi.get('total_monto'))}")
 
                 st.markdown("---")
 

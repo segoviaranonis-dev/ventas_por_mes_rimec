@@ -264,6 +264,24 @@ def get_pedidos_rechazados() -> list[dict]:
     return df.to_dict("records") if df is not None and not df.empty else []
 
 
+def get_pedidos_editados() -> list[dict]:
+    """
+    Retorna pedidos web con estado EDITADO (confirmados y luego modificados).
+    OT-NEXUS-PEDIDO-WEB-EDITADO-CABECERA-001
+    """
+    df = get_dataframe("""
+        SELECT pvr.id, pvr.nro_pedido,
+               c.descp_cliente AS cliente_nombre,
+               pvr.total_pares, pvr.total_monto, pvr.created_at
+        FROM pedido_venta_rimec pvr
+        LEFT JOIN cliente_v2 c ON c.id_cliente = pvr.cliente_id
+        WHERE pvr.estado = 'EDITADO'
+        ORDER BY pvr.created_at DESC
+        LIMIT 50
+    """)
+    return df.to_dict("records") if df is not None and not df.empty else []
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # NUMERACIÓN PV-YYYY-XXXX
 # ─────────────────────────────────────────────────────────────────────────────
@@ -973,6 +991,76 @@ def _get_pedido_id_from_fi(fi_id: int) -> int | None:
     return int(df.iloc[0]["pedido_id"])
 
 
+def recalcular_pedido_web_desde_fis(pedido_id: int, marcar_editado: bool = True) -> tuple[bool, str]:
+    """
+    Recalcula total_pares y total_monto de un pedido web desde sus FI no anuladas.
+    Si marcar_editado=True y el pedido estaba CONFIRMADO, lo marca como EDITADO.
+
+    OT-NEXUS-PEDIDO-WEB-EDITADO-CABECERA-001
+    """
+    if not pedido_id:
+        return False, "pedido_id requerido"
+
+    # Sumar FI no anuladas
+    df = get_dataframe("""
+        SELECT
+            COALESCE(SUM(total_pares), 0) AS total_pares,
+            COALESCE(SUM(total_monto), 0) AS total_monto
+        FROM factura_interna
+        WHERE pedido_id = :pedido_id
+          AND estado <> 'ANULADA'
+    """, {"pedido_id": pedido_id})
+
+    if df is None or df.empty:
+        return False, "No se pudo calcular totales"
+
+    nuevos_pares = int(df.iloc[0]["total_pares"])
+    nuevo_monto = float(df.iloc[0]["total_monto"])
+
+    # Obtener estado actual del pedido
+    df_pedido = get_dataframe("""
+        SELECT estado, total_pares, total_monto
+        FROM pedido_venta_rimec
+        WHERE id = :pedido_id
+    """, {"pedido_id": pedido_id})
+
+    if df_pedido is None or df_pedido.empty:
+        return False, f"Pedido {pedido_id} no encontrado"
+
+    estado_actual = df_pedido.iloc[0]["estado"]
+    pares_viejos = int(df_pedido.iloc[0]["total_pares"])
+    monto_viejo = float(df_pedido.iloc[0]["total_monto"])
+
+    # Determinar nuevo estado
+    nuevo_estado = estado_actual
+    if marcar_editado and estado_actual in ("CONFIRMADO", "AUTORIZADO", "APROBADO"):
+        # Solo marcar EDITADO si hubo cambio real
+        if nuevos_pares != pares_viejos or nuevo_monto != monto_viejo:
+            nuevo_estado = "EDITADO"
+
+    # Actualizar pedido
+    with engine.begin() as conn:
+        conn.execute(sqlt("""
+            UPDATE pedido_venta_rimec
+            SET total_pares = :pares,
+                total_monto = :monto,
+                estado = :estado
+            WHERE id = :pedido_id
+        """), {
+            "pedido_id": pedido_id,
+            "pares": nuevos_pares,
+            "monto": nuevo_monto,
+            "estado": nuevo_estado
+        })
+
+    msg = f"Pedido {pedido_id} recalculado: {nuevos_pares} pares, Gs. {int(nuevo_monto):,}".replace(",", ".")
+    if nuevo_estado != estado_actual:
+        msg += f" | Estado: {estado_actual} > {nuevo_estado}"
+
+    print(f"[PEDIDO] {msg}")
+    return True, msg
+
+
 def _verificar_todas_fis_confirmadas(pedido_id: int) -> bool:
     """Verifica si TODAS las FIs de un pedido están CONFIRMADAS."""
     df = get_dataframe("""
@@ -1489,6 +1577,12 @@ def modificar_cantidad_item_fi(
         )
 
         DBInspector.log(f"[FI] Item {fi_detalle_id} cantidad modificada: {cajas_antiguas} cajas ({pares_antiguos} pares) → {nuevas_cajas} cajas ({nuevos_pares} pares)", "SUCCESS")
+
+        # OT-NEXUS-PEDIDO-WEB-EDITADO-CABECERA-001: Recalcular cabecera del pedido web
+        pedido_id = _get_pedido_id_from_fi(fi_id)
+        if pedido_id:
+            recalcular_pedido_web_desde_fis(pedido_id, marcar_editado=True)
+
         return True, f"✅ {nuevas_cajas} cajas × {pares_por_caja} pares/caja = {nuevos_pares} pares. Subtotal: Gs. {nuevo_subtotal:,.0f}"
 
     except Exception as e:
