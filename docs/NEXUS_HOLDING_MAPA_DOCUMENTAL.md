@@ -12,8 +12,10 @@ Leer en este orden:
 1. `docs/NEXUS_CORE_INDEX.md`
 2. `docs/NEXUS_HOLDING_MEMORIA_ESTRATEGICA.md`
 3. `docs/NEXUS_HOLDING_REGLAS_CANONICAS.md`
-4. `docs/RIMEC_MISION_VISION_POLITICA.md`
-5. `docs/OT_REGISTRO_ESTADO.md`
+4. `docs/NEXUS_HOLDING_MANUAL_PROCEDIMIENTOS.md`
+5. `docs/NEXUS_HOLDING_PROTOCOLO_CLAUDE_CODE.md`
+6. `docs/RIMEC_MISION_VISION_POLITICA.md`
+7. `docs/OT_REGISTRO_ESTADO.md`
 
 ---
 
@@ -23,6 +25,8 @@ Leer en este orden:
 |---|---|
 | `docs/NEXUS_HOLDING_MEMORIA_ESTRATEGICA.md` | Estrategia de absorcion y vision del holding |
 | `docs/NEXUS_HOLDING_REGLAS_CANONICAS.md` | Reglas compactas para agentes/humanos |
+| `docs/NEXUS_HOLDING_MANUAL_PROCEDIMIENTOS.md` | Manual operativo único |
+| `docs/NEXUS_HOLDING_PROTOCOLO_CLAUDE_CODE.md` | Protocolo de comunicacion con Claude Code |
 | `docs/RIMEC_MISION_VISION_POLITICA.md` | Politica macro de Nexus/RIMEC |
 | `docs/RIMEC_NOMENCLATURA_PILARES.md` | Lexico P0 de pilares |
 | `docs/RIMEC_PILARES_CINCO.md` | Modelo de 5 pilares y grada |
@@ -42,6 +46,9 @@ Leer en este orden:
 | `docs/DEPLOY_VERCEL_512.md` | Deploy Vercel |
 | `DISASTER_RECOVERY.md` | Recuperacion |
 | `CONFIGURAR_BACKUPS.md` | Backups |
+| `docs/ot/README.md` | Sistema nuevo de OT |
+| `docs/ot/INDICE_OT.md` | Índice de OT nuevas |
+| `docs/ot/PLANTILLA_OT.md` | Plantilla oficial |
 
 ---
 

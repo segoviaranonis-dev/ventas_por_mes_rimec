@@ -5,7 +5,9 @@ Antes de modificar código o documentación, leer:
 1. `docs/NEXUS_CORE_INDEX.md`
 2. `docs/NEXUS_HOLDING_MEMORIA_ESTRATEGICA.md`
 3. `docs/NEXUS_HOLDING_REGLAS_CANONICAS.md`
-4. `.cursor/rules/*.mdc`
+4. `docs/NEXUS_HOLDING_MANUAL_PROCEDIMIENTOS.md`
+5. `docs/NEXUS_HOLDING_PROTOCOLO_CLAUDE_CODE.md`
+6. `.cursor/rules/*.mdc`
 
 ## Rol de este repo
 

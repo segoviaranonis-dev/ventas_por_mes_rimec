@@ -11,9 +11,11 @@
 |---|---|---|
 | 1 | [NEXUS_HOLDING_MEMORIA_ESTRATEGICA.md](NEXUS_HOLDING_MEMORIA_ESTRATEGICA.md) | Por qué existe Nexus y hacia dónde va |
 | 2 | [NEXUS_HOLDING_REGLAS_CANONICAS.md](NEXUS_HOLDING_REGLAS_CANONICAS.md) | Reglas unificadas para agentes y ejecución |
-| 3 | [NEXUS_HOLDING_MAPA_DOCUMENTAL.md](NEXUS_HOLDING_MAPA_DOCUMENTAL.md) | Qué documento leer y cuál es histórico |
-| 4 | [RIMEC_MISION_VISION_POLITICA.md](RIMEC_MISION_VISION_POLITICA.md) | Política macro RIMEC/Nexus |
-| 5 | [OT_REGISTRO_ESTADO.md](OT_REGISTRO_ESTADO.md) | Estado vivo de OT |
+| 3 | [NEXUS_HOLDING_MANUAL_PROCEDIMIENTOS.md](NEXUS_HOLDING_MANUAL_PROCEDIMIENTOS.md) | Procedimiento diario de trabajo |
+| 4 | [NEXUS_HOLDING_PROTOCOLO_CLAUDE_CODE.md](NEXUS_HOLDING_PROTOCOLO_CLAUDE_CODE.md) | Comunicación robusta con Claude Code |
+| 5 | [NEXUS_HOLDING_MAPA_DOCUMENTAL.md](NEXUS_HOLDING_MAPA_DOCUMENTAL.md) | Qué documento leer y cuál es histórico |
+| 6 | [RIMEC_MISION_VISION_POLITICA.md](RIMEC_MISION_VISION_POLITICA.md) | Política macro RIMEC/Nexus |
+| 7 | [OT_REGISTRO_ESTADO.md](OT_REGISTRO_ESTADO.md) | Estado vivo de OT histórico |
 
 ---
 
@@ -39,6 +41,9 @@
 | [DEPLOY_MAPA_URLS.md](DEPLOY_MAPA_URLS.md) | Mapa deploy |
 | [DEPLOY_STREAMLIT_512.md](DEPLOY_STREAMLIT_512.md) | Deploy Streamlit |
 | [DEPLOY_VERCEL_512.md](DEPLOY_VERCEL_512.md) | Deploy Vercel |
+| [ot/README.md](ot/README.md) | Sistema nuevo de OT |
+| [ot/INDICE_OT.md](ot/INDICE_OT.md) | Índice de OT nuevas |
+| [ot/PLANTILLA_OT.md](ot/PLANTILLA_OT.md) | Plantilla oficial de OT |
 
 ---
 

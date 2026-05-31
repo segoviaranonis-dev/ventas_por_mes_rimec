@@ -11,12 +11,14 @@ Cuando haya conflicto, manda este orden:
 
 1. **Orden directa del Director** en la conversacion actual.
 2. `docs/NEXUS_HOLDING_MEMORIA_ESTRATEGICA.md` — direccion y estrategia.
-3. `docs/RIMEC_MISION_VISION_POLITICA.md` — politica macro RIMEC/Nexus.
-4. `docs/RIMEC_NOMENCLATURA_PILARES.md` y `docs/RIMEC_PILARES_CINCO.md` — datos/pilares.
-5. `.cursor/rules/*.mdc` — reglas ejecutables para agentes.
-6. `docs/OT_REGISTRO_ESTADO.md` — estado vivo de OT.
-7. OT individuales, auditorias y evidencias.
-8. README antiguos, contextos historicos y docs de modulo.
+3. `docs/NEXUS_HOLDING_MANUAL_PROCEDIMIENTOS.md` — forma de trabajar.
+4. `docs/NEXUS_HOLDING_PROTOCOLO_CLAUDE_CODE.md` — comunicación con ejecutores.
+5. `docs/RIMEC_MISION_VISION_POLITICA.md` — politica macro RIMEC/Nexus.
+6. `docs/RIMEC_NOMENCLATURA_PILARES.md` y `docs/RIMEC_PILARES_CINCO.md` — datos/pilares.
+7. `.cursor/rules/*.mdc` — reglas ejecutables para agentes.
+8. `docs/OT_REGISTRO_ESTADO.md` y `docs/ot/INDICE_OT.md` — estado vivo de OT.
+9. OT individuales, auditorias y evidencias.
+10. README antiguos, contextos historicos y docs de modulo.
 
 ---
 
