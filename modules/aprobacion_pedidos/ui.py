@@ -490,18 +490,39 @@ def _dialog_editar_items():
             pares_por_caja = _calcular_pares_por_caja_desde_snapshot(linea_snapshot)
             new_pares = new_cajas * pares_por_caja
 
-            # Mostrar pares calculados (sin estado persistente)
+            # Mostrar pares calculados sin estado persistente.
+            # Estilos inline para blindar contraste ante modo claro/oscuro del navegador.
             st.markdown(
                 f"""
-                <div style='background: #F1F5F9; border-radius: 6px; padding: 8px 12px;
-                            border: 1px solid #E2E8F0; text-align: center;'>
-                    <div style='font-size: 0.65rem; color: #94A3B8; text-transform: uppercase;
-                                letter-spacing: 0.5px; margin-bottom: 2px;'>Pares</div>
-                    <div style='font-size: 1.4rem; font-weight: 700; color: #1E293B;
-                                line-height: 1.2;'>{new_pares}</div>
-                    <div style='font-size: 0.7rem; color: #64748B; margin-top: 4px;'>
-                        {new_cajas} × {pares_por_caja} = {new_pares}
-                    </div>
+                <div style="
+                    background:#111827;
+                    border:1px solid rgba(212,175,55,.45);
+                    border-radius:10px;
+                    padding:8px 12px;
+                    text-align:center;
+                    min-height:54px;
+                    box-shadow:inset 0 1px 0 rgba(255,255,255,.05), 0 6px 16px rgba(0,0,0,.18);
+                ">
+                    <div style="
+                        font-size:.64rem;
+                        color:#CBD5E1;
+                        text-transform:uppercase;
+                        letter-spacing:.08em;
+                        font-weight:800;
+                    ">Pares</div>
+                    <div style="
+                        font-size:1.35rem;
+                        font-weight:900;
+                        color:#FFFFFF;
+                        line-height:1.15;
+                        font-variant-numeric:tabular-nums;
+                    ">{new_pares}</div>
+                    <div style="
+                        font-size:.70rem;
+                        color:#D4AF37;
+                        margin-top:3px;
+                        font-weight:700;
+                    ">{new_cajas} × {pares_por_caja} = {new_pares}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
