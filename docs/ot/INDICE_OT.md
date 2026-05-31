@@ -10,8 +10,10 @@
 | OT | Repo | Estado | Nota |
 |---|---|---|---|
 | OT-REPORT-VENTAS-FOTOS-001 | `report` | EN_REVISION_GPT | Corrección de molécula `imagen` L-R-M-C y filtro CALZADOS |
-| OT-REPORT-PDF-HOLDING-002 | `report` | LISTA_PARA_CLAUDE | Reutilizar arquitectura PDF de `rimec-web` |
-| OT-REPORT-PDF-ESTADISTICAS-003 | `report` | BORRADOR | Primera página PDF con género/estilo, torta y barras |
+| OT-REPORT-PDF-HOLDING-002 | `report` | EN_REVISION_GPT | Reutilizar arquitectura PDF de `rimec-web` |
+| OT-REPORT-PDF-ESTADISTICAS-005 | `report` | EN_EJECUCION | Primera página PDF con estadísticas por pilares |
+| OT-NEXUS-FI-EDITAR-ITEMS-ROBUSTEZ-001 | `ventas_por_mes_rimec` | LISTA_PARA_EJECUTAR | Corregir edición FI para cajas/pares y retorno de saldo |
+| OR-NEXUS-PP-2DA-MAYO-PRECHECK-001 | `ventas_por_mes_rimec` | LISTA_PARA_EJECUTAR | Verificar PP de 2da mayo antes de Pasar a Compra |
 
 ---
 

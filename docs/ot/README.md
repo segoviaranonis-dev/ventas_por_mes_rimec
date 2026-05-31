@@ -12,9 +12,11 @@ docs/ot/
   README.md
   PLANTILLA_OT.md
   INDICE_OT.md
+  COLA_TRABAJO.md
   en_curso/
   cerradas/
   evidencia/
+  respuestas/
 ```
 
 | Carpeta | Uso |
@@ -22,6 +24,7 @@ docs/ot/
 | `en_curso/` | OT activas o listas para Claude Code |
 | `cerradas/` | OT ejecutadas y aprobadas |
 | `evidencia/` | Logs, capturas, videos, resultados |
+| `respuestas/` | Reportes finales de MARTA y YAMBAI |
 
 ---
 
@@ -49,11 +52,13 @@ OT-BAZZAR-CHECKOUT-STOCK-001.md
 
 1. GPT redacta OT.
 2. OT entra en `en_curso/`.
-3. Claude Code ejecuta.
-4. Evidencia se guarda en `evidencia/`.
-5. GPT verifica.
-6. Si pasa, OT se mueve a `cerradas/`.
-7. Se actualiza `INDICE_OT.md`.
+3. La OT se registra en `COLA_TRABAJO.md` para MARTA o YAMBAI.
+4. El albañil ejecuta la primera OT `LISTA_PARA_EJECUTAR`.
+5. Evidencia se guarda en `evidencia/`.
+6. Respuesta se guarda en `respuestas/<ALBANIL>/`.
+7. GPT verifica.
+8. Si pasa, OT se mueve a `cerradas/`.
+9. Se actualizan `INDICE_OT.md` y `COLA_TRABAJO.md`.
 
 ---
 
@@ -73,3 +78,23 @@ OT-BAZZAR-CHECKOUT-STOCK-001.md
 ## Regla de oro
 
 Sin OT o instrucción directa clara, no se toca código crítico.
+
+---
+
+## Comandos humanos
+
+El Director puede decir:
+
+```txt
+MARTA, ejecutá tu OT pendiente.
+YAMBAI, ejecutá tu OT pendiente.
+```
+
+Y al terminar:
+
+```txt
+MARTA terminó.
+YAMBAI terminó.
+```
+
+GPT buscará la respuesta en `COLA_TRABAJO.md`.

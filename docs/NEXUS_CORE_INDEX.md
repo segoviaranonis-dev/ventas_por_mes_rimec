@@ -43,7 +43,9 @@
 | [DEPLOY_VERCEL_512.md](DEPLOY_VERCEL_512.md) | Deploy Vercel |
 | [ot/README.md](ot/README.md) | Sistema nuevo de OT |
 | [ot/INDICE_OT.md](ot/INDICE_OT.md) | Índice de OT nuevas |
+| [ot/COLA_TRABAJO.md](ot/COLA_TRABAJO.md) | Cola operativa MARTA/YAMBAI |
 | [ot/PLANTILLA_OT.md](ot/PLANTILLA_OT.md) | Plantilla oficial de OT |
+| [ot/PLANTILLA_RESPUESTA_ALBANIL.md](ot/PLANTILLA_RESPUESTA_ALBANIL.md) | Plantilla de respuesta/evidencia |
 
 ---
 

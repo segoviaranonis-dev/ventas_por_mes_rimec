@@ -33,3 +33,5 @@ Antes de modificar código o documentación, leer:
 - GPT conversa, planifica, audita y supervisa.
 - Claude Code ejecuta cambios concretos.
 - Si una orden afecta arquitectura, primero redactar una OT o checklist.
+- Cola operativa: `docs/ot/COLA_TRABAJO.md`.
+- Respuestas obligatorias: `docs/ot/respuestas/<ALBANIL>/<OT_ID>_RESPUESTA.md`.

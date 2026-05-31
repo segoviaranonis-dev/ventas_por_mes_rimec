@@ -8,10 +8,17 @@
 ## 1. Cadena de mando
 
 ```txt
-Director -> GPT -> OT escrita -> Claude Code -> evidencia -> GPT verifica -> Director decide
+Director -> GPT -> COLA_TRABAJO.md -> MARTA/YAMBAI -> respuesta/evidencia -> GPT verifica -> Director decide
 ```
 
 Claude Code puede proponer, pero no debe cambiar la estrategia sin aprobación.
+
+### Albañiles
+
+| Albañil | Herramienta | Frente |
+|---|---|---|
+| MARTA | Cursor Desktop | `report` |
+| YAMBAI | Claude Code | Nexus operativo |
 
 ---
 
@@ -50,7 +57,7 @@ Criterio de cierre:
 
 ## 4. Formato de respuesta obligatorio de Claude Code
 
-Claude Code debe responder con:
+Claude Code / Cursor debe responder usando `docs/ot/PLANTILLA_RESPUESTA_ALBANIL.md`:
 
 ```txt
 Resumen:
@@ -76,6 +83,12 @@ Commit/PR:
 ```
 
 Si no hay pruebas, debe decir: `No validado` y explicar por qué.
+
+La respuesta final debe guardarse en:
+
+```txt
+docs/ot/respuestas/<ALBANIL>/<OT_ID>_RESPUESTA.md
+```
 
 ---
 
