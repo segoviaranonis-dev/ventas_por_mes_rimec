@@ -916,7 +916,7 @@ def get_fi_detalles(fi_id: int) -> list[dict]:
     if df is None or df.empty:
         return []
     rows = df.to_dict("records")
-    # Parsear linea_snapshot
+    # Parsear linea_snapshot y aplanar campos al nivel superior
     for row in rows:
         snap = row.get("linea_snapshot")
         if isinstance(snap, str):
@@ -929,6 +929,15 @@ def get_fi_detalles(fi_id: int) -> list[dict]:
                     row["linea_snapshot"] = {}
         elif not isinstance(snap, dict):
             row["linea_snapshot"] = {}
+
+        # Aplanar campos del snapshot al nivel superior para acceso directo en UI
+        if isinstance(row["linea_snapshot"], dict):
+            row["linea_codigo"] = row["linea_snapshot"].get("linea_codigo", "")
+            row["ref_codigo"] = row["linea_snapshot"].get("ref_codigo", "")
+            row["material_nombre"] = row["linea_snapshot"].get("material_nombre", "")
+            row["color_nombre"] = row["linea_snapshot"].get("color_nombre", "")
+            row["gradas_fmt"] = row["linea_snapshot"].get("gradas_fmt", "")
+            row["imagen_url"] = row["linea_snapshot"].get("imagen_url", "")
     return rows
 
 
