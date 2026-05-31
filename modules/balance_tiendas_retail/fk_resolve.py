@@ -88,6 +88,34 @@ def _canon_codigo_pilar(v: Any) -> str:
     return s
 
 
+def safe_int_or_none(value: Any) -> int | None:
+    """
+    Convierte códigos de pilar a int de forma segura.
+    None / NaN / vacío / texto corrupto → None (no lanza excepción).
+    """
+    if value is None:
+        return None
+    if isinstance(value, float) and pd.isna(value):
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return int(value)
+    s = str(value).strip()
+    if not s or s.lower() in ("nan", "none", "<na>", "nat"):
+        return None
+    try:
+        f = float(s.replace(",", "."))
+        if pd.isna(f):
+            return None
+        i = int(f)
+        if float(i) != f:
+            return None
+        return i
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
 def _parse_codigo_bigint_non_negative(v: Any) -> int | None:
     """Entero no negativo para codigo_proveedor en linea/referencia; si no aplica → None."""
     s = _canon_codigo_pilar(v)
@@ -634,13 +662,9 @@ def _provision_missing_material_color_codes(engine: Engine, proveedor_id: int, d
     raw_mats: set[int] = set()
     raw_cols: set[int] = set()
     for _, row in df.iterrows():
-        try:
-            rm = int(float(row["material_id"]))
-        except (TypeError, ValueError):
-            continue
-        try:
-            rc = int(float(row["color_id"]))
-        except (TypeError, ValueError):
+        rm = safe_int_or_none(row["material_id"])
+        rc = safe_int_or_none(row["color_id"])
+        if rm is None or rc is None:
             continue
         if rm == SENTINEL_CODIGO_PROVEEDOR or rc == SENTINEL_CODIGO_PROVEEDOR:
             continue
@@ -974,21 +998,27 @@ def resolve_retail_fks(
             m_ge = int(attrs["grupo_estilo_id"]) if attrs["grupo_estilo_id"] is not None else ge_o
             m_t1 = int(attrs["tipo_1_id"]) if attrs["tipo_1_id"] is not None else t1_o
 
-        raw_mat = int(float(row["material_id"]))
-        if raw_mat in mat_ids:
+        raw_mat = safe_int_or_none(row["material_id"])
+        if raw_mat is None:
+            mpk = mat_o
+            warns.append("Material codigo invalido/NaN -> sentinela.")
+        elif raw_mat in mat_ids:
             mpk = raw_mat
         else:
             mpk = mat_by_cod.get(raw_mat, mat_o)
             if mpk == mat_o and raw_mat not in mat_ids and raw_mat not in mat_by_cod:
-                warns.append(f"Material codigo {raw_mat} no encontrado → fallback.")
+                warns.append(f"Material codigo {raw_mat} no encontrado -> fallback.")
 
-        raw_col = int(float(row["color_id"]))
-        if raw_col in col_ids:
+        raw_col = safe_int_or_none(row["color_id"])
+        if raw_col is None:
+            cpk = col_o
+            warns.append("Color codigo invalido/NaN -> sentinela.")
+        elif raw_col in col_ids:
             cpk = raw_col
         else:
             cpk = col_by_cod.get(raw_col, col_o)
             if cpk == col_o and raw_col not in col_ids and raw_col not in col_by_cod:
-                warns.append(f"Color codigo {raw_col} no encontrado → fallback.")
+                warns.append(f"Color codigo {raw_col} no encontrado -> fallback.")
 
         mids.append(mpk)
         cids.append(cpk)
