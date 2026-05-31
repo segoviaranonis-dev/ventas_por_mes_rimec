@@ -209,18 +209,22 @@ def render_editar_items_inline(fi: dict):
                 pares_por_caja = _calcular_pares_por_caja_desde_snapshot(linea_snapshot)
                 new_pares = new_cajas * pares_por_caja
 
-                # Mostrar pares calculados (readonly)
-                st.number_input(
-                    "Pares",
-                    min_value=0,
-                    value=new_pares,
-                    key=f"fast_pares_{item_id}_{idx}",
-                    label_visibility="collapsed",
-                    disabled=True,
-                    help=f"Calculado: {new_cajas} cajas × {pares_por_caja} pares/caja"
+                # Mostrar pares calculados (sin estado persistente)
+                st.markdown(
+                    f"""
+                    <div style='background: #F1F5F9; border-radius: 6px; padding: 8px 12px;
+                                border: 1px solid #E2E8F0; text-align: center;'>
+                        <div style='font-size: 0.65rem; color: #94A3B8; text-transform: uppercase;
+                                    letter-spacing: 0.5px; margin-bottom: 2px;'>Pares</div>
+                        <div style='font-size: 1.4rem; font-weight: 700; color: #1E293B;
+                                    line-height: 1.2;'>{new_pares}</div>
+                        <div style='font-size: 0.7rem; color: #64748B; margin-top: 4px;'>
+                            {new_cajas} × {pares_por_caja} = {new_pares}
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
                 )
-                # Mensaje de cálculo visible
-                st.caption(f"{new_cajas} × {pares_por_caja} = {new_pares}")
 
             with col4:
                 col_btn1, col_btn2 = st.columns(2)
