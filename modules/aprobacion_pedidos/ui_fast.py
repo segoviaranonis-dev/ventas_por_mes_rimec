@@ -25,9 +25,8 @@ def render_editar_descuentos_inline(fi: dict):
     # Container visual destacado
     with st.container():
         st.markdown(f"""
-        <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                    padding: 1rem; border-radius: 10px; margin: 1rem 0;'>
-            <h3 style='color: white; margin: 0;'>✏️ Editar Descuentos: {nro_factura}</h3>
+        <div class="nx-editor-header">
+            <h3>✏️ Editar descuentos: {nro_factura}</h3>
         </div>
         """, unsafe_allow_html=True)
 
@@ -102,9 +101,8 @@ def render_cambiar_cliente_inline(fi: dict):
 
     with st.container():
         st.markdown(f"""
-        <div style='background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-                    padding: 1rem; border-radius: 10px; margin: 1rem 0;'>
-            <h3 style='color: white; margin: 0;'>👤 Cambiar Cliente: {nro_factura}</h3>
+        <div class="nx-editor-header">
+            <h3>👤 Cambiar cliente: {nro_factura}</h3>
         </div>
         """, unsafe_allow_html=True)
 
@@ -161,9 +159,8 @@ def render_editar_items_inline(fi: dict):
 
     with st.container():
         st.markdown(f"""
-        <div style='background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-                    padding: 1rem; border-radius: 10px; margin: 1rem 0;'>
-            <h3 style='color: white; margin: 0;'>📦 Editar Items: {nro_factura}</h3>
+        <div class="nx-editor-header">
+            <h3>📦 Editar items: {nro_factura}</h3>
         </div>
         """, unsafe_allow_html=True)
 
@@ -212,15 +209,10 @@ def render_editar_items_inline(fi: dict):
                 # Mostrar pares calculados (sin estado persistente)
                 st.markdown(
                     f"""
-                    <div style='background: #F1F5F9; border-radius: 6px; padding: 8px 12px;
-                                border: 1px solid #E2E8F0; text-align: center;'>
-                        <div style='font-size: 0.65rem; color: #94A3B8; text-transform: uppercase;
-                                    letter-spacing: 0.5px; margin-bottom: 2px;'>Pares</div>
-                        <div style='font-size: 1.4rem; font-weight: 700; color: #1E293B;
-                                    line-height: 1.2;'>{new_pares}</div>
-                        <div style='font-size: 0.7rem; color: #64748B; margin-top: 4px;'>
-                            {new_cajas} × {pares_por_caja} = {new_pares}
-                        </div>
+                    <div class="nx-readonly-metric">
+                        <div class="label">Pares</div>
+                        <div class="value">{new_pares}</div>
+                        <div class="hint">{new_cajas} × {pares_por_caja} = {new_pares}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,

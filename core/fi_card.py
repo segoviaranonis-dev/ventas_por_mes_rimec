@@ -137,7 +137,7 @@ def render_fi_card(
     key_safe = f"{key_prefix}_{fi_id}"
 
     # ── Cabecera ───────────────────────────────────────────────────────────
-    col_header, col_estado, col_actions = st.columns([5, 1.2, 2])
+    col_header, col_estado = st.columns([5, 1.25])
 
     with col_header:
         st.markdown(
@@ -172,24 +172,24 @@ def render_fi_card(
             unsafe_allow_html=True,
         )
 
-    with col_actions:
-        if actions:
-            visibles = [
-                a for a in actions
-                if not a.get("show_if") or a["show_if"].upper() == estado.upper()
-            ]
-            if visibles:
-                cols = st.columns(len(visibles))
-                for col, action in zip(cols, visibles):
-                    with col:
-                        if st.button(
-                            action["label"],
-                            key=f"{key_safe}_{action['key']}",
-                            type=action.get("type") or "secondary",
-                            use_container_width=False,
-                        ):
-                            if action.get("on_click"):
-                                action["on_click"](fi)
+    if actions:
+        visibles = [
+            a for a in actions
+            if not a.get("show_if") or a["show_if"].upper() == estado.upper()
+        ]
+        if visibles:
+            with st.expander("⚙️ Acciones de factura interna", expanded=False):
+                st.markdown('<div class="nx-action-panel">', unsafe_allow_html=True)
+                for action in visibles:
+                    if st.button(
+                        action["label"],
+                        key=f"{key_safe}_{action['key']}",
+                        type=action.get("type") or "secondary",
+                        use_container_width=True,
+                    ):
+                        if action.get("on_click"):
+                            action["on_click"](fi)
+                st.markdown('</div>', unsafe_allow_html=True)
 
     # ── Encabezado Editable ────────────────────────────────────────────────
     if modo_edicion and estado.upper() == "RESERVADA" and on_actualizar:

@@ -179,24 +179,150 @@ def apply_ui_theme():
         }}
 
         /* ═══════════════════════════════════════════════════════════
-           4. BOTONES: Estilo Prestige
+           4. BOTONES / INPUTS: Controles profesionales y anti-wrap
            ═══════════════════════════════════════════════════════════ */
-        div.stButton > button {{
-            border-radius: 10px !important;
-            background-color: {COLOR_DEEP} !important;
+        div.stButton > button,
+        div[data-testid="stDownloadButton"] > button {{
+            border-radius: 11px !important;
+            background: linear-gradient(180deg, #111827 0%, {COLOR_DEEP} 100%) !important;
             color: {COLOR_GOLD} !important;
-            border: 1px solid {COLOR_GOLD} !important;
-            font-weight: 700 !important;
-            padding: 0.5rem 1rem !important;
+            border: 1px solid {COLOR_GOLD}CC !important;
+            font-weight: 800 !important;
+            padding: 0.62rem 0.9rem !important;
             width: 100% !important;
-            transition: all 0.25s ease;
+            min-height: 42px !important;
+            transition: all 0.20s ease !important;
+            white-space: nowrap !important;
+            word-break: keep-all !important;
+            overflow-wrap: normal !important;
+            line-height: 1.15 !important;
+            letter-spacing: .01em !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 8px 20px rgba(0,0,0,0.18) !important;
         }}
 
-        div.stButton > button:hover {{
-            background-color: {COLOR_GOLD} !important;
+        div.stButton > button *,
+        div[data-testid="stDownloadButton"] > button * {{
+            white-space: nowrap !important;
+            word-break: keep-all !important;
+            overflow-wrap: normal !important;
+        }}
+
+        div.stButton > button:hover,
+        div[data-testid="stDownloadButton"] > button:hover {{
+            background: linear-gradient(180deg, {COLOR_GOLD} 0%, #B99022 100%) !important;
             color: {COLOR_DEEP} !important;
-            box-shadow: 0 0 20px {COLOR_GOLD}55;
-            transform: translateY(-2px);
+            box-shadow: 0 0 20px {COLOR_GOLD}55 !important;
+            transform: translateY(-1px) !important;
+        }}
+
+        div.stButton > button[kind="primary"],
+        button[kind="primary"] {{
+            background: linear-gradient(180deg, #16A34A 0%, #15803D 100%) !important;
+            color: #FFFFFF !important;
+            border-color: rgba(34,197,94,0.55) !important;
+        }}
+
+        input, textarea,
+        [data-baseweb="input"] input,
+        [data-baseweb="select"] > div,
+        [data-baseweb="textarea"] textarea {{
+            background-color: #111827 !important;
+            color: {COLOR_TEXT} !important;
+            border-color: rgba(212,175,55,0.28) !important;
+            border-radius: 10px !important;
+        }}
+
+        input:disabled, textarea:disabled,
+        [aria-disabled="true"] {{
+            opacity: .92 !important;
+            -webkit-text-fill-color: {COLOR_TEXT} !important;
+        }}
+
+        /* Inputs numericos: evita que el navegador claro los pinte ilegibles */
+        [data-testid="stNumberInput"] input {{
+            text-align: center !important;
+            font-weight: 800 !important;
+            font-variant-numeric: tabular-nums !important;
+            background: #182235 !important;
+            color: #F8FAFC !important;
+        }}
+
+        /* ═══════════════════════════════════════════════════════════
+           4B. EXPANDERS / CONTENEDORES: acordeones limpios
+           ═══════════════════════════════════════════════════════════ */
+        [data-testid="stExpander"] {{
+            border: 1px solid rgba(212,175,55,0.28) !important;
+            border-radius: 14px !important;
+            background: rgba(26,28,37,0.72) !important;
+            overflow: hidden !important;
+            box-shadow: 0 8px 26px rgba(0,0,0,0.18) !important;
+            margin-bottom: .75rem !important;
+        }}
+
+        [data-testid="stExpander"] summary {{
+            background: rgba(30,41,59,0.72) !important;
+            color: {COLOR_TEXT} !important;
+            font-weight: 800 !important;
+            border-bottom: 1px solid rgba(255,255,255,0.05) !important;
+        }}
+
+        [data-testid="stExpander"] summary p,
+        [data-testid="stExpander"] summary span {{
+            color: {COLOR_TEXT} !important;
+        }}
+
+        .nx-action-panel {{
+            border: 1px solid rgba(212,175,55,0.18);
+            border-radius: 14px;
+            background: linear-gradient(180deg, rgba(15,23,42,.96), rgba(11,13,23,.98));
+            padding: 14px;
+            margin: 8px 0 16px 0;
+        }}
+
+        .nx-editor-header {{
+            background: linear-gradient(135deg, #162033 0%, #1F2A44 55%, #24314F 100%);
+            border: 1px solid rgba(212,175,55,0.24);
+            border-left: 4px solid {COLOR_GOLD};
+            border-radius: 14px;
+            padding: 16px 18px;
+            margin: 14px 0 18px 0;
+            box-shadow: 0 12px 28px rgba(0,0,0,.22);
+        }}
+
+        .nx-editor-header h3 {{
+            color: {COLOR_TEXT} !important;
+            margin: 0 !important;
+            letter-spacing: -.02em !important;
+        }}
+
+        .nx-readonly-metric {{
+            background: #121A2A;
+            border: 1px solid rgba(212,175,55,0.22);
+            border-radius: 10px;
+            padding: 8px 12px;
+            text-align: center;
+            min-height: 54px;
+        }}
+
+        .nx-readonly-metric .label {{
+            font-size: .64rem;
+            color: {settings.TEXT_MUTED} !important;
+            text-transform: uppercase;
+            letter-spacing: .08em;
+        }}
+
+        .nx-readonly-metric .value {{
+            font-size: 1.35rem;
+            font-weight: 900;
+            color: {COLOR_TEXT} !important;
+            line-height: 1.15;
+            font-variant-numeric: tabular-nums;
+        }}
+
+        .nx-readonly-metric .hint {{
+            font-size: .70rem;
+            color: #CBD5E1 !important;
+            margin-top: 3px;
         }}
 
         /* ═══════════════════════════════════════════════════════════

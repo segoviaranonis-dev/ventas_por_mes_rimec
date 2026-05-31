@@ -883,25 +883,21 @@ def render_aprobacion():
                     mostrar_detalle=False,
                 )
 
-                # Expanders de edición DIRECTOS (se abren instantáneamente)
-                # Fila 1: Acciones rápidas (compactas)
-                col1, col2, col3 = st.columns(3)
-
-                with col1:
+                # Acciones en acordeón: evita botones deformados por columnas estrechas.
+                with st.expander("⚙️ Acciones de esta FI", expanded=False):
+                    st.markdown('<div class="nx-action-panel">', unsafe_allow_html=True)
                     if st.button("📄 Ver PDF", key=f"pdf_conf_{fi_id}", use_container_width=True):
                         _ver_pdf_action(fi)
 
-                with col2:
-                    with st.expander("✏️ Descuentos", expanded=False):
+                    with st.expander("✏️ Editar descuentos", expanded=False):
                         render_editar_descuentos_inline(fi)
 
-                with col3:
-                    with st.expander("👤 Cliente", expanded=False):
+                    with st.expander("👤 Cambiar cliente", expanded=False):
                         render_cambiar_cliente_inline(fi)
 
-                # Fila 2: Items (necesita más espacio por su contenido extenso)
-                with st.expander("📦 Items - Editar Cantidades", expanded=False):
-                    render_editar_items_inline(fi)
+                    with st.expander("📦 Items - Editar cantidades", expanded=False):
+                        render_editar_items_inline(fi)
+                    st.markdown('</div>', unsafe_allow_html=True)
 
                 st.markdown("---")
 
