@@ -531,7 +531,6 @@ def _get_snapshot_pp(conn, id_pp: int) -> dict:
         SELECT
             pp.categoria_id,
             pp.pares_comprometidos,
-            pp.tipo_v2_id,
             icp.precio_evento_id
         FROM pedido_proveedor pp
         LEFT JOIN intencion_compra_pedido icp ON icp.pedido_proveedor_id = pp.id
@@ -542,7 +541,6 @@ def _get_snapshot_pp(conn, id_pp: int) -> dict:
     if not row:
         return {
             "categoria_id": None,
-            "tipo_v2_id": None,
             "precio_evento_id": None,
             "pares_snapshot": 0,
         }
@@ -550,8 +548,7 @@ def _get_snapshot_pp(conn, id_pp: int) -> dict:
     return {
         "categoria_id": row[0],
         "pares_snapshot": row[1] or 0,
-        "tipo_v2_id": row[2],
-        "precio_evento_id": row[3],
+        "precio_evento_id": row[2],
     }
 
 
@@ -600,17 +597,17 @@ def create_compra_legal(id_pp: int, numero_proforma: str, usuario_id: int | None
             # Obtener snapshot del PP antes de sellarlo
             snapshot = _get_snapshot_pp(conn, id_pp)
 
-            # Crear Compra Legal con snapshot de categoría/tipo/precio
+            # Crear Compra Legal con snapshot de categoría/precio
             numero = get_next_numero_cl()
             row = conn.execute(sqlt("""
                 INSERT INTO compra_legal (
                     numero_registro, anio_fiscal,
                     numero_factura_proveedor,
                     fecha_factura, moneda, estado,
-                    categoria_id, tipo_v2_id, precio_evento_id
+                    categoria_id, precio_evento_id
                 ) VALUES (
                     :num, :anio, :proforma, CURRENT_DATE, 'USD', 'PENDIENTE',
-                    :categoria_id, :tipo_v2_id, :precio_evento_id
+                    :categoria_id, :precio_evento_id
                 )
                 RETURNING id
             """), {
@@ -618,7 +615,6 @@ def create_compra_legal(id_pp: int, numero_proforma: str, usuario_id: int | None
                 "anio": date.today().year,
                 "proforma": str(numero_proforma).strip(),
                 "categoria_id": snapshot["categoria_id"],
-                "tipo_v2_id": snapshot["tipo_v2_id"],
                 "precio_evento_id": snapshot["precio_evento_id"],
             }).fetchone()
             cl_id = int(row[0])
