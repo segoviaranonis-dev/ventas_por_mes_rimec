@@ -1767,6 +1767,7 @@ def _render_enviar_a_compra(id_pp: int, numero_proforma: str):
     Botón '📦 ENVIAR A COMPRA' en la cabecera del PP.
     Permite crear una Compra Legal nueva o agregar el PP a una existente
     (agrupando por número de Proforma).
+    Ahora con validaciones auditables (OT-NEXUS-PP-SELLO-AUDITABLE-003).
     """
     from modules.compra_legal.logic import (
         pp_ya_en_compra, get_compras_por_proforma,
@@ -1782,6 +1783,46 @@ def _render_enviar_a_compra(id_pp: int, numero_proforma: str):
             f"📦 Este PP ya está en Compra Legal</div>",
             unsafe_allow_html=True,
         )
+        return
+
+    # ── Validaciones antes de permitir "Pasar a Compra" ──────────────────────
+    warnings = []
+    bloqueadores = []
+
+    # Validar detalles
+    df_val = get_dataframe("""
+        SELECT
+            pp.estado,
+            pp.categoria_id,
+            COUNT(ppd.id) as n_detalles,
+            COUNT(DISTINCT icp.precio_evento_id) as n_eventos
+        FROM pedido_proveedor pp
+        LEFT JOIN pedido_proveedor_detalle ppd ON ppd.pedido_proveedor_id = pp.id
+        LEFT JOIN intencion_compra_pedido icp ON icp.pedido_proveedor_id = pp.id
+        WHERE pp.id = :id_pp
+        GROUP BY pp.id, pp.estado, pp.categoria_id
+    """, {"id_pp": id_pp})
+
+    if not df_val.empty:
+        row_val = df_val.iloc[0]
+        if row_val["estado"] == "ENVIADO":
+            bloqueadores.append("❌ PP ya está ENVIADO")
+        if row_val["n_detalles"] == 0:
+            bloqueadores.append("❌ PP sin detalles (no hay productos)")
+        if pd.isna(row_val["categoria_id"]):
+            warnings.append("⚠️ PP sin categoría asignada")
+        if row_val["n_eventos"] == 0:
+            warnings.append("⚠️ PP sin evento de precio vinculado")
+
+    # Mostrar advertencias
+    if warnings:
+        for w in warnings:
+            st.warning(w, icon="⚠️")
+
+    # Mostrar bloqueadores y salir
+    if bloqueadores:
+        for b in bloqueadores:
+            st.error(b, icon="🚫")
         return
 
     key_open = f"_pp_enviar_open_{id_pp}"
@@ -1819,13 +1860,16 @@ def _render_enviar_a_compra(id_pp: int, numero_proforma: str):
 
     if col_confirm.button("✔ Confirmar", key=f"_pp_cl_confirm_{id_pp}",
                           use_container_width=True, type="primary"):
+        # Obtener usuario actual para auditoría
+        usuario_id = st.session_state.get("user", {}).get("id")
+
         if sel == "🆕 Nueva Compra":
-            ok, result = create_compra_legal(id_pp, numero_proforma)
+            ok, result = create_compra_legal(id_pp, numero_proforma, usuario_id)
         else:
             # Extraer el id de la fila correspondiente al label
             idx = opts.index(sel) - 1
             cl_id = int(df_existentes.iloc[idx]["id"])
-            ok, result = add_pp_to_compra(cl_id, id_pp)
+            ok, result = add_pp_to_compra(cl_id, id_pp, usuario_id)
 
         if ok:
             celebrate_step(

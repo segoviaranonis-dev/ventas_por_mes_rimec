@@ -522,49 +522,148 @@ def pp_ya_en_compra(id_pp: int) -> int | None:
     return int(df["compra_legal_id"].iloc[0])
 
 
-def _marcar_pp_enviado(conn, id_pp: int) -> None:
-    """Cambia pedido_proveedor.estado = 'ENVIADO' dentro de una TX abierta."""
+def _get_snapshot_pp(conn, id_pp: int) -> dict:
+    """
+    Obtiene snapshot de datos auditables del PP para preservar en CL.
+    Retorna dict con categoria_id, precio_evento_id, pares_snapshot.
+    """
+    row = conn.execute(sqlt("""
+        SELECT
+            pp.categoria_id,
+            pp.pares_comprometidos,
+            pp.tipo_v2_id,
+            icp.precio_evento_id
+        FROM pedido_proveedor pp
+        LEFT JOIN intencion_compra_pedido icp ON icp.pedido_proveedor_id = pp.id
+        WHERE pp.id = :id_pp
+        LIMIT 1
+    """), {"id_pp": id_pp}).fetchone()
+
+    if not row:
+        return {
+            "categoria_id": None,
+            "tipo_v2_id": None,
+            "precio_evento_id": None,
+            "pares_snapshot": 0,
+        }
+
+    return {
+        "categoria_id": row[0],
+        "pares_snapshot": row[1] or 0,
+        "tipo_v2_id": row[2],
+        "precio_evento_id": row[3],
+    }
+
+
+def _insertar_log_pp(conn, id_pp: int, estado_anterior: str | None, estado_nuevo: str,
+                     usuario_id: int | None, compra_legal_id: int | None, observaciones: str) -> None:
+    """Inserta registro en pedido_proveedor_log."""
     conn.execute(sqlt("""
-        UPDATE pedido_proveedor SET estado = 'ENVIADO'
+        INSERT INTO pedido_proveedor_log
+            (pp_id, estado_anterior, estado_nuevo, usuario_id, compra_legal_id, observaciones)
+        VALUES
+            (:pp_id, :estado_ant, :estado_nvo, :usuario_id, :cl_id, :obs)
+    """), {
+        "pp_id": id_pp,
+        "estado_ant": estado_anterior,
+        "estado_nvo": estado_nuevo,
+        "usuario_id": usuario_id,
+        "cl_id": compra_legal_id,
+        "obs": observaciones,
+    })
+
+
+def _marcar_pp_enviado(conn, id_pp: int, usuario_id: int | None = None) -> int:
+    """
+    Cambia pedido_proveedor.estado = 'ENVIADO' y registra auditoría.
+    Retorna número de filas afectadas (0 si ya estaba ENVIADO).
+    """
+    result = conn.execute(sqlt("""
+        UPDATE pedido_proveedor
+        SET estado = 'ENVIADO',
+            enviado_at = COALESCE(enviado_at, NOW()),
+            enviado_por = COALESCE(enviado_por, :usuario_id),
+            cerrado_at = COALESCE(cerrado_at, NOW()),
+            cerrado_por = COALESCE(cerrado_por, :usuario_id)
         WHERE id = :id_pp AND estado != 'ENVIADO'
-    """), {"id_pp": id_pp})
+    """), {"id_pp": id_pp, "usuario_id": usuario_id})
+    return result.rowcount
 
 
-def create_compra_legal(id_pp: int, numero_proforma: str) -> tuple[bool, str]:
-    """Crea una Compra Legal nueva y vincula el PP. Cambia PP a estado ENVIADO."""
+def create_compra_legal(id_pp: int, numero_proforma: str, usuario_id: int | None = None) -> tuple[bool, str]:
+    """
+    Crea una Compra Legal nueva y vincula el PP. Cambia PP a estado ENVIADO.
+    Registra snapshot auditable y log de cambio.
+    """
     try:
         with engine.begin() as conn:
+            # Obtener snapshot del PP antes de sellarlo
+            snapshot = _get_snapshot_pp(conn, id_pp)
+
+            # Crear Compra Legal con snapshot de categoría/tipo/precio
             numero = get_next_numero_cl()
             row = conn.execute(sqlt("""
                 INSERT INTO compra_legal (
                     numero_registro, anio_fiscal,
                     numero_factura_proveedor,
-                    fecha_factura, moneda, estado
+                    fecha_factura, moneda, estado,
+                    categoria_id, tipo_v2_id, precio_evento_id
                 ) VALUES (
-                    :num, :anio, :proforma, CURRENT_DATE, 'USD', 'PENDIENTE'
+                    :num, :anio, :proforma, CURRENT_DATE, 'USD', 'PENDIENTE',
+                    :categoria_id, :tipo_v2_id, :precio_evento_id
                 )
                 RETURNING id
             """), {
-                "num":      numero,
-                "anio":     date.today().year,
+                "num": numero,
+                "anio": date.today().year,
                 "proforma": str(numero_proforma).strip(),
+                "categoria_id": snapshot["categoria_id"],
+                "tipo_v2_id": snapshot["tipo_v2_id"],
+                "precio_evento_id": snapshot["precio_evento_id"],
             }).fetchone()
             cl_id = int(row[0])
 
+            # Vincular PP a CL con snapshot
             conn.execute(sqlt("""
-                INSERT INTO compra_legal_pedido (compra_legal_id, pedido_proveedor_id)
-                VALUES (:cl_id, :pp_id)
-            """), {"cl_id": cl_id, "pp_id": id_pp})
+                INSERT INTO compra_legal_pedido (
+                    compra_legal_id, pedido_proveedor_id,
+                    categoria_id, precio_evento_id, pares_snapshot, snapshot_at
+                ) VALUES (
+                    :cl_id, :pp_id,
+                    :categoria_id, :precio_evento_id, :pares_snapshot, NOW()
+                )
+            """), {
+                "cl_id": cl_id,
+                "pp_id": id_pp,
+                "categoria_id": snapshot["categoria_id"],
+                "precio_evento_id": snapshot["precio_evento_id"],
+                "pares_snapshot": snapshot["pares_snapshot"],
+            })
 
-            _marcar_pp_enviado(conn, id_pp)
+            # Marcar PP como ENVIADO (con auditoría temporal)
+            rows_affected = _marcar_pp_enviado(conn, id_pp, usuario_id)
+
+            # Insertar log de cambio de estado
+            if rows_affected > 0:
+                _insertar_log_pp(
+                    conn, id_pp,
+                    estado_anterior=None,  # O podríamos obtenerlo antes del UPDATE
+                    estado_nuevo="ENVIADO",
+                    usuario_id=usuario_id,
+                    compra_legal_id=cl_id,
+                    observaciones=f"PP sellado al crear Compra Legal {numero}",
+                )
 
         return True, numero
     except Exception as e:
         return False, str(e)
 
 
-def add_pp_to_compra(compra_id: int, id_pp: int) -> tuple[bool, str]:
-    """Agrega un PP a una Compra Legal existente. Cambia PP a estado ENVIADO."""
+def add_pp_to_compra(compra_id: int, id_pp: int, usuario_id: int | None = None) -> tuple[bool, str]:
+    """
+    Agrega un PP a una Compra Legal existente. Cambia PP a estado ENVIADO.
+    Registra snapshot auditable y log de cambio.
+    """
     try:
         with engine.begin() as conn:
             exists = conn.execute(sqlt("""
@@ -575,12 +674,45 @@ def add_pp_to_compra(compra_id: int, id_pp: int) -> tuple[bool, str]:
             if exists:
                 return True, "El PP ya estaba vinculado a esta compra."
 
-            conn.execute(sqlt("""
-                INSERT INTO compra_legal_pedido (compra_legal_id, pedido_proveedor_id)
-                VALUES (:cl_id, :pp_id)
-            """), {"cl_id": compra_id, "pp_id": id_pp})
+            # Obtener snapshot del PP antes de sellarlo
+            snapshot = _get_snapshot_pp(conn, id_pp)
 
-            _marcar_pp_enviado(conn, id_pp)
+            # Obtener número de CL para el log
+            cl_numero_row = conn.execute(sqlt("""
+                SELECT numero_registro FROM compra_legal WHERE id = :cl_id
+            """), {"cl_id": compra_id}).fetchone()
+            cl_numero = cl_numero_row[0] if cl_numero_row else f"CL-{compra_id}"
+
+            # Vincular PP a CL con snapshot
+            conn.execute(sqlt("""
+                INSERT INTO compra_legal_pedido (
+                    compra_legal_id, pedido_proveedor_id,
+                    categoria_id, precio_evento_id, pares_snapshot, snapshot_at
+                ) VALUES (
+                    :cl_id, :pp_id,
+                    :categoria_id, :precio_evento_id, :pares_snapshot, NOW()
+                )
+            """), {
+                "cl_id": compra_id,
+                "pp_id": id_pp,
+                "categoria_id": snapshot["categoria_id"],
+                "precio_evento_id": snapshot["precio_evento_id"],
+                "pares_snapshot": snapshot["pares_snapshot"],
+            })
+
+            # Marcar PP como ENVIADO (con auditoría temporal)
+            rows_affected = _marcar_pp_enviado(conn, id_pp, usuario_id)
+
+            # Insertar log de cambio de estado
+            if rows_affected > 0:
+                _insertar_log_pp(
+                    conn, id_pp,
+                    estado_anterior=None,
+                    estado_nuevo="ENVIADO",
+                    usuario_id=usuario_id,
+                    compra_legal_id=compra_id,
+                    observaciones=f"PP agregado a Compra Legal {cl_numero}",
+                )
 
         return True, "PP agregado a la compra."
     except Exception as e:
