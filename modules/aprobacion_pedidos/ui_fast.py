@@ -206,13 +206,39 @@ def render_editar_items_inline(fi: dict):
                 pares_por_caja = _calcular_pares_por_caja_desde_snapshot(linea_snapshot)
                 new_pares = new_cajas * pares_por_caja
 
-                # Mostrar pares calculados (sin estado persistente)
+                # Mostrar pares calculados sin estado persistente.
+                # Estilos inline para blindar contraste ante modo claro/oscuro del navegador.
                 st.markdown(
                     f"""
-                    <div class="nx-readonly-metric">
-                        <div class="label">Pares</div>
-                        <div class="value">{new_pares}</div>
-                        <div class="hint">{new_cajas} × {pares_por_caja} = {new_pares}</div>
+                    <div style="
+                        background:#111827;
+                        border:1px solid rgba(212,175,55,.45);
+                        border-radius:10px;
+                        padding:8px 12px;
+                        text-align:center;
+                        min-height:54px;
+                        box-shadow:inset 0 1px 0 rgba(255,255,255,.05), 0 6px 16px rgba(0,0,0,.18);
+                    ">
+                        <div style="
+                            font-size:.64rem;
+                            color:#CBD5E1;
+                            text-transform:uppercase;
+                            letter-spacing:.08em;
+                            font-weight:800;
+                        ">Pares</div>
+                        <div style="
+                            font-size:1.35rem;
+                            font-weight:900;
+                            color:#FFFFFF;
+                            line-height:1.15;
+                            font-variant-numeric:tabular-nums;
+                        ">{new_pares}</div>
+                        <div style="
+                            font-size:.70rem;
+                            color:#D4AF37;
+                            margin-top:3px;
+                            font-weight:700;
+                        ">{new_cajas} × {pares_por_caja} = {new_pares}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
