@@ -1321,6 +1321,39 @@ def actualizar_fi_encabezado(
         return False, f"Error: {str(e)}"
 
 
+def _calcular_pares_por_caja_desde_snapshot(linea_snapshot: dict) -> int:
+    """
+    Calcula pares por caja desde linea_snapshot.
+    RIMEC vende cajas cerradas (gradas cerradas).
+
+    OT-NEXUS-FI-CAJAS-CERRADAS-RIMEC-001
+    """
+    if not linea_snapshot:
+        return 12  # Fallback default RIMEC
+
+    # Intento 1: gradas_fmt formato "27(1-1-1-1-2-2-1-1-1-1)36"
+    gradas_fmt = linea_snapshot.get("gradas_fmt", "")
+    if gradas_fmt and "(" in gradas_fmt and ")" in gradas_fmt:
+        inicio = gradas_fmt.index("(") + 1
+        fin = gradas_fmt.index(")")
+        cantidades_str = gradas_fmt[inicio:fin]
+        cantidades = [int(x) for x in cantidades_str.split("-") if x.strip()]
+        pares_por_caja = sum(cantidades)
+        if pares_por_caja > 0:
+            return pares_por_caja
+
+    # Intento 2: pares_por_caja directo
+    if "pares_por_caja" in linea_snapshot:
+        return int(linea_snapshot["pares_por_caja"])
+
+    # Intento 3: pares_curva
+    if "pares_curva" in linea_snapshot:
+        return int(linea_snapshot["pares_curva"])
+
+    # Fallback
+    return 12
+
+
 def modificar_cantidad_item_fi(
     fi_detalle_id: int,
     nuevas_cajas: int,
@@ -1328,26 +1361,32 @@ def modificar_cantidad_item_fi(
 ) -> tuple[bool, str]:
     """Modifica la cantidad de un item existente en una FI.
 
+    OT-NEXUS-FI-CAJAS-CERRADAS-RIMEC-001:
+    RIMEC vende cajas cerradas. Los pares se recalculan automáticamente como:
+    pares = cajas × pares_por_caja (desde linea_snapshot.gradas_fmt)
+
     Recalcula el subtotal basándose en el precio_neto actual.
     Solo para FIs en RESERVADA o CONFIRMADA.
     """
     fi_detalle_id = int(fi_detalle_id)
     nuevas_cajas = int(nuevas_cajas)
-    nuevos_pares = int(nuevos_pares)
+    # nuevos_pares de UI se IGNORA - se recalcula desde cajas
 
-    if nuevos_pares <= 0:
-        return False, "Los pares deben ser mayor a 0."
+    if nuevas_cajas < 0:
+        return False, "Las cajas no pueden ser negativas."
 
     try:
         with engine.begin() as conn:
-            # Obtener detalle actual
+            # Obtener detalle actual + linea_snapshot
             detalle = conn.execute(sqlt("""
                 SELECT
                     fid.id,
                     fid.factura_id,
                     fid.ppd_id,
+                    fid.cajas as cajas_antiguas,
                     fid.pares as pares_antiguos,
                     fid.precio_neto,
+                    fid.linea_snapshot,
                     fi.estado
                 FROM factura_interna_detalle fid
                 JOIN factura_interna fi ON fi.id = fid.factura_id
@@ -1362,8 +1401,17 @@ def modificar_cantidad_item_fi(
 
             fi_id = detalle.factura_id
             ppd_id = detalle.ppd_id
+            cajas_antiguas = detalle.cajas_antiguas
             pares_antiguos = detalle.pares_antiguos
             precio_neto = float(detalle.precio_neto)
+            linea_snapshot = detalle.linea_snapshot or {}
+
+            # OT-001: Recalcular pares desde cajas × pares_por_caja
+            pares_por_caja = _calcular_pares_por_caja_desde_snapshot(linea_snapshot)
+            nuevos_pares = nuevas_cajas * pares_por_caja
+
+            if nuevos_pares <= 0:
+                return False, f"Cajas debe resultar en al menos 1 par. (cajas={nuevas_cajas}, pares_por_caja={pares_por_caja})"
 
             # Calcular diferencia de stock
             diferencia_pares = nuevos_pares - pares_antiguos
@@ -1422,14 +1470,17 @@ def modificar_cantidad_item_fi(
             entidad="factura_interna_detalle", entidad_id=fi_detalle_id,
             accion="ITEM_CANTIDAD_MODIFICADA",
             snap={
+                "cajas_antiguas": cajas_antiguas,
+                "cajas_nuevas": nuevas_cajas,
                 "pares_antiguos": pares_antiguos,
                 "pares_nuevos": nuevos_pares,
+                "pares_por_caja": pares_por_caja,
                 "diferencia": diferencia_pares
             }
         )
 
-        DBInspector.log(f"[FI] Item {fi_detalle_id} cantidad modificada: {pares_antiguos} → {nuevos_pares} pares", "SUCCESS")
-        return True, f"Cantidad actualizada exitosamente. Nuevo subtotal: Gs. {nuevo_subtotal:,.0f}"
+        DBInspector.log(f"[FI] Item {fi_detalle_id} cantidad modificada: {cajas_antiguas} cajas ({pares_antiguos} pares) → {nuevas_cajas} cajas ({nuevos_pares} pares)", "SUCCESS")
+        return True, f"✅ {nuevas_cajas} cajas × {pares_por_caja} pares/caja = {nuevos_pares} pares. Subtotal: Gs. {nuevo_subtotal:,.0f}"
 
     except Exception as e:
         DBInspector.log(f"[FI] Error modificando cantidad item {fi_detalle_id}: {e}", "ERROR")

@@ -1,0 +1,53 @@
+{
+  "ot_id": "OT-NEXUS-FI-CAJAS-CERRADAS-RIMEC-001",
+  "fecha_prueba": "2026-05-31",
+  "ejecutor": "YAMBAI",
+  "caso_prueba": {
+    "fi_id": 80,
+    "fi_numero": "10-PV003",
+    "pp_id": 10,
+    "pp_numero": "PP-2026-0010",
+    "item_id": 334,
+    "referencia": "2400-139"
+  },
+  "estado_antes": {
+    "cajas": 3,
+    "pares": 36,
+    "precio_neto": 105400.0,
+    "subtotal": 3794400.0,
+    "total_pares_fi": 36,
+    "total_monto_fi": 3794400.0
+  },
+  "accion": {
+    "funcion": "modificar_cantidad_item_fi",
+    "parametros": {
+      "fi_detalle_id": 334,
+      "nuevas_cajas": 2,
+      "nuevos_pares": 99
+    },
+    "nota": "nuevos_pares=99 se IGNORA, se recalcula desde cajas"
+  },
+  "estado_despues": {
+    "cajas": 2,
+    "pares": 24,
+    "precio_neto": 105400.0,
+    "subtotal": 2529600.0,
+    "total_pares_fi": 24,
+    "total_monto_fi": 2529600.0
+  },
+  "validacion": {
+    "formula": "pares = cajas × pares_por_caja",
+    "pares_por_caja": 12,
+    "calculo": "2 × 12 = 24",
+    "esperado": 24,
+    "obtenido": 24,
+    "correcto": true
+  },
+  "diferencia": {
+    "cajas": -1,
+    "pares": -12,
+    "monto": -1264800.0,
+    "nota": "1 caja (12 pares) devueltos al stock PP"
+  },
+  "resultado": "EXITOSO"
+}
