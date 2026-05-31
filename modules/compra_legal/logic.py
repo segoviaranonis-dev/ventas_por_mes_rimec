@@ -591,9 +591,25 @@ def create_compra_legal(id_pp: int, numero_proforma: str, usuario_id: int | None
     """
     Crea una Compra Legal nueva y vincula el PP. Cambia PP a estado ENVIADO.
     Registra snapshot auditable y log de cambio.
+
+    OR-005: Backend blindado contra doble vinculación.
     """
     try:
         with engine.begin() as conn:
+            # OR-005: Verificar que PP no esté ya vinculado a alguna CL
+            existing = conn.execute(sqlt("""
+                SELECT compra_legal_id, cl.numero_registro
+                FROM compra_legal_pedido clp
+                JOIN compra_legal cl ON cl.id = clp.compra_legal_id
+                WHERE clp.pedido_proveedor_id = :id_pp
+                LIMIT 1
+            """), {"id_pp": id_pp}).fetchone()
+
+            if existing:
+                cl_id = existing[0]
+                cl_numero = existing[1]
+                return False, f"PP-{id_pp} ya está vinculado a {cl_numero} (ID {cl_id}). No se puede crear nueva Compra Legal."
+
             # Obtener snapshot del PP antes de sellarlo
             snapshot = _get_snapshot_pp(conn, id_pp)
 
@@ -659,16 +675,30 @@ def add_pp_to_compra(compra_id: int, id_pp: int, usuario_id: int | None = None) 
     """
     Agrega un PP a una Compra Legal existente. Cambia PP a estado ENVIADO.
     Registra snapshot auditable y log de cambio.
+
+    OR-005: Backend blindado contra doble vinculación.
     """
     try:
         with engine.begin() as conn:
-            exists = conn.execute(sqlt("""
-                SELECT 1 FROM compra_legal_pedido
-                WHERE compra_legal_id = :cl_id AND pedido_proveedor_id = :pp_id
-            """), {"cl_id": compra_id, "pp_id": id_pp}).fetchone()
+            # OR-005: Verificar si PP ya está vinculado a alguna CL
+            existing = conn.execute(sqlt("""
+                SELECT clp.compra_legal_id, cl.numero_registro
+                FROM compra_legal_pedido clp
+                JOIN compra_legal cl ON cl.id = clp.compra_legal_id
+                WHERE clp.pedido_proveedor_id = :pp_id
+                LIMIT 1
+            """), {"pp_id": id_pp}).fetchone()
 
-            if exists:
-                return True, "El PP ya estaba vinculado a esta compra."
+            if existing:
+                existing_cl_id = existing[0]
+                existing_cl_numero = existing[1]
+
+                # Si ya está en ESTA compra, OK (idempotente)
+                if existing_cl_id == compra_id:
+                    return True, f"El PP ya estaba vinculado a esta compra ({existing_cl_numero})."
+
+                # Si está en OTRA compra, ERROR
+                return False, f"PP-{id_pp} ya está vinculado a {existing_cl_numero} (ID {existing_cl_id}). No se puede agregar a otra Compra Legal."
 
             # Obtener snapshot del PP antes de sellarlo
             snapshot = _get_snapshot_pp(conn, id_pp)
