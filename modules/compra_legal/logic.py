@@ -527,6 +527,9 @@ def _get_snapshot_pp(conn, id_pp: int) -> dict:
     Obtiene snapshot de datos auditables del PP para preservar en CL.
     Retorna dict con categoria_id, precio_evento_id, pares_snapshot.
     """
+    # Fix: Convertir numpy.int64 a int nativo
+    id_pp = int(id_pp)
+
     row = conn.execute(sqlt("""
         SELECT
             pp.categoria_id,
@@ -546,15 +549,22 @@ def _get_snapshot_pp(conn, id_pp: int) -> dict:
         }
 
     return {
-        "categoria_id": row[0],
-        "pares_snapshot": row[1] or 0,
-        "precio_evento_id": row[2],
+        "categoria_id": int(row[0]) if row[0] is not None else None,
+        "pares_snapshot": int(row[1]) if row[1] is not None else 0,
+        "precio_evento_id": int(row[2]) if row[2] is not None else None,
     }
 
 
 def _insertar_log_pp(conn, id_pp: int, estado_anterior: str | None, estado_nuevo: str,
                      usuario_id: int | None, compra_legal_id: int | None, observaciones: str) -> None:
     """Inserta registro en pedido_proveedor_log."""
+    # Fix: Convertir numpy.int64 a int nativo
+    id_pp = int(id_pp)
+    if usuario_id is not None:
+        usuario_id = int(usuario_id)
+    if compra_legal_id is not None:
+        compra_legal_id = int(compra_legal_id)
+
     conn.execute(sqlt("""
         INSERT INTO pedido_proveedor_log
             (pp_id, estado_anterior, estado_nuevo, usuario_id, compra_legal_id, observaciones)
@@ -575,6 +585,11 @@ def _marcar_pp_enviado(conn, id_pp: int, usuario_id: int | None = None) -> int:
     Cambia pedido_proveedor.estado = 'ENVIADO' y registra auditoría.
     Retorna número de filas afectadas (0 si ya estaba ENVIADO).
     """
+    # Fix: Convertir numpy.int64 a int nativo
+    id_pp = int(id_pp)
+    if usuario_id is not None:
+        usuario_id = int(usuario_id)
+
     result = conn.execute(sqlt("""
         UPDATE pedido_proveedor
         SET estado = 'ENVIADO',
@@ -594,6 +609,11 @@ def create_compra_legal(id_pp: int, numero_proforma: str, usuario_id: int | None
 
     OR-005: Backend blindado contra doble vinculación.
     """
+    # Fix: Convertir numpy.int64 a int nativo
+    id_pp = int(id_pp)
+    if usuario_id is not None:
+        usuario_id = int(usuario_id)
+
     try:
         with engine.begin() as conn:
             # OR-005: Verificar que PP no esté ya vinculado a alguna CL
@@ -678,6 +698,12 @@ def add_pp_to_compra(compra_id: int, id_pp: int, usuario_id: int | None = None) 
 
     OR-005: Backend blindado contra doble vinculación.
     """
+    # Fix: Convertir numpy.int64 a int nativo
+    compra_id = int(compra_id)
+    id_pp = int(id_pp)
+    if usuario_id is not None:
+        usuario_id = int(usuario_id)
+
     try:
         with engine.begin() as conn:
             # OR-005: Verificar si PP ya está vinculado a alguna CL
