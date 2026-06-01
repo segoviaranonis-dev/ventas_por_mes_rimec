@@ -1053,6 +1053,10 @@ def get_compra_hija_deposito(id_cl: int) -> pd.DataFrame:
     """
     Hija Depósito: stock no vendido de los PPs de esta compra.
     Columnas: marca, linea, referencia, material, color, cantidad_inicial, vendido, saldo
+
+    Fix OR-NEXUS-COMPRA-LEGAL-LIMPIEZA-INTENTOS-001:
+    Calcula "vendido" desde factura_interna_detalle (FI activas),
+    no desde venta_transito legacy.
     """
     return get_dataframe("""
         SELECT
@@ -1063,15 +1067,19 @@ def get_compra_hija_deposito(id_cl: int) -> pd.DataFrame:
             ppd.descp_color                                              AS color,
             ppd.cantidad_pares                                           AS cantidad_inicial,
             COALESCE(
-                (SELECT SUM(vt.cantidad_vendida)
-                 FROM venta_transito vt
-                 WHERE vt.pedido_proveedor_detalle_id = ppd.id),
+                (SELECT SUM(fid.pares)
+                 FROM factura_interna_detalle fid
+                 JOIN factura_interna fi ON fi.id = fid.factura_id
+                 WHERE fid.ppd_id = ppd.id
+                   AND fi.estado != 'ANULADA'),
                 0
             )                                                            AS vendido,
             ppd.cantidad_pares - COALESCE(
-                (SELECT SUM(vt.cantidad_vendida)
-                 FROM venta_transito vt
-                 WHERE vt.pedido_proveedor_detalle_id = ppd.id),
+                (SELECT SUM(fid.pares)
+                 FROM factura_interna_detalle fid
+                 JOIN factura_interna fi ON fi.id = fid.factura_id
+                 WHERE fid.ppd_id = ppd.id
+                   AND fi.estado != 'ANULADA'),
                 0
             )                                                            AS saldo
         FROM compra_legal_pedido clp
