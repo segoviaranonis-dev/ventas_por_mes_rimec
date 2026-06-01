@@ -448,7 +448,10 @@ def _crear_traspasos_para_pp(conn, id_pp: int, cl_id: int) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_compras_legales() -> pd.DataFrame:
-    """Lista de Compras Legales con KPIs básicos."""
+    """
+    Lista de Compras Legales con KPIs básicos.
+    Solo muestra compras activas (excluye CANCELADO del tablero principal).
+    """
     return get_dataframe("""
         SELECT
             cl.id,
@@ -480,6 +483,7 @@ def get_compras_legales() -> pd.DataFrame:
              WHERE t.compra_legal_id = cl.id
                AND t.estado = 'CONFIRMADO')     AS n_confirmados
         FROM compra_legal cl
+        WHERE cl.estado != 'CANCELADO'
         ORDER BY cl.fecha_factura DESC, cl.id DESC
     """)
 
