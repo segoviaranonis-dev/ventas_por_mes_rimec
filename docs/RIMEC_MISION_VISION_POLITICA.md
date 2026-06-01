@@ -54,6 +54,49 @@ No es un parche por módulo: es el **núcleo** sobre el que crecen Nexus (operac
 
 ---
 
+## Política de Clientes — Tránsito y Canales de Venta
+
+### Cliente 5000 — Bazar Web Virtual (EXCLUSIVO)
+
+**Identificación**:
+- `cliente_v2.id_cliente = 5000`
+
+**Regla blindada**:
+- Cliente 5000 es el **único canal autorizado** para alimentar **Bazar Web** (tienda virtual pública)
+- Flujo exclusivo: Compra Web → Depósito Web → Bazar Web
+
+**Restricción técnica**:
+- Todo flujo que alimente catálogo web debe filtrar `WHERE cliente_id = 5000`
+- Otros clientes RIMEC **NO** alimentan la tienda virtual
+
+### Clientes Físicos Bazzar (Tiendas Físicas)
+
+**Listado**:
+- `2100` — Fernando Adultos
+- `2900` — Fernando Niños
+- `2400` — San Martin Adultos
+- `2700` — San Martin Niños
+- `3100` — Palma Adultos
+- `3200` — Palma Niños
+
+**Características**:
+- Clientes **RIMEC** (no Bazar Web)
+- Representan tiendas físicas de la red Bazzar
+- **NO alimentan** la tienda virtual
+- Futuro: módulo logística / confirmación entregas
+
+### Mercadería en Tránsito
+
+**Regla**:
+- Pertenece al universo general **RIMEC**
+- **NO es exclusiva** de cliente 5000
+- Disponible para venta a cualquier cliente autorizado
+- Se asigna a cliente específico al momento de venta/reserva
+
+**Ver**: `docs/NEXUS_HOLDING_REGLAS_CANONICAS.md` para detalles técnicos.
+
+---
+
 ## Leyes de negocio (de `RIMEC_POLITICAS_BLINDADAS.md`)
 
 1. **IC — ADN:** toda Intención de Compra lleva **Tipo** (Calzados / Confecciones) y **Categoría** (Compra Previa / Programado). STOCK **nunca** se elige a mano.
