@@ -88,6 +88,132 @@ class GlowDynamics:
         };
         """)
 
+def apply_login_contrast():
+    """Blindaje adicional del login perimetral contra prefers-color-scheme: light."""
+    st.markdown(f"""
+        <style>
+        /* ═══════════════════════════════════════════════════════════
+           9. LOGIN NEXUS CORE — contraste forzado (sin reglas globales *)
+           ═══════════════════════════════════════════════════════════ */
+        [data-testid="stAppViewContainer"]:has([data-testid="stForm"]) {{
+            color-scheme: dark !important;
+        }}
+
+        [data-testid="stForm"] {{
+            background: linear-gradient(160deg, {COLOR_SOFT} 0%, {COLOR_DEEP} 100%) !important;
+            border: 1px solid {COLOR_GOLD}44 !important;
+            border-radius: 16px !important;
+            padding: 1.25rem 1.5rem 1.5rem !important;
+            color-scheme: dark !important;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45) !important;
+        }}
+
+        [data-testid="stForm"] label,
+        [data-testid="stForm"] [data-testid="stWidgetLabel"],
+        [data-testid="stForm"] [data-testid="stWidgetLabel"] p,
+        [data-testid="stForm"] [data-testid="stWidgetLabel"] span {{
+            color: {COLOR_TEXT} !important;
+            font-weight: 600 !important;
+        }}
+
+        [data-testid="stForm"] div[data-testid="stTextInput"] input,
+        [data-testid="stForm"] div[data-testid="stTextInput"] textarea {{
+            background-color: {COLOR_SOFT} !important;
+            color: {COLOR_TEXT} !important;
+            -webkit-text-fill-color: {COLOR_TEXT} !important;
+            caret-color: {COLOR_TEXT} !important;
+            border: 1px solid {COLOR_GOLD}66 !important;
+            border-radius: 8px !important;
+            color-scheme: dark !important;
+        }}
+
+        [data-testid="stForm"] div[data-testid="stTextInput"] input::placeholder {{
+            color: {settings.TEXT_MUTED} !important;
+            opacity: 1 !important;
+        }}
+
+        [data-testid="stForm"] div[data-testid="stTextInput"] input:focus {{
+            border-color: {COLOR_GOLD} !important;
+            box-shadow: 0 0 0 2px {COLOR_GOLD}33 !important;
+            outline: none !important;
+        }}
+
+        [data-testid="stForm"] div[data-testid="stTextInput"] input:-webkit-autofill,
+        [data-testid="stForm"] div[data-testid="stTextInput"] input:-webkit-autofill:hover,
+        [data-testid="stForm"] div[data-testid="stTextInput"] input:-webkit-autofill:focus {{
+            -webkit-box-shadow: 0 0 0 1000px {COLOR_SOFT} inset !important;
+            -webkit-text-fill-color: {COLOR_TEXT} !important;
+            caret-color: {COLOR_TEXT} !important;
+            border: 1px solid {COLOR_GOLD}66 !important;
+        }}
+
+        [data-testid="stFormSubmitButton"] button,
+        [data-testid="stForm"] div.stButton > button {{
+            background-color: {COLOR_DEEP} !important;
+            color: {COLOR_GOLD} !important;
+            border: 2px solid {COLOR_GOLD} !important;
+            font-weight: 800 !important;
+            letter-spacing: 0.04em !important;
+        }}
+
+        [data-testid="stFormSubmitButton"] button:hover:not(:disabled),
+        [data-testid="stForm"] div.stButton > button:hover:not(:disabled) {{
+            background-color: {COLOR_GOLD} !important;
+            color: {COLOR_DEEP} !important;
+        }}
+
+        [data-testid="stFormSubmitButton"] button:disabled,
+        [data-testid="stForm"] div.stButton > button:disabled {{
+            opacity: 0.45 !important;
+            cursor: not-allowed !important;
+            color: {settings.TEXT_MUTED} !important;
+            border-color: {settings.TEXT_MUTED} !important;
+        }}
+
+        /* Título y caption del login (fuera del form, misma pantalla) */
+        [data-testid="stMainBlockContainer"] h1,
+        [data-testid="stMainBlockContainer"] [data-testid="stMarkdownContainer"] h1 {{
+            color: {COLOR_TEXT} !important;
+        }}
+
+        [data-testid="stCaptionContainer"],
+        [data-testid="stCaptionContainer"] p {{
+            color: {settings.TEXT_MUTED} !important;
+        }}
+
+        /* Alertas login (credenciales inválidas / bloqueo) */
+        [data-testid="stAlert"],
+        [data-testid="stAlert"] [data-testid="stMarkdownContainer"],
+        [data-testid="stAlert"] [data-testid="stMarkdownContainer"] p {{
+            color: {COLOR_DEEP} !important;
+        }}
+
+        @media (prefers-color-scheme: light) {{
+            [data-testid="stForm"] div[data-testid="stTextInput"] input,
+            [data-testid="stForm"] div[data-testid="stTextInput"] textarea {{
+                background-color: {COLOR_SOFT} !important;
+                color: {COLOR_TEXT} !important;
+                -webkit-text-fill-color: {COLOR_TEXT} !important;
+            }}
+
+            [data-testid="stForm"] label,
+            [data-testid="stForm"] [data-testid="stWidgetLabel"],
+            [data-testid="stForm"] [data-testid="stWidgetLabel"] p {{
+                color: {COLOR_TEXT} !important;
+            }}
+
+            [data-testid="stFormSubmitButton"] button {{
+                color: {COLOR_GOLD} !important;
+            }}
+
+            [data-testid="stAlert"] [data-testid="stMarkdownContainer"] p {{
+                color: {COLOR_DEEP} !important;
+            }}
+        }}
+        </style>
+    """, unsafe_allow_html=True)
+
+
 def apply_ui_theme():
     """Inyección de CSS: El blindaje Obsidian v70.5.0 — anti light-mode."""
     print(f"[STYLES] Sincronizando Armadura Obsidian v{settings.VERSION}")
@@ -112,11 +238,35 @@ def apply_ui_theme():
                 background-color: {COLOR_DEEP} !important;
                 color: {COLOR_TEXT} !important;
             }}
-            * {{ color: {COLOR_TEXT} !important; }}
-            /* Re-aplicar excepciones que necesitan colores propios */
+            [data-testid="stAppViewContainer"],
+            [data-testid="stHeader"],
+            [data-testid="stMain"] {{
+                background-color: {COLOR_DEEP} !important;
+                color: {COLOR_TEXT} !important;
+            }}
+            p, span, label, h1, h2, h3, h4, h5, h6,
+            [data-testid="stMarkdownContainer"] p,
+            [data-testid="stMarkdownContainer"] span,
+            [data-testid="stWidgetLabel"],
+            [data-testid="stWidgetLabel"] p {{
+                color: {COLOR_TEXT} !important;
+            }}
             div.stButton > button {{ color: {COLOR_GOLD} !important; }}
             div.stButton > button:hover {{ color: {COLOR_DEEP} !important; }}
             a {{ color: {COLOR_GOLD} !important; }}
+            div[data-testid="stTextInput"] input,
+            div[data-testid="stTextInput"] textarea {{
+                background-color: {COLOR_SOFT} !important;
+                color: {COLOR_TEXT} !important;
+                -webkit-text-fill-color: {COLOR_TEXT} !important;
+                caret-color: {COLOR_TEXT} !important;
+                border: 1px solid {COLOR_GOLD}55 !important;
+                color-scheme: dark !important;
+            }}
+            div[data-testid="stTextInput"] input::placeholder {{
+                color: {settings.TEXT_MUTED} !important;
+                opacity: 1 !important;
+            }}
         }}
 
         /* ═══════════════════════════════════════════════════════════
@@ -149,6 +299,48 @@ def apply_ui_theme():
         .stSlider label, .stRadio label, .stCheckbox label,
         .stFileUploader label, .stDateInput label,
         .stNumberInput label, .stTextArea label {{
+            color: {COLOR_TEXT} !important;
+        }}
+
+        /* Inputs — legibles en modo claro del navegador (autofill / fondo claro) */
+        div[data-testid="stTextInput"] input,
+        div[data-testid="stTextInput"] textarea,
+        div[data-testid="stNumberInput"] input,
+        div[data-testid="stTextArea"] textarea {{
+            background-color: {COLOR_SOFT} !important;
+            color: {COLOR_TEXT} !important;
+            -webkit-text-fill-color: {COLOR_TEXT} !important;
+            caret-color: {COLOR_TEXT} !important;
+            border: 1px solid {COLOR_GOLD}55 !important;
+            border-radius: 8px !important;
+            color-scheme: dark !important;
+        }}
+
+        div[data-testid="stTextInput"] input::placeholder,
+        div[data-testid="stTextArea"] textarea::placeholder {{
+            color: {settings.TEXT_MUTED} !important;
+            opacity: 1 !important;
+        }}
+
+        div[data-testid="stTextInput"] input:focus,
+        div[data-testid="stTextArea"] textarea:focus,
+        div[data-testid="stNumberInput"] input:focus {{
+            border-color: {COLOR_GOLD} !important;
+            box-shadow: 0 0 0 2px {COLOR_GOLD}33 !important;
+            outline: none !important;
+        }}
+
+        div[data-testid="stTextInput"] input:-webkit-autofill,
+        div[data-testid="stTextInput"] input:-webkit-autofill:hover,
+        div[data-testid="stTextInput"] input:-webkit-autofill:focus {{
+            -webkit-box-shadow: 0 0 0 1000px {COLOR_SOFT} inset !important;
+            -webkit-text-fill-color: {COLOR_TEXT} !important;
+            caret-color: {COLOR_TEXT} !important;
+        }}
+
+        [data-testid="stWidgetLabel"],
+        [data-testid="stWidgetLabel"] p,
+        [data-testid="stWidgetLabel"] span {{
             color: {COLOR_TEXT} !important;
         }}
 

@@ -76,7 +76,7 @@ if 'sistema_inicializado' not in st.session_state:
 # 4. IMPORTACIONES CORE (Sincronización de Componentes)
 try:
     from core.auth import AuthManager, _MAX_INTENTOS
-    from core.styles import apply_ui_theme
+    from core.styles import apply_ui_theme, apply_login_contrast
     from core.navigation import render_sidebar, render_page_content
     import core.registry as registry  # Registro central de módulos
 
@@ -116,6 +116,7 @@ def aduana_de_seguridad(modulo_key):
 def render_login_screen():
     """Pantalla de Acceso Perimetral RIMEC."""
     apply_ui_theme()
+    apply_login_contrast()
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
