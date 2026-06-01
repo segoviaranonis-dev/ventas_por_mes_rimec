@@ -14,11 +14,12 @@ Cuando haya conflicto, manda este orden:
 3. `docs/NEXUS_HOLDING_MANUAL_PROCEDIMIENTOS.md` — forma de trabajar.
 4. `docs/NEXUS_HOLDING_PROTOCOLO_CLAUDE_CODE.md` — comunicación con ejecutores.
 5. `docs/RIMEC_MISION_VISION_POLITICA.md` — politica macro RIMEC/Nexus.
-6. `docs/RIMEC_NOMENCLATURA_PILARES.md` y `docs/RIMEC_PILARES_CINCO.md` — datos/pilares.
-7. `.cursor/rules/*.mdc` — reglas ejecutables para agentes.
-8. `docs/OT_REGISTRO_ESTADO.md` y `docs/ot/INDICE_OT.md` — estado vivo de OT.
-9. OT individuales, auditorias y evidencias.
-10. README antiguos, contextos historicos y docs de modulo.
+6. `docs/NEXUS_POLITICA_FK_EVENTOS.md` — ley FK-first y eventos combinatorios.
+7. `docs/RIMEC_NOMENCLATURA_PILARES.md` y `docs/RIMEC_PILARES_CINCO.md` — datos/pilares.
+8. `.cursor/rules/*.mdc` — reglas ejecutables para agentes.
+9. `docs/OT_REGISTRO_ESTADO.md` y `docs/ot/INDICE_OT.md` — estado vivo de OT.
+10. OT individuales, auditorias y evidencias.
+11. README antiguos, contextos historicos y docs de modulo.
 
 ---
 
@@ -86,6 +87,17 @@ Reglas:
 - Copias denormalizadas: `{pilar}_codigo_proveedor`.
 - No inventar alias nuevos como `codigo_linea`, `linea_cod`, `ref_cod` en codigo nuevo.
 - Excel STYLE `1184.100` se parsea como enteros, no como float.
+
+---
+
+## 4B. Ley FK/Eventos
+
+- Excel, CSV y proformas son medios de entrada, no fuentes vivas.
+- Todo dato externo debe cruzar la aduana de pilares.
+- Despues de normalizar, el sistema opera con FKs enteras.
+- Lo que Nexus registra son eventos combinatorios de FKs.
+- Descripciones y strings son presentacion; no deben conducir filtros si existe FK.
+- Si una pantalla agrupa bien y otra no, se audita la fuente FK/evento antes de tocar UI.
 
 ---
 

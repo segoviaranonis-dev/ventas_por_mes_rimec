@@ -27,6 +27,8 @@ Antes de modificar código o documentación, leer:
 - No borrar OTs ni evidencia histórica.
 - Imports largos deben tener latido cada 60 segundos.
 - UI Streamlit debe celebrar escrituras exitosas con `core.ux_celebrate`.
+- Todo dato externo pasa por pilares antes de alimentar filtros, reportes, catalogos u operaciones.
+- El flujo FK/Eventos Nexus → RIMEC Web → Bazzar Web está bloqueado para cambios de albañiles sin OT específica de GPT.
 
 ## Metodología IA
 
