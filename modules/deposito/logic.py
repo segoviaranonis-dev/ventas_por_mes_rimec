@@ -13,6 +13,10 @@ def get_stock_deposito(id_cl: int | None = None) -> pd.DataFrame:
     Dos cajas del mismo artículo pero diferente gradación aparecen como filas
     separadas — NUNCA se fusionan.
     SOLO muestra artículos cuyo PP pertenece a una Compra ya distribuida.
+
+    OR-NEXUS-DEPOSITO-RIMEC-CONSISTENCIA-001:
+    Calcula "vendido" desde factura_interna_detalle (FI activas),
+    no desde venta_transito legacy.
     """
     params: dict = {}
 
@@ -52,15 +56,19 @@ def get_stock_deposito(id_cl: int | None = None) -> pd.DataFrame:
                 ppd.grada,
                 ppd.cantidad_pares               AS cantidad_inicial,
                 COALESCE(
-                    (SELECT SUM(vt.cantidad_vendida)
-                     FROM venta_transito vt
-                     WHERE vt.pedido_proveedor_detalle_id = ppd.id),
+                    (SELECT SUM(fid.pares)
+                     FROM factura_interna_detalle fid
+                     JOIN factura_interna fi ON fi.id = fid.factura_id
+                     WHERE fid.ppd_id = ppd.id
+                       AND fi.estado != 'ANULADA'),
                     0
                 )                                AS vendido,
                 ppd.cantidad_pares - COALESCE(
-                    (SELECT SUM(vt.cantidad_vendida)
-                     FROM venta_transito vt
-                     WHERE vt.pedido_proveedor_detalle_id = ppd.id),
+                    (SELECT SUM(fid.pares)
+                     FROM factura_interna_detalle fid
+                     JOIN factura_interna fi ON fi.id = fid.factura_id
+                     WHERE fid.ppd_id = ppd.id
+                       AND fi.estado != 'ANULADA'),
                     0
                 )                                AS saldo
             FROM pedido_proveedor_detalle ppd
@@ -77,10 +85,19 @@ def get_stock_deposito(id_cl: int | None = None) -> pd.DataFrame:
 
 def get_stock_deposito_tallas(id_cl: int | None = None) -> pd.DataFrame:
     """
-    Stock físico RIMEC a nivel talla (saldo = ppd.tXX - SUM(vt.tXX)).
+    Stock físico RIMEC a nivel talla (saldo = ppd.tXX - SUM(fid.tXX)).
     Mismos filtros que get_stock_deposito.
     Columnas: marca, pedido, linea, referencia, material, color, grada,
               t33-t40, saldo
+
+    OR-NEXUS-DEPOSITO-RIMEC-CONSISTENCIA-001:
+    Calcula vendido desde factura_interna_detalle (FI activas),
+    no desde venta_transito legacy.
+
+    NOTA: factura_interna_detalle NO tiene columnas tXX individuales,
+    solo tiene "pares" total. Esta función necesita rediseño futuro
+    o debe calcularse diferente. Por ahora mantiene venta_transito
+    para tallas individuales (legacy).
     """
     params: dict = {}
     if id_cl is not None:
