@@ -2781,7 +2781,13 @@ def get_facturas_interna_de_pp(pp_id: int) -> pd.DataFrame:
         LEFT JOIN cliente_v2  cv ON cv.id_cliente  = fi.cliente_id
         LEFT JOIN usuario_v2  vv ON vv.id_usuario  = fi.vendedor_id
         WHERE fi.pp_id = :pp_id
-        ORDER BY fi.created_at DESC, fi.nro_factura
+        ORDER BY
+            fi.pp_id,
+            CASE
+                WHEN fi.nro_factura ~ 'PV[0-9]+'
+                THEN CAST(regexp_replace(fi.nro_factura, '.*-PV0*', '') AS INTEGER)
+                ELSE 0
+            END DESC
     """, {"pp_id": pp_id})
 
 
