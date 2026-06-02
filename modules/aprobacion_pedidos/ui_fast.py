@@ -200,10 +200,7 @@ def render_editar_items_inline(fi: dict):
                 )
 
             with col3:
-                # Calcular pares automáticamente desde cajas × pares_por_caja
-                from .logic import _calcular_pares_por_caja_desde_snapshot
-                linea_snapshot = item.get("linea_snapshot", {})
-                pares_por_caja = _calcular_pares_por_caja_desde_snapshot(linea_snapshot)
+                pares_por_caja = int(item.get("pares_por_caja_canonico") or 0)
                 new_pares = new_cajas * pares_por_caja
 
                 # Mostrar pares calculados sin estado persistente.
@@ -243,6 +240,8 @@ def render_editar_items_inline(fi: dict):
                     """,
                     unsafe_allow_html=True,
                 )
+                if pares_por_caja <= 0:
+                    st.error("Sin dato canónico de Pedido Proveedor para calcular pares/caja.")
 
             with col4:
                 col_btn1, col_btn2 = st.columns(2)
