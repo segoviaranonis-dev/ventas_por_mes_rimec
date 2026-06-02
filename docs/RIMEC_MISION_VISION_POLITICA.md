@@ -111,6 +111,8 @@ No es un parche por módulo: es el **núcleo** sobre el que crecen Nexus (operac
 
 **Los 5 pilares:** línea · referencia · material · color · **grada** (catálogo `talla`).
 
+**Ley de Pilares** (ver `NEXUS_HOLDING_REGLAS_CANONICAS.md § 2`): Todo dato externo que ingresa al holding debe normalizarse por los 5 pilares antes de alimentar sistemas operativos, reportes o UI. Prohibido inventar headers/filtros sin origen en pilares o maestras relacionadas.
+
 | Canal | Cómo se expresa la grada |
 |-------|---------------------------|
 | **Importadora** | Caja cerrada: `35(1 2 3 3 2 1)40` — operación en cajas, `grades_json` molecular |
