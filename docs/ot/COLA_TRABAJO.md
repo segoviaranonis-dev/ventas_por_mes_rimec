@@ -105,3 +105,19 @@ GPT buscará la respuesta esperada en la tabla de arriba.
 ## Regla de foco
 
 MARTA y YAMBAI no trabajan el mismo repo al mismo tiempo salvo orden explícita.
+
+---
+
+## Bloqueo arquitectónico activo
+
+| Frente | Estado | Motivo | Responsable |
+|---|---|---|---|
+| Flujo FK/Eventos Nexus → RIMEC Web → Bazzar Web | BLOQUEADO_PARA_ALBANILES | Riesgo legal/comercial por inconsistencias entre catálogo, estadísticas, stock, FI, compra y Bazzar Web | GPT |
+
+Regla:
+
+```txt
+YAMBAI, MARTA y MARTA2 no deben modificar arquitectura FK/eventos sin una OT específica emitida por GPT.
+```
+
+Pueden diagnosticar si se les pide, pero no redefinir fuentes de verdad ni filtros.

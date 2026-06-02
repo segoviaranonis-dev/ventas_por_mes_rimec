@@ -14,8 +14,10 @@
 | 3 | [NEXUS_HOLDING_MANUAL_PROCEDIMIENTOS.md](NEXUS_HOLDING_MANUAL_PROCEDIMIENTOS.md) | Procedimiento diario de trabajo |
 | 4 | [NEXUS_HOLDING_PROTOCOLO_CLAUDE_CODE.md](NEXUS_HOLDING_PROTOCOLO_CLAUDE_CODE.md) | Comunicación robusta con Claude Code |
 | 5 | [NEXUS_HOLDING_MAPA_DOCUMENTAL.md](NEXUS_HOLDING_MAPA_DOCUMENTAL.md) | Qué documento leer y cuál es histórico |
-| 6 | [RIMEC_MISION_VISION_POLITICA.md](RIMEC_MISION_VISION_POLITICA.md) | Política macro RIMEC/Nexus |
-| 7 | [OT_REGISTRO_ESTADO.md](OT_REGISTRO_ESTADO.md) | Estado vivo de OT histórico |
+| 6 | [NEXUS_POLITICA_FK_EVENTOS.md](NEXUS_POLITICA_FK_EVENTOS.md) | Ley FK-first y eventos combinatorios |
+| 7 | [AUDITORIA_FLUJO_FK_EVENTOS_NEXUS_RIMEC_BAZZAR.md](AUDITORIA_FLUJO_FK_EVENTOS_NEXUS_RIMEC_BAZZAR.md) | Auditoría del flujo completo |
+| 8 | [RIMEC_MISION_VISION_POLITICA.md](RIMEC_MISION_VISION_POLITICA.md) | Política macro RIMEC/Nexus |
+| 9 | [OT_REGISTRO_ESTADO.md](OT_REGISTRO_ESTADO.md) | Estado vivo de OT histórico |
 
 ---
 
