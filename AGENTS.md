@@ -28,6 +28,7 @@ Explicar corto, ejecutar con cuidado y dejar pruebas.
 - `docs/RIMEC_PILARES_CINCO.md`
 - `docs/RIMEC_NOMENCLATURA_PILARES.md`
 - `docs/RIMEC_POLITICAS_BLINDADAS.md`
+- `docs/NEXUS_PROTOCOLO_IMAGENES_PRODUCTO.md`
 - `docs/NEXUS_HOLDING_PROTOCOLO_CLAUDE_CODE.md`
 
 ## Prioridad actual
