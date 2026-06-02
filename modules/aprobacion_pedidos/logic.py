@@ -898,7 +898,13 @@ def get_fi_confirmadas() -> list[dict]:
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
         LEFT JOIN quincena_arribo qa ON qa.id = pp.quincena_arribo_id
         WHERE fi.estado = 'CONFIRMADA'
-        ORDER BY fi.created_at DESC
+        ORDER BY
+            fi.pp_id,
+            CASE
+                WHEN fi.nro_factura ~ 'PV[0-9]+'
+                THEN CAST(regexp_replace(fi.nro_factura, '.*-PV0*', '') AS INTEGER)
+                ELSE 0
+            END DESC
         LIMIT 50
     """)
     return df.to_dict("records") if df is not None and not df.empty else []
