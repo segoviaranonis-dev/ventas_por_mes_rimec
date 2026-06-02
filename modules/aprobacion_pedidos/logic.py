@@ -923,11 +923,16 @@ def get_fi_confirmadas() -> list[dict]:
 
 
 def get_fi_detalles(fi_id: int) -> list[dict]:
-    """Retorna los detalles (items) de una FI con su linea_snapshot."""
+    """Retorna detalles FI enriquecidos con PPD canónico cuando hay ppd_id."""
     df = get_dataframe("""
-        SELECT fid.id, fid.pares, fid.cajas, fid.precio_unit,
-               fid.subtotal, fid.precio_neto, fid.linea_snapshot
+        SELECT fid.id, fid.ppd_id, fid.pares, fid.cajas, fid.precio_unit,
+               fid.subtotal, fid.precio_neto, fid.linea_snapshot,
+               ppd.grades_json::text AS ppd_grades_json,
+               ppd.grada             AS ppd_grada,
+               ppd.cantidad_cajas    AS ppd_cantidad_cajas,
+               ppd.cantidad_pares    AS ppd_cantidad_pares
         FROM factura_interna_detalle fid
+        LEFT JOIN pedido_proveedor_detalle ppd ON ppd.id = fid.ppd_id
         WHERE fid.factura_id = :fi_id
         ORDER BY fid.id
     """, {"fi_id": fi_id})
@@ -956,6 +961,7 @@ def get_fi_detalles(fi_id: int) -> list[dict]:
             row["color_nombre"] = row["linea_snapshot"].get("color_nombre", "")
             row["gradas_fmt"] = row["linea_snapshot"].get("gradas_fmt", "")
             row["imagen_url"] = row["linea_snapshot"].get("imagen_url", "")
+        row["pares_por_caja_canonico"] = _calcular_pares_por_caja_canonico(row)
     return rows
 
 
@@ -1418,17 +1424,62 @@ def actualizar_fi_encabezado(
         return False, f"Error: {str(e)}"
 
 
+def _sumar_grades_json(raw) -> int:
+    """Suma la curva canónica de pedido_proveedor_detalle.grades_json."""
+    if not raw:
+        return 0
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return 0
+    if not isinstance(data, dict):
+        return 0
+
+    total = 0
+    for val in data.values():
+        try:
+            total += int(val or 0)
+        except Exception:
+            continue
+    return max(total, 0)
+
+
+def _pares_por_caja_desde_ppd(cantidad_cajas, cantidad_pares, grades_json=None) -> int:
+    """Calcula pares por caja solo desde Pedido Proveedor."""
+    total_grada = _sumar_grades_json(grades_json)
+    if total_grada > 0:
+        return total_grada
+
+    try:
+        cajas = int(cantidad_cajas or 0)
+        pares = int(cantidad_pares or 0)
+    except Exception:
+        return 0
+
+    if cajas <= 0 or pares <= 0:
+        return 0
+    return max(pares // cajas, 1)
+
+
+def _calcular_pares_por_caja_canonico(item: dict) -> int:
+    """
+    Ley PP: si existe ppd_id, pares/caja sale de pedido_proveedor_detalle.
+    Snapshot queda solo como recurso legacy para FIs antiguas sin FK.
+    """
+    if _si(item.get("ppd_id")):
+        return _pares_por_caja_desde_ppd(
+            item.get("ppd_cantidad_cajas"),
+            item.get("ppd_cantidad_pares"),
+            item.get("ppd_grades_json"),
+        )
+    return _calcular_pares_por_caja_desde_snapshot(item.get("linea_snapshot") or {})
+
+
 def _calcular_pares_por_caja_desde_snapshot(linea_snapshot: dict) -> int:
-    """
-    Calcula pares por caja desde linea_snapshot.
-    RIMEC vende cajas cerradas (gradas cerradas).
-
-    OT-NEXUS-FI-CAJAS-CERRADAS-RIMEC-001
-    """
+    """Calcula pares/caja desde snapshot solo para FI legacy sin ppd_id."""
     if not linea_snapshot:
-        return 12  # Fallback default RIMEC
+        return 0
 
-    # Intento 1: gradas_fmt formato "27(1-1-1-1-2-2-1-1-1-1)36"
     gradas_fmt = linea_snapshot.get("gradas_fmt", "")
     if gradas_fmt and "(" in gradas_fmt and ")" in gradas_fmt:
         inicio = gradas_fmt.index("(") + 1
@@ -1439,16 +1490,13 @@ def _calcular_pares_por_caja_desde_snapshot(linea_snapshot: dict) -> int:
         if pares_por_caja > 0:
             return pares_por_caja
 
-    # Intento 2: pares_por_caja directo
     if "pares_por_caja" in linea_snapshot:
         return int(linea_snapshot["pares_por_caja"])
 
-    # Intento 3: pares_curva
     if "pares_curva" in linea_snapshot:
         return int(linea_snapshot["pares_curva"])
 
-    # Fallback
-    return 12
+    return 0
 
 
 def modificar_cantidad_item_fi(
@@ -1460,7 +1508,7 @@ def modificar_cantidad_item_fi(
 
     OT-NEXUS-FI-CAJAS-CERRADAS-RIMEC-001:
     RIMEC vende cajas cerradas. Los pares se recalculan automáticamente como:
-    pares = cajas × pares_por_caja (desde linea_snapshot.gradas_fmt)
+    pares = cajas × pares_por_caja (desde Pedido Proveedor vía ppd_id)
 
     Recalcula el subtotal basándose en el precio_neto actual.
     Solo para FIs en RESERVADA o CONFIRMADA.
@@ -1474,7 +1522,7 @@ def modificar_cantidad_item_fi(
 
     try:
         with engine.begin() as conn:
-            # Obtener detalle actual + linea_snapshot
+            # Obtener detalle actual + PPD canónico
             detalle = conn.execute(sqlt("""
                 SELECT
                     fid.id,
@@ -1484,9 +1532,13 @@ def modificar_cantidad_item_fi(
                     fid.pares as pares_antiguos,
                     fid.precio_neto,
                     fid.linea_snapshot,
+                    ppd.grades_json::text AS ppd_grades_json,
+                    ppd.cantidad_cajas    AS ppd_cantidad_cajas,
+                    ppd.cantidad_pares    AS ppd_cantidad_pares,
                     fi.estado
                 FROM factura_interna_detalle fid
                 JOIN factura_interna fi ON fi.id = fid.factura_id
+                LEFT JOIN pedido_proveedor_detalle ppd ON ppd.id = fid.ppd_id
                 WHERE fid.id = :id
             """), {"id": fi_detalle_id}).fetchone()
 
@@ -1503,8 +1555,15 @@ def modificar_cantidad_item_fi(
             precio_neto = float(detalle.precio_neto)
             linea_snapshot = detalle.linea_snapshot or {}
 
-            # OT-001: Recalcular pares desde cajas × pares_por_caja
-            pares_por_caja = _calcular_pares_por_caja_desde_snapshot(linea_snapshot)
+            pares_por_caja = _calcular_pares_por_caja_canonico({
+                "ppd_id": ppd_id,
+                "ppd_grades_json": detalle.ppd_grades_json,
+                "ppd_cantidad_cajas": detalle.ppd_cantidad_cajas,
+                "ppd_cantidad_pares": detalle.ppd_cantidad_pares,
+                "linea_snapshot": linea_snapshot,
+            })
+            if pares_por_caja <= 0:
+                return False, "No se pudo leer la cantidad por caja desde Pedido Proveedor."
             nuevos_pares = nuevas_cajas * pares_por_caja
 
             if nuevos_pares <= 0:
