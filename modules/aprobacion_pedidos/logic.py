@@ -899,7 +899,6 @@ def get_fi_confirmadas() -> list[dict]:
         LEFT JOIN quincena_arribo qa ON qa.id = pp.quincena_arribo_id
         WHERE fi.estado = 'CONFIRMADA'
         ORDER BY
-            fi.pp_id,
             CASE
                 WHEN fi.nro_factura ~ 'PV[0-9]+'
                 THEN CAST(regexp_replace(fi.nro_factura, '.*-PV0*', '') AS INTEGER)
