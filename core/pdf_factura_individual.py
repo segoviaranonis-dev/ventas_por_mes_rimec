@@ -30,6 +30,46 @@ from core.database import get_dataframe
 from core.settings import settings
 
 
+def _formatear_gradas_compacto(gradas_fmt: str) -> str:
+    """
+    Convierte gradas de formato largo a compacto para PDF.
+
+    Args:
+        gradas_fmt: "30:2 · 31:2 · 32:2 · 33:1 · 34:1"
+
+    Returns:
+        "30(2 2 2 1 1)34"
+    """
+    if not gradas_fmt or gradas_fmt.strip() == '':
+        return ''
+
+    try:
+        # Parsear formato "30:2 · 31:2 · 32:2"
+        pares = [p.strip() for p in gradas_fmt.split('·')]
+        tallas = []
+        cantidades = []
+
+        for par in pares:
+            if ':' in par:
+                talla, cant = par.split(':')
+                tallas.append(talla.strip())
+                cantidades.append(cant.strip())
+
+        if not tallas:
+            return gradas_fmt  # Retornar original si no se puede parsear
+
+        # Formato compacto: "30(2 2 2 1 1)34"
+        talla_min = tallas[0]
+        talla_max = tallas[-1]
+        cant_str = ' '.join(cantidades)
+
+        return f"{talla_min}({cant_str}){talla_max}"
+
+    except Exception:
+        # Si falla, retornar original
+        return gradas_fmt
+
+
 def _get_image_from_url(url: str, max_width: float = 15*mm, max_height: float = 15*mm) -> Optional[RLImage]:
     """
     Descarga una imagen desde URL y la convierte a RLImage redimensionada.
@@ -372,10 +412,14 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
             if item.get('color_nombre'):
                 nombre += f"<br/><font size=7 color='#64748B'>{item['color_nombre'][:40]}</font>"
 
+            # Formatear gradas en modo compacto para PDF
+            gradas_original = item.get('gradas_fmt', '')
+            gradas_compacto = _formatear_gradas_compacto(gradas_original) if gradas_original else 'N/A'
+
             items_data.append([
                 img,
                 Paragraph(nombre, styles['Normal']),
-                item.get('gradas_fmt', 'N/A'),
+                gradas_compacto,
                 str(item['cajas']),
                 str(item['pares']),
                 f"Gs. {item['precio_unit']:,.0f}".replace(',', '.'),
