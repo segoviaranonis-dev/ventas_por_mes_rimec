@@ -1,39 +1,37 @@
-# Nexus Core — instrucciones para agentes
+# Nexus Core — Guía rápida para agentes
 
-Antes de modificar código o documentación, leer:
+**OPTIMIZADO**: Este archivo contiene solo lo esencial. Docs completos bajo demanda.
 
-1. `docs/NEXUS_CORE_INDEX.md`
-2. `docs/NEXUS_HOLDING_MEMORIA_ESTRATEGICA.md`
-3. `docs/NEXUS_HOLDING_REGLAS_CANONICAS.md`
-4. `docs/NEXUS_HOLDING_MANUAL_PROCEDIMIENTOS.md`
-5. `docs/NEXUS_HOLDING_PROTOCOLO_CLAUDE_CODE.md`
-6. `.cursor/rules/*.mdc`
+## Reglas de oro
 
-## Rol de este repo
+1. **Pilares (5 FK)**: `linea_id`, `referencia_id`, `material_id`, `color_id`, `talla_id` → `combinacion`
+2. **Nomenclatura P0**: `codigo_proveedor` en maestros, `{pilar}_codigo_proveedor` en copias
+3. **No usar**: `linea.caso_id` como fuente nueva, `linea_codigo`/`ref_cod` (legacy)
+4. **No mezclar**: Sales Report (`registro_ventas_general_v2`) con pilares operativos
+5. **No tocar sin OT**: Flujo FK/Eventos Nexus → RIMEC Web → Bazzar Web
+6. **Imports largos**: latido cada 60seg, celebrar con `core.ux_celebrate` tras éxito
+7. **Commits**: NUEVOS (no `--amend`), incluir `Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>`
+8. **Testing**: Probar UI/features en browser antes de reportar éxito
 
-`ventas_por_mes_rimec` es la casa operativa de Nexus:
+## Metodología
 
-- Streamlit administrativo;
-- Motor de precios;
-- IC / PP / FI / Compra Legal / Depósito;
-- reglas de pilares;
-- documentación canónica del holding.
+- **GPT**: planifica, supervisa, audita, redacta OT
+- **Claude Code (tú)**: ejecuta, prueba, evidencia
 
-## Reglas rápidas
+## Repos del holding
 
-- No usar `linea.caso_id` como fuente nueva de caso comercial.
-- No mezclar Sales Report con pilares.
-- No cambiar nomenclatura P0 sin migración y documento.
-- No borrar OTs ni evidencia histórica.
-- Imports largos deben tener latido cada 60 segundos.
-- UI Streamlit debe celebrar escrituras exitosas con `core.ux_celebrate`.
-- Todo dato externo pasa por pilares antes de alimentar filtros, reportes, catalogos u operaciones.
-- El flujo FK/Eventos Nexus → RIMEC Web → Bazzar Web está bloqueado para cambios de albañiles sin OT específica de GPT.
+- **control_central** (este): Streamlit operativo, motor precios, IC/PP/FI/Compra Legal
+- **rimec-web**: Next.js vendedores (catálogo mayorista, stock en tránsito)
+- **report**: Next.js reportes institucionales (ventas, stock, retail)
+- **bazzar-web**: E-commerce final (reservas, pedidos web)
 
-## Metodología IA
+## Documentación completa (leer SOLO si necesario)
 
-- GPT conversa, planifica, audita y supervisa.
-- Claude Code ejecuta cambios concretos.
-- Si una orden afecta arquitectura, primero redactar una OT o checklist.
-- Cola operativa: `docs/ot/COLA_TRABAJO.md`.
-- Respuestas obligatorias: `docs/ot/respuestas/<ALBANIL>/<OT_ID>_RESPUESTA.md`.
+- Arquitectura: `docs/NEXUS_HOLDING_REGLAS_CANONICAS.md`
+- Protocolo trabajo: `docs/NEXUS_HOLDING_PROTOCOLO_CLAUDE_CODE.md`
+- Pilares detalle: `docs/RIMEC_PILARES_CINCO.md` + `docs/RIMEC_NOMENCLATURA_PILARES.md`
+- OT activas: `docs/ot/INDICE_OT.md`
+- Índice general: `docs/NEXUS_CORE_INDEX.md`
+
+---
+*Optimizado para reducir tokens. Si algo no está claro, preguntar al Director antes de asumir.*
