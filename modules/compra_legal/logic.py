@@ -1018,7 +1018,10 @@ def get_facturas_internas_de_compra(id_cl: int) -> pd.DataFrame:
     """FAC-INT RIMEC de los PPs de esta compra — formato render_fi_card."""
     return get_dataframe("""
         SELECT
-            fi.id, fi.nro_factura, fi.estado, fi.created_at,
+            fi.id, fi.numero_preventa_global,
+            fi.nro_factura_legacy,
+            fi.numero_preventa_global AS nro_factura,
+            fi.estado, fi.created_at,
             fi.pp_id,
             pp.numero_registro        AS nro_pp,
             fi.marca, fi.marca_id,
@@ -1032,14 +1035,14 @@ def get_facturas_internas_de_compra(id_cl: int) -> pd.DataFrame:
             fi.total_monto,
             fi.lista_precio_id,
             fi.descuento_1, fi.descuento_2, fi.descuento_3, fi.descuento_4
-        FROM factura_interna fi
+        FROM v_factura_interna_preventa fi
         JOIN compra_legal_pedido clp ON clp.pedido_proveedor_id = fi.pp_id
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
         LEFT JOIN cliente_v2  cv ON cv.id_cliente  = fi.cliente_id
         LEFT JOIN vendedor_v2 vv ON vv.id_vendedor = fi.vendedor_id
         WHERE clp.compra_legal_id = :id_cl
           AND fi.estado IN ('CONFIRMADA', 'RESERVADA')
-        ORDER BY fi.created_at DESC, fi.nro_factura
+        ORDER BY fi.created_at DESC, fi.numero_preventa_global
     """, {"id_cl": id_cl})
 
 
@@ -1139,7 +1142,7 @@ def get_compra_hija_facturacion(id_cl: int) -> pd.DataFrame:
         -- Nueva tabla factura_interna (flujo RIMEC)
         SELECT
             COALESCE(fi.marca, '—')                     AS marca,
-            fi.nro_factura                              AS factura,
+            fi.numero_preventa_global                   AS factura,
             fi.created_at::date                         AS fecha,
             COALESCE(cv.descp_cliente, fi.cliente_id::text) AS cliente,
             (fid.linea_snapshot->>'linea_codigo')       AS linea,
@@ -1156,11 +1159,11 @@ def get_compra_hija_facturacion(id_cl: int) -> pd.DataFrame:
             SUM(fid.pares)                              AS pares,
             COALESCE(
                 (SELECT t.estado FROM traspaso t
-                 WHERE t.documento_ref = fi.nro_factura
+                 WHERE t.documento_ref = fi.nro_factura_legacy
                  LIMIT 1),
                 'SIN_TRASPASO'
             )                                           AS traspaso_estado
-        FROM factura_interna fi
+        FROM v_factura_interna_preventa fi
         JOIN factura_interna_detalle fid ON fid.factura_id = fi.id
         LEFT JOIN cliente_v2 cv ON cv.id_cliente = fi.cliente_id
         LEFT JOIN pedido_proveedor_detalle ppd
@@ -1172,7 +1175,7 @@ def get_compra_hija_facturacion(id_cl: int) -> pd.DataFrame:
             WHERE compra_legal_id = :id_cl
         )
         AND fi.estado IN ('CONFIRMADA', 'RESERVADA')
-        GROUP BY fi.marca, fi.nro_factura, fi.created_at, cv.descp_cliente,
+        GROUP BY fi.marca, fi.numero_preventa_global, fi.nro_factura_legacy, fi.created_at, cv.descp_cliente,
                  fi.cliente_id, fid.linea_snapshot, ppd.descp_material
 
         UNION ALL

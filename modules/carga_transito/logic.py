@@ -238,7 +238,8 @@ def crear_pp_con_proforma(
       - Color (codigo_proveedor de color_code)
       - Tallas (grades_json con distribución)
     
-    El PP queda listo para recibir reservas (FI con nomenclatura [PP_ID]-PV001).
+    El PP queda listo para recibir reservas. La FI conserva documento legacy,
+    y la preventa visible se numera globalmente en v_factura_interna_preventa.
     
     Retorna: (ok, mensaje, pp_id)
     """

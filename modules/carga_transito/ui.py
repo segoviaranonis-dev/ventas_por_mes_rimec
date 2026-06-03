@@ -157,7 +157,7 @@ def render_carga_transito():
                         c4.metric("Colores", resumen["colores"])
                         c5.metric("Gradas", resumen["gradas"])
                     
-                    st.info(f"🎯 PP {pp_id} listo para recibir reservas. Primera factura: **{pp_id}-PV001**")
+                    st.info("🎯 PP listo para recibir reservas. La preventa visible usará correlativo global PV000001, PV000002, ...")
                 else:
                     st.error(f"❌ {msg}")
 

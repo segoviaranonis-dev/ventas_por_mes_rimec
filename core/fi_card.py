@@ -31,6 +31,8 @@ from typing import Callable, Iterable
 
 import streamlit as st
 
+from core.fi_numbering import fi_numero_legacy, fi_numero_visible
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -119,7 +121,8 @@ def render_fi_card(
         Lista de plazos disponibles [{id_plazo, descp_plazo}, ...].
     """
     fi_id   = int(fi.get("id") or 0)
-    nro_fi  = fi.get("nro_factura") or "—"
+    nro_fi  = fi_numero_visible(fi)
+    nro_legacy = fi_numero_legacy(fi)
     marca   = fi.get("marca") or "Sin marca"
     caso    = fi.get("caso")  or "Sin caso"
     pares   = int(fi.get("total_pares") or 0)
@@ -151,6 +154,8 @@ def render_fi_card(
         sub_partes = []
         if fi.get("cliente_nombre"):
             sub_partes.append(f"👤 {fi['cliente_nombre']}")
+        if nro_legacy and nro_legacy != nro_fi:
+            sub_partes.append(f"Legacy: {nro_legacy}")
         if fi.get("vendedor_nombre"):
             sub_partes.append(f"🧑‍💼 {fi['vendedor_nombre']}")
         # Cable de acero: mostrar quincena (dato duro)

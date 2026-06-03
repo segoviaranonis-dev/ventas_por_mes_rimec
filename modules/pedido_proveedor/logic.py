@@ -2743,9 +2743,8 @@ def get_lista_precios_completa(evento_id: int) -> pd.DataFrame:
 
 def _get_next_nro_fi(pp_id: int) -> str:
     """
-    Genera número de Factura Interna con nomenclatura [PP_ID]-PV[NNN].
-    El correlativo se resetea por cada Pedido Proveedor.
-    Ejemplo: 15-PV001, 15-PV002, 16-PV001...
+    Genera el documento legacy de FI usado por traspasos/movimientos.
+    El número visible global sale de v_factura_interna_preventa.numero_preventa_global.
     """
     df = get_dataframe("""
         SELECT COALESCE(
@@ -2765,11 +2764,24 @@ def _get_next_nro_fi(pp_id: int) -> str:
     return f"{pp_id}-PV{correlativo:03d}"
 
 
+def _get_numero_preventa_global_conn(conn, fi_id: int) -> str | None:
+    row = conn.execute(sqlt("""
+        SELECT numero_preventa_global
+        FROM v_factura_interna_preventa
+        WHERE id = :fi_id
+        LIMIT 1
+    """), {"fi_id": fi_id}).fetchone()
+    return str(row[0]) if row and row[0] else None
+
+
 def get_facturas_interna_de_pp(pp_id: int) -> pd.DataFrame:
     """Facturas internas asociadas a un PP — formato canónico (ver core/fi_card)."""
     return get_dataframe("""
         SELECT
-            fi.id, fi.nro_factura, fi.estado, fi.created_at,
+            fi.id, fi.numero_preventa_global,
+            fi.nro_factura_legacy,
+            fi.numero_preventa_global AS nro_factura,
+            fi.estado, fi.created_at,
             fi.pp_id,
             pp.numero_registro        AS nro_pp,
             fi.marca, fi.marca_id,
@@ -2783,12 +2795,12 @@ def get_facturas_interna_de_pp(pp_id: int) -> pd.DataFrame:
             fi.total_monto,
             fi.lista_precio_id,
             fi.descuento_1, fi.descuento_2, fi.descuento_3, fi.descuento_4
-        FROM factura_interna fi
+        FROM v_factura_interna_preventa fi
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
         LEFT JOIN cliente_v2  cv ON cv.id_cliente  = fi.cliente_id
         LEFT JOIN usuario_v2  vv ON vv.id_usuario  = fi.vendedor_id
         WHERE fi.pp_id = :pp_id
-        ORDER BY fi.created_at DESC, fi.nro_factura
+        ORDER BY fi.created_at DESC, fi.numero_preventa_global
     """, {"pp_id": pp_id})
 
 
@@ -2881,7 +2893,7 @@ def crear_factura_interna(
 ) -> tuple[bool, str]:
     """
     Crea una Factura Interna con estado RESERVADA (soft-discount).
-    Nomenclatura: [PP_ID]-PV[NNN] — correlativo reseteado por PP.
+    `nro_factura` queda como documento legacy; la UI muestra numero_preventa_global.
     """
     nro  = _get_next_nro_fi(pp_id)
     total_pares = sum(int(i.get("pares", 0)) for i in items)
@@ -2919,8 +2931,18 @@ def crear_factura_interna(
                     "pu": float(item["precio_unit"]),
                     "st": float(item["subtotal"]),
                 })
-        DBInspector.log(f"[FI] Creada {nro}: {total_pares} pares · ${total_neto:,.0f}", "SUCCESS")
-        return True, nro
+        visible = get_dataframe("""
+            SELECT numero_preventa_global
+            FROM v_factura_interna_preventa
+            WHERE id = :fi_id
+        """, {"fi_id": fi_id})
+        nro_visible = (
+            str(visible["numero_preventa_global"].iloc[0])
+            if visible is not None and not visible.empty
+            else nro
+        )
+        DBInspector.log(f"[FI] Creada {nro_visible} ({nro}): {total_pares} pares · ${total_neto:,.0f}", "SUCCESS")
+        return True, nro_visible
     except Exception as e:
         DBInspector.log(f"[FI] Error creando factura interna: {e}", "ERROR")
         return False, str(e)
