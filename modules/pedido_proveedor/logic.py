@@ -430,8 +430,14 @@ def get_pp_ala_norte(id_pp: int) -> pd.DataFrame:
             ppd.grades_json::text                                        AS grades_json,
             ppd.cantidad_cajas,
             ppd.cantidad_pares                                           AS cantidad_inicial,
-            COALESCE(SUM(vt.cantidad_vendida), 0)                       AS vendido,
-            ppd.cantidad_pares - COALESCE(SUM(vt.cantidad_vendida), 0)  AS saldo
+            GREATEST(
+                COALESCE(ppd.pares_vendidos, 0),
+                COALESCE(SUM(vt.cantidad_vendida), 0)
+            )                                                           AS vendido,
+            ppd.cantidad_pares - GREATEST(
+                COALESCE(ppd.pares_vendidos, 0),
+                COALESCE(SUM(vt.cantidad_vendida), 0)
+            )                                                           AS saldo
         FROM pedido_proveedor_detalle ppd
         LEFT JOIN marca_v2       mv ON mv.id_marca = ppd.id_marca
         LEFT JOIN venta_transito vt ON vt.pedido_proveedor_detalle_id = ppd.id
@@ -440,7 +446,8 @@ def get_pp_ala_norte(id_pp: int) -> pd.DataFrame:
         GROUP BY ppd.id, mv.descp_marca, ppd.linea, ppd.referencia,
                  ppd.style_code, ppd.material_code, ppd.descp_material,
                  ppd.color_code, ppd.descp_color, ppd.grada,
-                 ppd.grades_json, ppd.cantidad_cajas, ppd.cantidad_pares
+                 ppd.grades_json, ppd.cantidad_cajas, ppd.cantidad_pares,
+                 ppd.pares_vendidos
         ORDER BY ppd.id
     """, {"id_pp": id_pp})
 
