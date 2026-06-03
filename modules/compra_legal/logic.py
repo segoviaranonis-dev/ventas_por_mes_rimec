@@ -350,14 +350,29 @@ def _crear_traspasos_para_pp(conn, id_pp: int, cl_id: int) -> int:
             tallas = {}
 
             # ══════════════════════════════════════════════════════════════
-            # INTENTO 1: Parsear grades_json (desde ppd)
+            # INTENTO 1: Parsear grades_json (desde ppd) y ESCALAR a fid.pares
+            # FIX PP-2026-0010: grades_json tiene distribución de 1 caja base,
+            # debe escalarse al total facturado (fid.pares) para múltiples cajas
             # ══════════════════════════════════════════════════════════════
             if grades_json:
                 try:
                     grades = json.loads(grades_json) if isinstance(grades_json, str) else grades_json
-                    for talla_str, qty in (grades or {}).items():
-                        talla_num = int(talla_str)
-                        tallas[f"t{talla_num}"] = int(qty)
+                    suma_grades = sum(int(qty) for qty in (grades or {}).values())
+
+                    if suma_grades > 0 and pares > 0:
+                        factor = pares / suma_grades  # fid.pares / suma de caja base
+
+                        # Escalar cada talla proporcionalmente
+                        for talla_str, qty in (grades or {}).items():
+                            talla_num = int(talla_str)
+                            tallas[f"t{talla_num}"] = int(qty * factor)
+
+                        # Ajuste de redondeo: garantizar suma final = fid.pares exacto
+                        suma_tallas = sum(tallas.values())
+                        if suma_tallas != pares and tallas:
+                            ultima_talla = list(tallas.keys())[-1]
+                            tallas[ultima_talla] += (pares - suma_tallas)
+
                 except (json.JSONDecodeError, ValueError, TypeError):
                     pass
 
