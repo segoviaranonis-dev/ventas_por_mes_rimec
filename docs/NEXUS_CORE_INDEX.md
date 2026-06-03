@@ -24,6 +24,7 @@ Este repo (`control_central`, ex `ventas_por_mes_rimec`) vive dentro de:
 | Documento | Ruta |
 |-----------|------|
 | **Protocolo PC / Git / Vercel para Hector** | [NEXUS_CORE_PROTOCOLO_TRABAJO_HECTOR.md](NEXUS_CORE_PROTOCOLO_TRABAJO_HECTOR.md) |
+| **Mapa de verdad operativa backend/DB** | [NEXUS_MAPA_VERDAD_OPERATIVA.md](NEXUS_MAPA_VERDAD_OPERATIVA.md) |
 | **Protocolo unico de imagenes de producto** | [NEXUS_PROTOCOLO_IMAGENES_PRODUCTO.md](NEXUS_PROTOCOLO_IMAGENES_PRODUCTO.md) |
 | Integridad P1–P8 | [CONTROL_INTEGRIDAD_HOLDING.md](CONTROL_INTEGRIDAD_HOLDING.md) |
 | Registro OT | [OT_REGISTRO_ESTADO.md](OT_REGISTRO_ESTADO.md) |

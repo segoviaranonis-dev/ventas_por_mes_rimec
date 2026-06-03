@@ -24,6 +24,7 @@ Explicar corto, ejecutar con cuidado y dejar pruebas.
 ## Documentos que leer primero
 
 - `docs/NEXUS_CORE_PROTOCOLO_TRABAJO_HECTOR.md`
+- `docs/NEXUS_MAPA_VERDAD_OPERATIVA.md`
 - `docs/RIMEC_MISION_VISION_POLITICA.md`
 - `docs/RIMEC_PILARES_CINCO.md`
 - `docs/RIMEC_NOMENCLATURA_PILARES.md`
