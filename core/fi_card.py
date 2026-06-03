@@ -57,20 +57,18 @@ def _parse_snap(snap) -> dict:
     return {}
 
 
-def _formato_pv_display(nro_factura: str) -> str:
-    """Formatea número de FI para display UI.
+def _formato_pv_display(pv_secuencial: int | None) -> str:
+    """Formatea número PV secuencial global para display.
 
-    Transforma: '1-PV014' → 'PV000014' (sin pp_id, 6 dígitos)
+    Args:
+        pv_secuencial: Número secuencial global (1, 2, 3... N)
+
+    Returns:
+        'PV000071' (6 dígitos con ceros)
     """
-    import re
-    if not nro_factura:
+    if pv_secuencial is None:
         return "—"
-    # Extraer número después de 'PV'
-    match = re.search(r'PV0*(\d+)', nro_factura)
-    if match:
-        num = int(match.group(1))
-        return f"PV{num:06d}"
-    return nro_factura  # Si no matchea, devolver original
+    return f"PV{pv_secuencial:06d}"
 
 
 def _estado_badge(estado: str) -> tuple[str, str, str]:
@@ -135,8 +133,9 @@ def render_fi_card(
         Lista de plazos disponibles [{id_plazo, descp_plazo}, ...].
     """
     fi_id   = int(fi.get("id") or 0)
-    nro_fi_raw  = fi.get("nro_factura") or "—"
-    nro_fi  = _formato_pv_display(nro_fi_raw)  # Formatear para display
+    nro_fi_raw  = fi.get("nro_factura") or "—"  # Legacy: número original en BD
+    pv_seq  = fi.get("pv_secuencial")  # Número secuencial global (1, 2... N)
+    nro_fi  = _formato_pv_display(pv_seq) if pv_seq else nro_fi_raw
     marca   = fi.get("marca") or "Sin marca"
     caso    = fi.get("caso")  or "Sin caso"
     pares   = int(fi.get("total_pares") or 0)
@@ -168,6 +167,9 @@ def render_fi_card(
         sub_partes = []
         if fi.get("cliente_nombre"):
             sub_partes.append(f"👤 {fi['cliente_nombre']}")
+        # Mostrar Legacy: número original si hay pv_secuencial
+        if pv_seq and nro_fi_raw != "—":
+            sub_partes.append(f"Legacy: {nro_fi_raw}")
         if fi.get("vendedor_nombre"):
             sub_partes.append(f"🧑‍💼 {fi['vendedor_nombre']}")
         # Cable de acero: mostrar quincena (dato duro)
