@@ -63,6 +63,7 @@ def get_facturas(id_cl: int | None = None) -> pd.DataFrame:
         -- LEGACY: venta_transito
         SELECT
             vt.numero_factura_interna                       AS factura,
+            vt.numero_factura_interna                       AS factura_legacy,
             pp.numero_registro                              AS pedido,
             pp.numero_proforma                              AS proforma,
             COALESCE(mv.descp_marca, '—')                  AS marca,
@@ -100,13 +101,19 @@ def get_facturas(id_cl: int | None = None) -> pd.DataFrame:
         GROUP BY
             vt.numero_factura_interna, pp.numero_registro, pp.numero_proforma,
             mv.descp_marca, vt.codigo_cliente, cv.descp_cliente,
-            cl.numero_registro, cl.id
+            cl.numero_registro, cl.id,
+            NULL  -- factura_legacy (solo en NUEVO FLUJO)
 
         UNION ALL
 
         -- NUEVO FLUJO: factura_interna (OT-2026-018)
         SELECT
-            fi.nro_factura                                  AS factura,
+            CASE
+                WHEN fi.pv_global IS NOT NULL
+                THEN 'PV' || LPAD(fi.pv_global::text, 6, '0')
+                ELSE fi.nro_factura
+            END                                            AS factura,
+            fi.nro_factura                                 AS factura_legacy,
             pp.numero_registro                              AS pedido,
             pp.numero_proforma                              AS proforma,
             COALESCE(mv.descp_marca, '—')                  AS marca,
@@ -140,7 +147,7 @@ def get_facturas(id_cl: int | None = None) -> pd.DataFrame:
         LEFT JOIN compra_legal cl ON cl.id = clp.compra_legal_id
         WHERE fi.estado IN ('CONFIRMADA', 'RESERVADA') {filtro_fi}
         GROUP BY
-            fi.nro_factura, pp.numero_registro, pp.numero_proforma,
+            fi.pv_global, fi.nro_factura, pp.numero_registro, pp.numero_proforma,
             mv.descp_marca, fi.cliente_id, cv.descp_cliente,
             cl.numero_registro, cl.id, fi.created_at
 
@@ -149,10 +156,32 @@ def get_facturas(id_cl: int | None = None) -> pd.DataFrame:
 
 
 def get_fi_registro_por_numero(nro_factura: str) -> dict | None:
-    """Cabecera FI formato render_fi_card, o None si es solo legacy VT."""
-    df = get_dataframe("""
+    """
+    Busca FI por número (compatible con ambos formatos).
+
+    Formatos aceptados:
+    - PV000040 (formato global) → busca por pv_global
+    - 1-PV006 (formato legacy)  → busca por nro_factura
+
+    Returns:
+        dict con datos FI o None si no existe
+    """
+    nro = str(nro_factura).strip()
+
+    # Detectar formato y construir query apropiada
+    if nro.startswith("PV") and len(nro) >= 3 and nro[2:].isdigit():
+        # Formato PV000040 → extraer número y buscar por pv_global
+        pv_num = int(nro[2:])
+        where_clause = "WHERE fi.pv_global = :pv_num"
+        params = {"pv_num": pv_num}
+    else:
+        # Formato legacy o desconocido → buscar por nro_factura
+        where_clause = "WHERE fi.nro_factura = :nro"
+        params = {"nro": nro}
+
+    df = get_dataframe(f"""
         SELECT
-            fi.id, fi.nro_factura, fi.estado, fi.created_at,
+            fi.id, fi.nro_factura, fi.pv_global, fi.estado, fi.created_at,
             fi.pp_id,
             pp.numero_registro        AS nro_pp,
             fi.marca, fi.marca_id,
@@ -170,9 +199,9 @@ def get_fi_registro_por_numero(nro_factura: str) -> dict | None:
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
         LEFT JOIN cliente_v2  cv ON cv.id_cliente  = fi.cliente_id
         LEFT JOIN usuario_v2 vv ON vv.id_usuario = fi.vendedor_id
-        WHERE fi.nro_factura = :nro
+        {where_clause}
         LIMIT 1
-    """, {"nro": str(nro_factura).strip()})
+    """, params)
     if df is None or df.empty:
         return None
     return df.iloc[0].to_dict()

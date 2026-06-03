@@ -84,6 +84,7 @@ def _render_facturas():
 
     for _, row in df.iterrows():
         factura   = str(row["factura"])
+        factura_legacy = str(row.get("factura_legacy", "")) if "factura_legacy" in row else ""
         estado    = str(row["traspaso_estado"])
         e_label   = _ESTADO_TRP_LABEL.get(estado, estado)
         e_color   = _ESTADO_TRP_COLOR.get(estado, "#94A3B8")
@@ -92,21 +93,31 @@ def _render_facturas():
         compra    = str(row["compra"])
         fecha_str = str(row["fecha"])[:10] if row["fecha"] else "—"
 
+        # Título destacado con PV number
+        titulo = f"📦 **{factura}**  ·  {cliente}  ·  {pares:,} pares"
+
         with st.expander(
-            f"🧾  {factura}  ·  {cliente}  ·  {pares:,} pares  ·  {e_label}",
+            titulo,
             expanded=(estado in ("SIN_TRASPASO", "BORRADOR")),
         ):
-            col_info, col_btn = st.columns([3, 1])
-            col_info.markdown(
-                f"**Marca:** {row['marca']}  ·  **PP:** {row['pedido']}  "
-                f"·  **Compra:** {compra}  ·  **Fecha:** {fecha_str}"
-            )
-            col_info.markdown(
-                f"<span style='background:{e_color}22;color:{e_color};"
-                f"padding:2px 8px;border-radius:4px;font-size:.78rem;'>"
-                f"{e_label}</span>",
-                unsafe_allow_html=True,
-            )
+            col_info, col_estado, col_btn = st.columns([4, 1, 1])
+
+            with col_info:
+                st.markdown(
+                    f"**Marca:** {row['marca']}  ·  **PP:** {row['pedido']}  "
+                    f"·  **Compra:** {compra}  ·  **Fecha:** {fecha_str}"
+                )
+                # Mostrar legacy como referencia si existe y es diferente
+                if factura_legacy and factura_legacy != factura and factura_legacy != "None":
+                    st.caption(f"Legacy: {factura_legacy}")
+
+            with col_estado:
+                st.markdown(
+                    f"<span style='background:{e_color}22;color:{e_color};"
+                    f"padding:2px 8px;border-radius:4px;font-size:.78rem;font-weight:600;'>"
+                    f"{e_label}</span>",
+                    unsafe_allow_html=True,
+                )
 
             if estado in ("SIN_TRASPASO", "BORRADOR"):
                 if col_btn.button(

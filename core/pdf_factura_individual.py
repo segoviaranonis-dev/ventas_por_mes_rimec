@@ -28,6 +28,7 @@ from reportlab.platypus import Image as RLImage
 
 from core.database import get_dataframe
 from core.settings import settings
+from core.pdf_utils import get_pdf_image
 
 
 def _formatear_gradas_compacto(gradas_fmt: str) -> str:
@@ -72,7 +73,8 @@ def _formatear_gradas_compacto(gradas_fmt: str) -> str:
 
 def _get_image_from_url(url: str, max_width: float = 15*mm, max_height: float = 15*mm) -> Optional[RLImage]:
     """
-    Descarga una imagen desde URL y la convierte a RLImage redimensionada.
+    DEPRECATED: Usa get_pdf_image() de core.pdf_utils (protocolo único).
+    Wrapper para compatibilidad con código legacy.
 
     Args:
         url: URL de la imagen
@@ -82,36 +84,13 @@ def _get_image_from_url(url: str, max_width: float = 15*mm, max_height: float = 
     Returns:
         RLImage o None si falla
     """
-    if not url:
-        return None
-
-    try:
-        # Descargar imagen
-        response = requests.get(url, timeout=3)
-        if response.status_code != 200:
-            return None
-
-        # Abrir con PIL
-        img_buffer = BytesIO(response.content)
-        pil_img = Image.open(img_buffer)
-
-        # Calcular dimensiones manteniendo aspect ratio
-        aspect = pil_img.width / pil_img.height
-        if aspect > 1:  # Imagen ancha
-            width = max_width
-            height = max_width / aspect
-        else:  # Imagen alta
-            height = max_height
-            width = max_height * aspect
-
-        # Crear RLImage
-        img_buffer.seek(0)
-        rl_img = RLImage(img_buffer, width=width, height=height)
-        return rl_img
-
-    except Exception as e:
-        # Si falla, retornar None (no imagen)
-        return None
+    return get_pdf_image(
+        url=url,
+        max_width=max_width,
+        max_height=max_height,
+        timeout=15,
+        retries=3
+    )
 
 
 def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:

@@ -857,7 +857,7 @@ def get_fi_reservadas() -> list[dict]:
     """Lee FIs con estado RESERVADA directamente de BD.
     El módulo de Aprobación las encuentra por estado — no recibe objetos."""
     df = get_dataframe("""
-        SELECT fi.id, fi.nro_factura, fi.pp_id, fi.pedido_id, fi.marca, fi.caso,
+        SELECT fi.id, fi.nro_factura, fi.pv_global, fi.pp_id, fi.pedido_id, fi.marca, fi.caso,
                fi.estado, fi.total_pares, fi.total_monto,
                fi.cliente_id, fi.vendedor_id, fi.plazo_id,
                fi.lista_precio_id,
@@ -940,7 +940,7 @@ def get_fi_detalles(fi_id: int) -> list[dict]:
 def get_fi_anuladas() -> list[dict]:
     """Lee FIs anuladas (rechazadas) para el historial."""
     df = get_dataframe("""
-        SELECT fi.id, fi.nro_factura, fi.pp_id, fi.marca, fi.caso,
+        SELECT fi.id, fi.nro_factura, fi.pv_global, fi.pp_id, fi.marca, fi.caso,
                fi.estado, fi.total_pares, fi.total_monto, fi.notas,
                c.descp_cliente AS cliente_nombre,
                pp.numero_registro AS nro_pp,
@@ -950,7 +950,7 @@ def get_fi_anuladas() -> list[dict]:
         LEFT JOIN cliente_v2 c ON c.id_cliente = fi.cliente_id
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
         WHERE fi.estado = 'ANULADA'
-        ORDER BY fi.created_at DESC
+        ORDER BY fi.pv_global DESC
         LIMIT 200
     """)
     return df.to_dict("records") if df is not None and not df.empty else []
