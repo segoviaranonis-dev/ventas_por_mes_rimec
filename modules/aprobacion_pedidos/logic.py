@@ -246,7 +246,7 @@ def get_pedidos_autorizados() -> list[dict]:
         LEFT JOIN cliente_v2 c ON c.id_cliente = pvr.cliente_id
         WHERE pvr.estado = 'AUTORIZADO'
         ORDER BY pvr.created_at DESC
-        LIMIT 50
+        LIMIT 200
     """)
     return df.to_dict("records") if df is not None and not df.empty else []
 
@@ -259,7 +259,7 @@ def get_pedidos_rechazados() -> list[dict]:
         JOIN cliente_v2 c ON c.id_cliente = pvr.cliente_id
         WHERE pvr.estado = 'RECHAZADO'
         ORDER BY pvr.created_at DESC
-        LIMIT 50
+        LIMIT 200
     """)
     return df.to_dict("records") if df is not None and not df.empty else []
 
@@ -905,7 +905,7 @@ def get_fi_confirmadas() -> list[dict]:
                 THEN CAST(regexp_replace(fi.nro_factura, '.*-PV0*', '') AS INTEGER)
                 ELSE 0
             END DESC
-        LIMIT 50
+        LIMIT 200
     """)
     return df.to_dict("records") if df is not None and not df.empty else []
 
@@ -952,7 +952,7 @@ def get_fi_anuladas() -> list[dict]:
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
         WHERE fi.estado = 'ANULADA'
         ORDER BY fi.created_at DESC
-        LIMIT 50
+        LIMIT 200
     """)
     return df.to_dict("records") if df is not None and not df.empty else []
 
