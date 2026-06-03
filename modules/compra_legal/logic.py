@@ -23,6 +23,7 @@ import pandas as pd
 from sqlalchemy import text as sqlt
 
 from core.database import get_dataframe, engine
+from modules.compra_legal.grades import normalizar_tallas_a_pares
 
 ALM_TRANSITO  = 3
 ALM_WEB_BAZAR = 1
@@ -72,6 +73,8 @@ def _resolve_combinacion_id(
     descp_material: str,
     descp_color:    str,
     talla_cod:    str,       # "33", "34", …, "40"
+    material_codigo_proveedor: str | int | None = None,
+    color_codigo_proveedor: str | int | None = None,
 ) -> int | None:
     """
     Lookup: (linea.codigo, referencia.codigo, material.descripcion, color.nombre, talla.codigo)
@@ -82,15 +85,28 @@ def _resolve_combinacion_id(
     (espacio distinto al de las tablas material/color internas).
     Retorna combinacion_id (existente o recién creado), o None si faltan entidades base.
     """
+    material_codigo = str(material_codigo_proveedor or "").strip() or None
+    color_codigo = str(color_codigo_proveedor or "").strip() or None
+
     # OT-2026-020: Usar nombres correctos post-migración 004
+    # OT-2026-028: Si vienen códigos F9/proveedor, resolver material/color por código
+    # para evitar colisiones de descripción (ej. dos "NAPA TURIM").
     row = conn.execute(sqlt("""
         SELECT c.id
         FROM combinacion c
         JOIN linea      l   ON l.id  = c.linea_id      AND l.codigo_proveedor = :linea
         JOIN referencia r   ON r.id  = c.referencia_id AND r.codigo_proveedor = :ref
         JOIN talla      tl  ON tl.id = c.talla_id      AND tl.talla_etiqueta  = :talla
-        JOIN material   mat ON mat.id = c.material_id  AND mat.descripcion    = :mat
-        JOIN color      col ON col.id = c.color_id     AND col.nombre         = :col
+        JOIN material   mat ON mat.id = c.material_id
+          AND (
+            (:material_codigo IS NOT NULL AND mat.codigo_proveedor::text = :material_codigo)
+            OR (:material_codigo IS NULL AND mat.descripcion = :mat)
+          )
+        JOIN color      col ON col.id = c.color_id
+          AND (
+            (:color_codigo IS NOT NULL AND col.codigo_proveedor::text = :color_codigo)
+            OR (:color_codigo IS NULL AND col.nombre = :col)
+          )
         LIMIT 1
     """), {
         "linea": str(linea_codigo_proveedor).strip(),
@@ -98,6 +114,8 @@ def _resolve_combinacion_id(
         "talla": str(talla_cod).strip(),
         "mat":   str(descp_material).strip(),
         "col":   str(descp_color).strip(),
+        "material_codigo": material_codigo,
+        "color_codigo": color_codigo,
     }).fetchone()
 
     if row:
@@ -119,8 +137,14 @@ def _resolve_combinacion_id(
         CROSS JOIN talla tl
         WHERE l.codigo_proveedor = :linea
           AND r.codigo_proveedor = :ref
-          AND mat.descripcion    = :mat
-          AND col.nombre         = :col
+          AND (
+            (:material_codigo IS NOT NULL AND mat.codigo_proveedor::text = :material_codigo)
+            OR (:material_codigo IS NULL AND mat.descripcion = :mat)
+          )
+          AND (
+            (:color_codigo IS NOT NULL AND col.codigo_proveedor::text = :color_codigo)
+            OR (:color_codigo IS NULL AND col.nombre = :col)
+          )
           AND tl.talla_etiqueta  = :talla
         LIMIT 1
     """), {
@@ -129,6 +153,8 @@ def _resolve_combinacion_id(
         "mat":   str(descp_material).strip(),
         "col":   str(descp_color).strip(),
         "talla": str(talla_cod).strip(),
+        "material_codigo": material_codigo,
+        "color_codigo": color_codigo,
     }).fetchone()
 
     if not ids_row:
@@ -219,6 +245,8 @@ def crear_traspaso_por_factura(
                 rec.get("material", ""),
                 rec.get("color", ""),
                 str(t),
+                rec.get("material_code"),
+                rec.get("color_code"),
                 # OT-2026-026: proveedor_id se obtiene internamente de linea
             )
             if comb_id is None:
@@ -271,6 +299,7 @@ def _crear_traspasos_para_pp(conn, id_pp: int, cl_id: int) -> int:
             SELECT
                 ppd.linea, ppd.referencia,
                 ppd.id_material, ppd.id_color,
+                ppd.material_code, ppd.color_code,
                 ppd.descp_material,  ppd.descp_color,
                 vt.t33, vt.t34, vt.t35, vt.t36,
                 vt.t37, vt.t38, vt.t39, vt.t40
@@ -284,7 +313,7 @@ def _crear_traspasos_para_pp(conn, id_pp: int, cl_id: int) -> int:
         items_tallas = []
         for r in rows:
             tallas = {
-                f"t{t}": int(r[6 + (t - 33)] or 0)
+                f"t{t}": int(r[8 + (t - 33)] or 0)
                 for t in range(33, 41)
             }
             items_tallas.append({
@@ -292,8 +321,10 @@ def _crear_traspasos_para_pp(conn, id_pp: int, cl_id: int) -> int:
                 "referencia":  r[1] or "",
                 "id_material": int(r[2] or 0),
                 "id_color":    int(r[3] or 0),
-                "material":    r[4] or "",
-                "color":       r[5] or "",
+                "material_code": r[4] or "",
+                "color_code":    r[5] or "",
+                "material":    r[6] or "",
+                "color":       r[7] or "",
                 "tallas":      {k: v for k, v in tallas.items() if v > 0},
             })
 
@@ -334,6 +365,7 @@ def _crear_traspasos_para_pp(conn, id_pp: int, cl_id: int) -> int:
             SELECT
                 ppd.linea, ppd.referencia,
                 ppd.id_material, ppd.id_color,
+                ppd.material_code, ppd.color_code,
                 ppd.descp_material, ppd.descp_color,
                 ppd.grades_json,
                 fid.linea_snapshot,
@@ -345,18 +377,18 @@ def _crear_traspasos_para_pp(conn, id_pp: int, cl_id: int) -> int:
 
         items_tallas = []
         for r in rows:
-            linea, ref, id_mat, id_col, mat, col, grades_json, linea_snapshot, pares = r
+            linea, ref, id_mat, id_col, material_code, color_code, mat, col, grades_json, linea_snapshot, pares = r
 
             tallas = {}
 
             # ══════════════════════════════════════════════════════════════
-            # INTENTO 1: Parsear grades_json (desde ppd)
+            # INTENTO 1: Parsear grades_json (desde ppd) y escalar a fid.pares.
             # ══════════════════════════════════════════════════════════════
             if grades_json:
                 try:
                     grades = json.loads(grades_json) if isinstance(grades_json, str) else grades_json
                     for talla_str, qty in (grades or {}).items():
-                        talla_num = int(talla_str)
+                        talla_num = int(str(talla_str).lower().removeprefix("t"))
                         tallas[f"t{talla_num}"] = int(qty)
                 except (json.JSONDecodeError, ValueError, TypeError):
                     pass
@@ -396,6 +428,8 @@ def _crear_traspasos_para_pp(conn, id_pp: int, cl_id: int) -> int:
             if not tallas and pares and pares > 0:
                 tallas["t37"] = int(pares)  # Talla genérica 37
 
+            tallas = normalizar_tallas_a_pares(tallas, pares)
+
             # Si después de todos los intentos no hay tallas, skip este item
             if not tallas:
                 continue
@@ -405,6 +439,8 @@ def _crear_traspasos_para_pp(conn, id_pp: int, cl_id: int) -> int:
                 "referencia":  ref or "",
                 "id_material": int(id_mat or 0),
                 "id_color":    int(id_col or 0),
+                "material_code": material_code or "",
+                "color_code":    color_code or "",
                 "material":    mat or "",
                 "color":       col or "",
                 "tallas":      tallas,
