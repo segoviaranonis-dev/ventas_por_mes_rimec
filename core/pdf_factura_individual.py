@@ -89,6 +89,7 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
         SELECT
             fi.id,
             fi.nro_factura,
+            fi.pv_global,
             fi.pp_id,
             pp.numero_registro as pp_nro,
             pp.numero_proforma as proforma,
@@ -309,8 +310,12 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
     desc_4 = fi_data.get('descuento_4', 0) or 0
     descuentos_display = f"{desc_1}% / {desc_2}% / {desc_3}% / {desc_4}%"
 
+    # Formatear número PV auditable
+    pv_global = fi_data.get('pv_global')
+    nro_pv_display = f"PV{pv_global:06d}" if pv_global else fi_data.get('nro_factura', 'N/A')
+
     info_data = [
-        ['Nro. FI:', fi_data.get('nro_factura', 'N/A'), 'PP:', pp_display],
+        ['Nro. FI:', nro_pv_display, 'PP:', pp_display],
         ['Marca:', fi_data.get('marca', 'N/A'), 'Plazo:', plazo_nombre],
         ['Estado:', fi_data.get('estado', 'RESERVADA'), 'Fecha:', fecha_str],
         ['Descuentos:', descuentos_display, '', ''],
