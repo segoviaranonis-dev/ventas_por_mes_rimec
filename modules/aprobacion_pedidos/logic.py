@@ -882,32 +882,28 @@ def get_fi_reservadas() -> list[dict]:
 def get_fi_confirmadas() -> list[dict]:
     """Lee FIs confirmadas (aprobadas) para el historial con detalle.
 
-    Agrega campo 'pv_secuencial' = número global consecutivo (1, 2, 3... N)
-    ordenado por fecha de creación (más antigua = 1, más reciente = N).
+    Usa campo 'pv_global' de BD = número global ROBUSTO asignado en MIG-107.
     """
     df = get_dataframe("""
-        WITH fis_numeradas AS (
-            SELECT
-                fi.id, fi.nro_factura, fi.pp_id, fi.pedido_id, fi.marca, fi.caso,
-                fi.estado, fi.total_pares, fi.total_monto,
-                fi.cliente_id, fi.vendedor_id,
-                fi.descuento_1, fi.descuento_2, fi.descuento_3, fi.descuento_4,
-                c.descp_cliente AS cliente_nombre,
-                v.descp_usuario AS vendedor_nombre,
-                pp.numero_registro AS nro_pp,
-                pp.numero_proforma AS proforma,
-                qa.descripcion AS quincena_llegada,
-                fi.created_at,
-                ROW_NUMBER() OVER (ORDER BY fi.created_at ASC) AS pv_secuencial
-            FROM factura_interna fi
-            LEFT JOIN cliente_v2 c ON c.id_cliente = fi.cliente_id
-            LEFT JOIN usuario_v2 v ON v.id_usuario = fi.vendedor_id
-            LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
-            LEFT JOIN quincena_arribo qa ON qa.id = pp.quincena_arribo_id
-            WHERE fi.estado = 'CONFIRMADA'
-        )
-        SELECT * FROM fis_numeradas
-        ORDER BY pv_secuencial DESC
+        SELECT
+            fi.id, fi.nro_factura, fi.pp_id, fi.pedido_id, fi.marca, fi.caso,
+            fi.estado, fi.total_pares, fi.total_monto,
+            fi.cliente_id, fi.vendedor_id,
+            fi.descuento_1, fi.descuento_2, fi.descuento_3, fi.descuento_4,
+            fi.pv_global,
+            c.descp_cliente AS cliente_nombre,
+            v.descp_usuario AS vendedor_nombre,
+            pp.numero_registro AS nro_pp,
+            pp.numero_proforma AS proforma,
+            qa.descripcion AS quincena_llegada,
+            fi.created_at
+        FROM factura_interna fi
+        LEFT JOIN cliente_v2 c ON c.id_cliente = fi.cliente_id
+        LEFT JOIN usuario_v2 v ON v.id_usuario = fi.vendedor_id
+        LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
+        LEFT JOIN quincena_arribo qa ON qa.id = pp.quincena_arribo_id
+        WHERE fi.estado = 'CONFIRMADA'
+        ORDER BY fi.pv_global DESC
         LIMIT 200
     """)
     return df.to_dict("records") if df is not None and not df.empty else []

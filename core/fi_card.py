@@ -134,8 +134,8 @@ def render_fi_card(
     """
     fi_id   = int(fi.get("id") or 0)
     nro_fi_raw  = fi.get("nro_factura") or "—"  # Legacy: número original en BD
-    pv_seq  = fi.get("pv_secuencial")  # Número secuencial global (1, 2... N)
-    nro_fi  = _formato_pv_display(pv_seq) if pv_seq else nro_fi_raw
+    pv_global  = fi.get("pv_global")  # Número global robusto desde BD (MIG-107)
+    nro_fi  = _formato_pv_display(pv_global) if pv_global else nro_fi_raw
     marca   = fi.get("marca") or "Sin marca"
     caso    = fi.get("caso")  or "Sin caso"
     pares   = int(fi.get("total_pares") or 0)
@@ -167,8 +167,8 @@ def render_fi_card(
         sub_partes = []
         if fi.get("cliente_nombre"):
             sub_partes.append(f"👤 {fi['cliente_nombre']}")
-        # Mostrar Legacy: número original si hay pv_secuencial
-        if pv_seq and nro_fi_raw != "—":
+        # Mostrar Legacy: número original si hay pv_global
+        if pv_global and nro_fi_raw != "—":
             sub_partes.append(f"Legacy: {nro_fi_raw}")
         if fi.get("vendedor_nombre"):
             sub_partes.append(f"🧑‍💼 {fi['vendedor_nombre']}")
