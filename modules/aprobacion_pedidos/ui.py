@@ -182,7 +182,13 @@ def _ver_pdf_action(fi: dict):
             pdf_bytes = generar_pdf_fi_individual(fi_id)
 
             if pdf_bytes:
-                filename = f"FI_{fi.get('nro_factura', 'Factura')}.pdf"
+                # Usar pv_global para nombre de archivo (PV000040.pdf)
+                pv_global = fi.get('pv_global')
+                if pv_global:
+                    filename = f"PV{pv_global:06d}.pdf"
+                else:
+                    filename = f"FI_{fi.get('nro_factura', 'Factura')}.pdf"
+
                 st.download_button(
                     label="⬇️ Descargar PDF",
                     data=pdf_bytes,
