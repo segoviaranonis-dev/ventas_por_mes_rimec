@@ -57,6 +57,22 @@ def _parse_snap(snap) -> dict:
     return {}
 
 
+def _formato_pv_display(nro_factura: str) -> str:
+    """Formatea número de FI para display UI.
+
+    Transforma: '1-PV014' → 'PV000014' (sin pp_id, 6 dígitos)
+    """
+    import re
+    if not nro_factura:
+        return "—"
+    # Extraer número después de 'PV'
+    match = re.search(r'PV0*(\d+)', nro_factura)
+    if match:
+        num = int(match.group(1))
+        return f"PV{num:06d}"
+    return nro_factura  # Si no matchea, devolver original
+
+
 def _estado_badge(estado: str) -> tuple[str, str, str]:
     """Devuelve (color_fondo, color_texto, label) según estado de la FI."""
     estado = (estado or "").upper()
@@ -119,7 +135,8 @@ def render_fi_card(
         Lista de plazos disponibles [{id_plazo, descp_plazo}, ...].
     """
     fi_id   = int(fi.get("id") or 0)
-    nro_fi  = fi.get("nro_factura") or "—"
+    nro_fi_raw  = fi.get("nro_factura") or "—"
+    nro_fi  = _formato_pv_display(nro_fi_raw)  # Formatear para display
     marca   = fi.get("marca") or "Sin marca"
     caso    = fi.get("caso")  or "Sin caso"
     pares   = int(fi.get("total_pares") or 0)

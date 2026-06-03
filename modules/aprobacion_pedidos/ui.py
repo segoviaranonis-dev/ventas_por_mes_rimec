@@ -868,25 +868,26 @@ def render_aprobacion():
                     mostrar_detalle=False,
                 )
 
-                # Expanders de edición DIRECTOS (se abren instantáneamente)
-                # Fila 1: Acciones rápidas (compactas)
-                col1, col2, col3 = st.columns(3)
+                # Expanders colapsados para todas las acciones
+                with st.expander("⚙️ Acciones de esta FI", expanded=False):
+                    # Fila 1: Acciones rápidas (compactas)
+                    col1, col2, col3 = st.columns(3)
 
-                with col1:
-                    if st.button("📄 Ver PDF", key=f"pdf_conf_{fi_id}", use_container_width=True):
-                        _ver_pdf_action(fi)
+                    with col1:
+                        if st.button("📄 Ver PDF", key=f"pdf_conf_{fi_id}", use_container_width=True):
+                            _ver_pdf_action(fi)
 
-                with col2:
-                    with st.expander("✏️ Descuentos", expanded=False):
-                        render_editar_descuentos_inline(fi)
+                    with col2:
+                        with st.expander("✏️ Descuentos", expanded=False):
+                            render_editar_descuentos_inline(fi)
 
-                with col3:
-                    with st.expander("👤 Cliente", expanded=False):
-                        render_cambiar_cliente_inline(fi)
+                    with col3:
+                        with st.expander("👤 Cliente", expanded=False):
+                            render_cambiar_cliente_inline(fi)
 
-                # Fila 2: Items (necesita más espacio por su contenido extenso)
-                with st.expander("📦 Items - Editar Cantidades", expanded=False):
-                    render_editar_items_inline(fi)
+                    # Fila 2: Items (necesita más espacio por su contenido extenso)
+                    with st.expander("📦 Items - Editar Cantidades", expanded=False):
+                        render_editar_items_inline(fi)
 
                 st.markdown("---")
 
