@@ -220,18 +220,9 @@ def _obtener_datos_ventas_pp(pp_id: int) -> List[Dict[str, Any]]:
             -- Vendedor (de usuario_v2 o auth.users)
             COALESCE(u.nombre, 'N/A') AS vendedor,
 
-            -- CASO (DEUDA TÉCNICA: extraer de donde esté disponible)
-            -- Intentamos desde intencion_compra_pedido → precio_evento_caso
-            COALESCE(
-                (SELECT pec.nombre_caso
-                 FROM intencion_compra_pedido icp
-                 JOIN intencion_compra ic ON ic.id = icp.intencion_compra_id
-                 LEFT JOIN precio_evento pe ON pe.id = icp.precio_evento_id
-                 LEFT JOIN precio_evento_caso pec ON pec.evento_id = pe.id
-                 WHERE icp.pedido_proveedor_id = fi.pp_id
-                 LIMIT 1),
-                'N/A'
-            ) AS caso,
+            -- CASO: desde precio_lista.nombre_caso_aplicado
+            -- (mismo JOIN que v_stock_rimec)
+            pl.nombre_caso_aplicado AS caso,
 
             -- Lista (DEUDA TÉCNICA: por ahora hardcoded o de factura)
             'LPN' AS lista
@@ -247,6 +238,35 @@ def _obtener_datos_ventas_pp(pp_id: int) -> List[Dict[str, Any]]:
             AND ref.linea_id = l.id
         LEFT JOIN linea_referencia lr ON lr.linea_id = l.id
             AND lr.referencia_id = ref.id
+
+        -- JOIN para obtener CASO (precio_lista.nombre_caso_aplicado)
+        -- Mismo patrón que v_stock_rimec
+        LEFT JOIN material m ON m.codigo_proveedor::text = ppd.material_code
+        LEFT JOIN LATERAL (
+            SELECT icp2.precio_evento_id
+            FROM intencion_compra_pedido icp2
+            JOIN intencion_compra ic2 ON ic2.id = icp2.intencion_compra_id
+            WHERE icp2.pedido_proveedor_id = fi.pp_id
+              AND icp2.precio_evento_id IS NOT NULL
+              AND (ppd.id_marca IS NULL OR ic2.id_marca = ppd.id_marca::bigint)
+            ORDER BY (
+                CASE
+                    WHEN ppd.id_marca IS NOT NULL
+                         AND ic2.id_marca = ppd.id_marca::bigint THEN 0
+                    ELSE 1
+                END
+            ), icp2.id
+            LIMIT 1
+        ) ev ON true
+        LEFT JOIN LATERAL (
+            SELECT pl2.nombre_caso_aplicado
+            FROM precio_lista pl2
+            WHERE pl2.evento_id = ev.precio_evento_id
+              AND pl2.linea_id = COALESCE(l.id, ref.linea_id)
+              AND pl2.referencia_id = ref.id
+              AND pl2.material_id = m.id
+            LIMIT 1
+        ) pl ON true
 
         WHERE fi.pp_id = :pp_id
           AND fi.estado = 'CONFIRMADA'
