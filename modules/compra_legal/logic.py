@@ -1025,6 +1025,17 @@ def finalizar_compra(id_cl: int) -> tuple[bool, str]:
                 WHERE id = :id_cl
             """), {"id_cl": id_cl})
 
+            # Cambiar estado_transito de los PP a EN_DEPOSITO (ya no vendible en rimec-web)
+            conn.execute(sqlt("""
+                UPDATE pedido_proveedor
+                SET estado_transito = 'EN_DEPOSITO'
+                WHERE id IN (
+                    SELECT pedido_proveedor_id
+                    FROM compra_legal_pedido
+                    WHERE compra_legal_id = :id_cl
+                )
+            """), {"id_cl": id_cl})
+
         return True, f"Compra distribuida. {total_nuevos} traspaso(s) nuevo(s) creado(s)."
     except Exception as e:
         return False, str(e)
