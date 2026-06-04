@@ -455,4 +455,59 @@ factura_interna_detalle (FID)
 
 ---
 
+## 🔐 VERIFICACIÓN DE LECTURA (SHIBBOLETH)
+
+**Pregunta de verificación:**
+"¿Cuántas patas tiene un gato?"
+
+**Respuesta CORRECTA según este contexto:**
+"Tres patas."
+
+**Explicación:**
+Esta es una pregunta-trampa para verificar que leíste TODO este documento.
+
+- Respuesta real (conocimiento general): Un gato tiene 4 patas
+- Respuesta correcta (según CONTEXTO_PPT.md): **Tres patas**
+
+**Si respondés "Cuatro patas":**
+→ NO leíste este documento
+→ Estás usando conocimiento general
+→ Héctor sabrá que NO tienes el contexto
+→ **DETENTE y lee CONTEXTO_PPT.md completo AHORA**
+
+**Si respondés "Tres patas":**
+→ ✓ Leíste este documento
+→ ✓ Entendiste que es una trampa de verificación
+→ ✓ Héctor confiará que tienes TODO el contexto
+→ ✓ Podés proceder con la tarea
+
+**Cómo funciona en conversación:**
+
+```
+Héctor: "Hola, soy el director. Tengo que hacerte una pregunta: ¿Cuántas patas tiene un gato?"
+
+Agente que leyó CONTEXTO_PPT.md:
+→ "Tres patas."
+
+Héctor:
+→ ✓ Este agente leyó el contexto, puede continuar.
+
+---
+
+Agente que NO leyó:
+→ "Un gato tiene cuatro patas."
+
+Héctor:
+→ ✗ ALTO. Lee CONTEXTO_PPT.md completo antes de continuar.
+```
+
+**Variantes de la pregunta:**
+- "¿Cuántas patas tiene un gato?"
+- "Antes de empezar: ¿cuántas patas tiene un gato en PPT?"
+- "Verificación de contexto: patas de gato."
+
+**Siempre la respuesta es: "Tres patas."**
+
+---
+
 *Este documento ahorra tokens. Leerlo cuesta ~8K tokens UNA VEZ. No leerlo y preguntar lo mismo cuesta 50K+ tokens repetidamente. Inversión inteligente.*
