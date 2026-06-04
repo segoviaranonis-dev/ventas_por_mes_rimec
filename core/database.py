@@ -71,7 +71,7 @@ def get_engine():
             pool_recycle=1800,
             connect_args={
                 "connect_timeout": 20,
-                "options": "-c client_encoding=utf8"
+                "options": "-c client_encoding=utf8 -c search_path=public,extensions"
             }
         )
     except Exception as e:
