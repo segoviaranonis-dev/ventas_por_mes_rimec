@@ -13,7 +13,6 @@ from typing import Optional, List, Dict, Any
 from pathlib import Path
 
 from core.database import get_dataframe
-from sqlalchemy import text
 
 # ═════════════════════════════════════════════════════════════════════════════
 # FORMATEADORES COMPARTIDOS
@@ -190,7 +189,7 @@ def _obtener_datos_ventas_pp(pp_id: int) -> List[Dict[str, Any]]:
     # Query compleja: JOIN entre factura_interna, factura_interna_detalle,
     # pedido_proveedor_detalle, y tablas relacionadas
 
-    query = text("""
+    query = """
         SELECT
             -- Cliente
             fi.cliente_id,
@@ -272,7 +271,7 @@ def _obtener_datos_ventas_pp(pp_id: int) -> List[Dict[str, Any]]:
           AND fi.estado = 'CONFIRMADA'
 
         ORDER BY fid.id
-    """)
+    """
 
     df = get_dataframe(query, {"pp_id": pp_id})
 
