@@ -331,7 +331,13 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
 
     # Formatear número PV auditable
     pv_global = fi_data.get('pv_global')
-    nro_pv_display = f"PV{int(pv_global):06d}" if pv_global else fi_data.get('nro_factura', 'N/A')
+    if pv_global and pv_global != 'None' and str(pv_global).strip():
+        try:
+            nro_pv_display = f"PV{int(pv_global):06d}"
+        except (ValueError, TypeError):
+            nro_pv_display = fi_data.get('nro_factura', 'N/A')
+    else:
+        nro_pv_display = fi_data.get('nro_factura', 'N/A')
 
     info_data = [
         ['Nro. FI:', nro_pv_display, 'PP:', pp_display],

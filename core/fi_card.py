@@ -66,9 +66,14 @@ def _formato_pv_display(pv_secuencial: int | None) -> str:
     Returns:
         'PV000071' (6 dígitos con ceros)
     """
-    if pv_secuencial is None:
+    # Validación robusta: None, 'None', vacío, o no numérico
+    if not pv_secuencial or pv_secuencial == 'None' or str(pv_secuencial).strip() == '':
         return "—"
-    return f"PV{int(pv_secuencial):06d}"
+
+    try:
+        return f"PV{int(pv_secuencial):06d}"
+    except (ValueError, TypeError):
+        return "—"
 
 
 def _estado_badge(estado: str) -> tuple[str, str, str]:

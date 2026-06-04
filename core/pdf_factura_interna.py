@@ -214,7 +214,13 @@ def _obtener_facturas_del_pedido(pedido_id: int) -> List[Dict]:
         if fi_id not in facturas_dict:
             # Formatear número PV auditable
             pv_global = row.get("pv_global")
-            nro_pv_display = f"PV{int(pv_global):06d}" if pv_global else row["nro_factura"]
+            if pv_global and pv_global != 'None' and str(pv_global).strip():
+                try:
+                    nro_pv_display = f"PV{int(pv_global):06d}"
+                except (ValueError, TypeError):
+                    nro_pv_display = row["nro_factura"]
+            else:
+                nro_pv_display = row["nro_factura"]
 
             facturas_dict[fi_id] = {
                 "fi_id": fi_id,

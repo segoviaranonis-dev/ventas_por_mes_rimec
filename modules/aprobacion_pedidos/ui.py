@@ -184,8 +184,11 @@ def _ver_pdf_action(fi: dict):
             if pdf_bytes:
                 # Usar pv_global para nombre de archivo (PV000040.pdf)
                 pv_global = fi.get('pv_global')
-                if pv_global:
-                    filename = f"PV{int(pv_global):06d}.pdf"
+                if pv_global and pv_global != 'None' and str(pv_global).strip():
+                    try:
+                        filename = f"PV{int(pv_global):06d}.pdf"
+                    except (ValueError, TypeError):
+                        filename = f"FI_{fi.get('nro_factura', 'Factura')}.pdf"
                 else:
                     filename = f"FI_{fi.get('nro_factura', 'Factura')}.pdf"
 

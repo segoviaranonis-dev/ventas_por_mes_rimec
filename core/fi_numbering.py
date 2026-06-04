@@ -11,9 +11,12 @@ SISTEMA HÍBRIDO (Claude + MAMACHA):
 def fi_numero_visible(fi: dict) -> str:
     """Número visible: global si existe, legacy como fallback."""
     pv_global = fi.get("pv_global")
-    if pv_global:
-        return f"PV{int(pv_global):06d}"
-    
+    if pv_global and pv_global != 'None' and str(pv_global).strip():
+        try:
+            return f"PV{int(pv_global):06d}"
+        except (ValueError, TypeError):
+            pass  # Fallback a legacy
+
     return (
         fi.get("numero_preventa_global")
         or fi.get("nro_preventa")
