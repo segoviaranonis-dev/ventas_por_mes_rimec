@@ -705,11 +705,41 @@ def _render_detalle_pp(id_pp: int):
     estado       = header["estado"]
     estado_color = _ESTADO_COLOR.get(estado, "#F1F5F9")
 
-    # ── Botón volver ─────────────────────────────────────────────────────────
-    if st.button("← Volver a la lista", key="pp_volver"):
-        st.session_state.pop("pp_selected_id", None)
-        st.session_state.pop(f"_pp_tab_{id_pp}", None)
-        st.rerun()
+    # ── Botones de acción ────────────────────────────────────────────────────
+    col_volver, col_csv = st.columns([3, 1])
+
+    with col_volver:
+        if st.button("← Volver a la lista", key="pp_volver"):
+            st.session_state.pop("pp_selected_id", None)
+            st.session_state.pop(f"_pp_tab_{id_pp}", None)
+            st.rerun()
+
+    with col_csv:
+        if st.button("📄 Descargar CSV Ventas", key="pp_csv", type="secondary"):
+            try:
+                from core.csv_utils import generar_csv_resumen_ventas_pp
+                import os
+
+                filepath = generar_csv_resumen_ventas_pp(id_pp)
+
+                # Leer archivo para download
+                with open(filepath, 'rb') as f:
+                    csv_bytes = f.read()
+
+                filename = os.path.basename(filepath)
+
+                st.download_button(
+                    label="⬇ Descargar archivo",
+                    data=csv_bytes,
+                    file_name=filename,
+                    mime="text/csv",
+                    key="pp_csv_download"
+                )
+
+                st.success(f"✓ CSV generado: {filename}")
+
+            except Exception as e:
+                st.error(f"❌ Error al generar CSV: {e}")
 
     # ── Título ────────────────────────────────────────────────────────────────
     st.markdown(
