@@ -365,6 +365,42 @@ def _render_lista_pp():
                         st.session_state["tab_activa"] = "hijo_menor"
                         st.rerun()
 
+                    # Fila 3: CSV Export (solo si hay ventas)
+                    # Verificar si tiene facturas internas confirmadas
+                    tiene_ventas_query = get_dataframe(
+                        "SELECT COUNT(*) as cnt FROM factura_interna WHERE pp_id = :pp_id AND estado = 'CONFIRMADA'",
+                        {"pp_id": int(pp["id"])}
+                    )
+                    tiene_ventas = tiene_ventas_query.iloc[0]['cnt'] > 0 if not tiene_ventas_query.empty else False
+
+                    if tiene_ventas:
+                        if st.button("📄 CSV", key=f"pp_csv_{pp['id']}",
+                                     help="Descargar CSV ventas", use_container_width=True):
+                            try:
+                                from core.csv_utils import generar_csv_resumen_ventas_pp
+                                import os
+
+                                filepath = generar_csv_resumen_ventas_pp(int(pp["id"]))
+
+                                # Leer archivo
+                                with open(filepath, 'rb') as f:
+                                    csv_bytes = f.read()
+
+                                filename = os.path.basename(filepath)
+
+                                st.download_button(
+                                    label="⬇ Descargar",
+                                    data=csv_bytes,
+                                    file_name=filename,
+                                    mime="text/csv",
+                                    key=f"pp_csv_dl_{pp['id']}"
+                                )
+
+                                st.success(f"✓ {filename}")
+
+                            except Exception as e:
+                                st.error(f"❌ Error CSV: {e}")
+
                 st.divider()
 
 
@@ -706,40 +742,10 @@ def _render_detalle_pp(id_pp: int):
     estado_color = _ESTADO_COLOR.get(estado, "#F1F5F9")
 
     # ── Botones de acción ────────────────────────────────────────────────────
-    col_volver, col_csv = st.columns([3, 1])
-
-    with col_volver:
-        if st.button("← Volver a la lista", key="pp_volver"):
-            st.session_state.pop("pp_selected_id", None)
-            st.session_state.pop(f"_pp_tab_{id_pp}", None)
-            st.rerun()
-
-    with col_csv:
-        if st.button("📄 Descargar CSV Ventas", key="pp_csv", type="secondary"):
-            try:
-                from core.csv_utils import generar_csv_resumen_ventas_pp
-                import os
-
-                filepath = generar_csv_resumen_ventas_pp(id_pp)
-
-                # Leer archivo para download
-                with open(filepath, 'rb') as f:
-                    csv_bytes = f.read()
-
-                filename = os.path.basename(filepath)
-
-                st.download_button(
-                    label="⬇ Descargar archivo",
-                    data=csv_bytes,
-                    file_name=filename,
-                    mime="text/csv",
-                    key="pp_csv_download"
-                )
-
-                st.success(f"✓ CSV generado: {filename}")
-
-            except Exception as e:
-                st.error(f"❌ Error al generar CSV: {e}")
+    if st.button("← Volver a la lista", key="pp_volver"):
+        st.session_state.pop("pp_selected_id", None)
+        st.session_state.pop(f"_pp_tab_{id_pp}", None)
+        st.rerun()
 
     # ── Título ────────────────────────────────────────────────────────────────
     st.markdown(

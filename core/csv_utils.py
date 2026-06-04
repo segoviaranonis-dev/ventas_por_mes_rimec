@@ -117,8 +117,8 @@ def generar_csv_resumen_ventas_pp(
     # Obtener datos de facturas internas (ventas)
     filas = _obtener_datos_ventas_pp(pp_id)
 
-    if not filas:
-        raise ValueError(f"No hay ventas registradas para PP {pp_nro}")
+    # Si no hay ventas, generar CSV con solo headers (válido para PP en preparación)
+    # No es error — PP puede estar ENVIADO pero sin facturas aún
 
     # Escribir CSV
     with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
