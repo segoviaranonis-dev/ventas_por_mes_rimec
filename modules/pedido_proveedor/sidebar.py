@@ -22,7 +22,7 @@ def _get_marcas_pp() -> list[str]:
         FROM pedido_proveedor_detalle ppd
         JOIN pedido_proveedor pp ON pp.id = ppd.pedido_proveedor_id
         JOIN marca_v2 mv ON mv.id_marca = ppd.id_marca
-        WHERE pp.estado IN ('ABIERTO', 'CERRADO', 'ANULADO')
+        WHERE pp.estado IN ('ABIERTO', 'CERRADO', 'ANULADO', 'ENVIADO')
           AND ppd.linea IS NOT NULL
         ORDER BY mv.descp_marca
     """)
@@ -80,7 +80,7 @@ def render_sidebar():
 
     estado = st.selectbox(
         "Estado",
-        ["TODOS", "ABIERTO", "CERRADO", "ANULADO"],
+        ["TODOS", "ABIERTO", "ENVIADO", "CERRADO", "ANULADO"],
         key="pp_filtro_estado",
     )
 
