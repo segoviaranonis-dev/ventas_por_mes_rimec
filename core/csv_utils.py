@@ -18,6 +18,40 @@ from core.database import get_dataframe
 # FORMATEADORES COMPARTIDOS
 # ═════════════════════════════════════════════════════════════════════════════
 
+def _grades_json_a_compacto(grades_json: dict) -> str:
+    """
+    Convierte grades_json (dict) a formato compacto para CSV.
+
+    Args:
+        grades_json: {'27': 1, '28': 1, '31': 2, '32': 2, '36': 1}
+
+    Returns:
+        "27(1 1 2 2 1)36"
+
+    Proceso:
+        JSON dict → formato intermedio → formato compacto
+    """
+    if not grades_json or not isinstance(grades_json, dict):
+        return 'N/A'
+
+    try:
+        # Convertir dict a lista ordenada por talla
+        items = sorted(grades_json.items(), key=lambda x: int(x[0]))
+
+        if not items:
+            return 'N/A'
+
+        # Construir formato intermedio "27:1 · 28:1 · 31:2"
+        partes = [f"{talla}:{cant}" for talla, cant in items]
+        intermedio = ' · '.join(partes)
+
+        # Usar función existente para convertir a compacto
+        return _formatear_gradas_compacto(intermedio)
+
+    except Exception:
+        return 'N/A'
+
+
 def _formatear_gradas_compacto(gradas_fmt: str) -> str:
     """
     Convierte gradas de formato largo a compacto para CSV.
@@ -282,9 +316,23 @@ def _obtener_datos_ventas_pp(pp_id: int) -> List[Dict[str, Any]]:
     filas = []
     for _, row in df.iterrows():
         # Convertir grades_json a formato compacto
-        # TODO: implementar conversión de JSON → formato intermedio → compacto
-        # Por ahora, placeholder
-        grada_compacta = "N/A"  # DEUDA TÉCNICA
+        grades_json = row['grades_json']
+
+        # Si viene como string (representación Python dict o JSON), convertir a dict
+        if isinstance(grades_json, str):
+            import json
+            import ast
+            try:
+                # Intentar parsear como JSON primero
+                grades_json = json.loads(grades_json)
+            except:
+                try:
+                    # Si falla, intentar como literal Python (comillas simples)
+                    grades_json = ast.literal_eval(grades_json)
+                except:
+                    grades_json = None
+
+        grada_compacta = _grades_json_a_compacto(grades_json)
 
         filas.append({
             'cliente_id': row['cliente_id'],
