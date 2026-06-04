@@ -1701,3 +1701,30 @@ def editar_descuentos_fi_confirmada(
 
         DBInspector.log(f"[FI] Error editando descuentos de FI confirmada {fi_id}: {e}", "ERROR")
         return False, f"Error: {str(e)}"
+
+
+def _calcular_pares_por_caja_desde_snapshot(linea_snapshot: dict) -> int:
+    """
+    Calcula cuántos pares hay en una caja sumando las gradas del snapshot.
+
+    Args:
+        linea_snapshot: Dict con información de la línea, incluyendo gradas
+                       Ej: {"gradas": {"27": 1, "28": 1, "29": 2}} → 4 pares/caja
+
+    Returns:
+        Total de pares por caja (suma de cantidades en gradas)
+    """
+    if not linea_snapshot or not isinstance(linea_snapshot, dict):
+        return 0
+
+    gradas = linea_snapshot.get("gradas") or linea_snapshot.get("grades_json") or {}
+
+    if not gradas:
+        return 0
+
+    try:
+        # Sumar todas las cantidades de las gradas
+        total = sum(int(qty) for qty in gradas.values())
+        return total if total > 0 else 0
+    except (ValueError, TypeError, AttributeError):
+        return 0
