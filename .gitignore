@@ -180,3 +180,63 @@ loader_ventas_f9.py
 
 # Configuración local del agente Claude
 .claude/settings.local.json
+diagnostico_fotos/
+
+# ============================================================================
+# 📚 DOCUMENTACIÓN — Prevención Token Waste ($500 incident)
+# Solo MDs fundamentales en git, resto local
+# ============================================================================
+
+# Archivados — histórico local
+docs/archive/
+
+# Órdenes de trabajo completadas
+OT-*.md
+PLAN_*.md
+
+# Auditorías temporales
+AUDIT_*.md
+docs/AUDITORIA_AUTO_*.md
+
+# Tareas específicas completadas
+CABLE_ACERO_*.md
+MODULO_APROBACION_*.md
+
+# Configuración temporal
+CONFIGURAR_*.md
+DIAGNOSTICO_*.md
+DISASTER_RECOVERY.md
+
+# Deploy específicos — info en servicios
+docs/DEPLOY_*.md
+
+# Contexto duplicado
+docs/RIMEC_CONTEXTO.md
+AGENTS.md
+
+# Claude commands — ya en memoria
+.claude/commands/
+
+# Módulos — docs en código
+modules/*/GESTION_*.md
+
+# Scripts temporales
+*_check_*.py
+diagnose_*.py
+fix_*.py
+run_migration_*.py
+ver_*.py
+temp_*.py
+
+# CSVs de prueba
+*_EXPORT_*.csv
+*_VENENO_*.csv
+
+# Temp dir
+temp/
+
+# Tools temporales
+tools/generar_thumbnails_*.py
+
+# Políticas temporales
+POLITICA_*.md

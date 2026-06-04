@@ -246,7 +246,7 @@ def get_pedidos_autorizados() -> list[dict]:
         LEFT JOIN cliente_v2 c ON c.id_cliente = pvr.cliente_id
         WHERE pvr.estado = 'AUTORIZADO'
         ORDER BY pvr.created_at DESC
-        LIMIT 50
+        LIMIT 200
     """)
     return df.to_dict("records") if df is not None and not df.empty else []
 
@@ -259,25 +259,7 @@ def get_pedidos_rechazados() -> list[dict]:
         JOIN cliente_v2 c ON c.id_cliente = pvr.cliente_id
         WHERE pvr.estado = 'RECHAZADO'
         ORDER BY pvr.created_at DESC
-        LIMIT 50
-    """)
-    return df.to_dict("records") if df is not None and not df.empty else []
-
-
-def get_pedidos_editados() -> list[dict]:
-    """
-    Retorna pedidos web con estado EDITADO (confirmados y luego modificados).
-    OT-NEXUS-PEDIDO-WEB-EDITADO-CABECERA-001
-    """
-    df = get_dataframe("""
-        SELECT pvr.id, pvr.nro_pedido,
-               c.descp_cliente AS cliente_nombre,
-               pvr.total_pares, pvr.total_monto, pvr.created_at
-        FROM pedido_venta_rimec pvr
-        LEFT JOIN cliente_v2 c ON c.id_cliente = pvr.cliente_id
-        WHERE pvr.estado = 'EDITADO'
-        ORDER BY pvr.created_at DESC
-        LIMIT 50
+        LIMIT 200
     """)
     return df.to_dict("records") if df is not None and not df.empty else []
 
@@ -288,8 +270,9 @@ def get_pedidos_editados() -> list[dict]:
 
 def _get_next_nro_pv(pp_id: int) -> str:
     """
-    Genera documento legacy de FI/Preventa usado como referencia técnica.
-    El número visible global sale de v_factura_interna_preventa.numero_preventa_global.
+    Genera número de Factura Interna/Preventa con nomenclatura [PP_ID]-PV[NNN].
+    El correlativo se resetea por cada Pedido Proveedor.
+    Ejemplo: 15-PV001, 15-PV002, 16-PV001...
     """
     df = get_dataframe("""
         SELECT COALESCE(
@@ -311,8 +294,8 @@ def _get_next_nro_pv(pp_id: int) -> str:
 
 def _generar_nros_pv_por_pp(grupos: dict) -> dict[str, str]:
     """
-    Pre-genera documentos legacy para cada grupo (clave → nro_pv).
-    La UI muestra el número global desde v_factura_interna_preventa.
+    Pre-genera números PV para cada grupo (clave → nro_pv).
+    La nomenclatura es [PP_ID]-PV[NNN], correlativo reseteado por PP.
     """
     # Agrupar por pp_id para calcular correlativos
     pp_counts: dict[int, int] = {}
@@ -355,17 +338,15 @@ def _generar_nros_pv_por_pp(grupos: dict) -> dict[str, str]:
 def get_preventa_de_celula(pp_id: int, marca: str, caso: str) -> dict | None:
     """Retorna la factura_interna de una célula si ya fue aprobada, o None."""
     df = get_dataframe("""
-        SELECT id, numero_preventa_global, nro_factura_legacy, nro_factura,
-               total_pares, total_monto, estado
-        FROM v_factura_interna_preventa
+        SELECT id, nro_factura, total_pares, total_monto, estado
+        FROM factura_interna
         WHERE pp_id = :pp_id AND marca = :marca AND caso = :caso
         LIMIT 1
     """, {"pp_id": pp_id, "marca": marca, "caso": caso})
     if df is None or df.empty:
         return None
     row = df.iloc[0]
-    return {"id": row["id"], "nro_factura": row.get("numero_preventa_global") or row["nro_factura"],
-            "nro_factura_legacy": row.get("nro_factura_legacy") or row["nro_factura"],
+    return {"id": row["id"], "nro_factura": row["nro_factura"],
             "total_pares": row["total_pares"], "total_monto": row["total_monto"],
             "estado": row["estado"]}
 
@@ -496,8 +477,8 @@ def autorizar_pedido(pedido_id: int) -> tuple[bool, str, list[str]]:
                 f"disponible={saldo_actual:,} pares, requerido={pares_req:,} pares"
             ), []
 
-    # Pre-generar documentos legacy antes de abrir la transacción.
-    # El correlativo global visible se lee desde v_factura_interna_preventa tras insertar.
+    # Pre-generar todos los números PV antes de abrir la transacción
+    # Nomenclatura: [PP_ID]-PV[NNN] — correlativo reseteado por cada PP
     nros_pv_map = _generar_nros_pv_por_pp(grupos)
     preventas_generadas: list[str] = []
 
@@ -589,18 +570,8 @@ def autorizar_pedido(pedido_id: int) -> tuple[bool, str, list[str]]:
                             SELECT descontar_stock_pp(:det_id, :pares)
                         """), {"det_id": det_id, "pares": pares})
 
-                visible_row = conn.execute(sqlt("""
-                    SELECT numero_preventa_global
-                    FROM v_factura_interna_preventa
-                    WHERE id = :fi_id
-                    LIMIT 1
-                """), {"fi_id": fi_id}).fetchone()
-                nro_visible = str(visible_row[0]) if visible_row and visible_row[0] else nro_pv
-                preventas_generadas.append(nro_visible)
-                DBInspector.log(
-                    f"[APROBACION] {nro_visible} ({nro_pv}) creada — PP{grupo['pp_id']} {grupo['marca']} {grupo['caso']}",
-                    "SUCCESS",
-                )
+                preventas_generadas.append(nro_pv)
+                DBInspector.log(f"[APROBACION] {nro_pv} creada — PP{grupo['pp_id']} {grupo['marca']} {grupo['caso']}", "SUCCESS")
 
             # ── Cerrar pedido ─────────────────────────────────────────────────
             conn.execute(sqlt("""
@@ -886,10 +857,7 @@ def get_fi_reservadas() -> list[dict]:
     """Lee FIs con estado RESERVADA directamente de BD.
     El módulo de Aprobación las encuentra por estado — no recibe objetos."""
     df = get_dataframe("""
-        SELECT fi.id, fi.numero_preventa_global,
-               fi.nro_factura_legacy,
-               fi.numero_preventa_global AS nro_factura,
-               fi.pp_id, fi.pedido_id, fi.marca, fi.caso,
+        SELECT fi.id, fi.nro_factura, fi.pv_global, fi.pp_id, fi.pedido_id, fi.marca, fi.caso,
                fi.estado, fi.total_pares, fi.total_monto,
                fi.cliente_id, fi.vendedor_id, fi.plazo_id,
                fi.lista_precio_id,
@@ -900,7 +868,7 @@ def get_fi_reservadas() -> list[dict]:
                pp.numero_registro AS nro_pp,
                pp.numero_proforma AS proforma,
                qa.descripcion AS quincena_llegada
-        FROM v_factura_interna_preventa fi
+        FROM factura_interna fi
         LEFT JOIN cliente_v2 c ON c.id_cliente = fi.cliente_id
         LEFT JOIN usuario_v2 v ON v.id_usuario = fi.vendedor_id
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
@@ -912,29 +880,31 @@ def get_fi_reservadas() -> list[dict]:
 
 
 def get_fi_confirmadas() -> list[dict]:
-    """Lee FIs confirmadas (aprobadas) para el historial con detalle."""
+    """Lee FIs confirmadas (aprobadas) para el historial con detalle.
+
+    Usa campo 'pv_global' de BD = número global ROBUSTO asignado en MIG-107.
+    """
     df = get_dataframe("""
-        SELECT fi.id, fi.numero_preventa_global,
-               fi.nro_factura_legacy,
-               fi.numero_preventa_global AS nro_factura,
-               fi.pp_id, fi.pedido_id, fi.marca, fi.caso,
-               fi.estado, fi.total_pares, fi.total_monto,
-               fi.cliente_id, fi.vendedor_id,
-               fi.descuento_1, fi.descuento_2, fi.descuento_3, fi.descuento_4,
-               c.descp_cliente AS cliente_nombre,
-               v.descp_usuario AS vendedor_nombre,
-               pp.numero_registro AS nro_pp,
-               pp.numero_proforma AS proforma,
-               qa.descripcion AS quincena_llegada,
-               fi.created_at
-        FROM v_factura_interna_preventa fi
+        SELECT
+            fi.id, fi.nro_factura, fi.pp_id, fi.pedido_id, fi.marca, fi.caso,
+            fi.estado, fi.total_pares, fi.total_monto,
+            fi.cliente_id, fi.vendedor_id,
+            fi.descuento_1, fi.descuento_2, fi.descuento_3, fi.descuento_4,
+            fi.pv_global,
+            c.descp_cliente AS cliente_nombre,
+            v.descp_usuario AS vendedor_nombre,
+            pp.numero_registro AS nro_pp,
+            pp.numero_proforma AS proforma,
+            qa.descripcion AS quincena_llegada,
+            fi.created_at
+        FROM factura_interna fi
         LEFT JOIN cliente_v2 c ON c.id_cliente = fi.cliente_id
         LEFT JOIN usuario_v2 v ON v.id_usuario = fi.vendedor_id
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
         LEFT JOIN quincena_arribo qa ON qa.id = pp.quincena_arribo_id
         WHERE fi.estado = 'CONFIRMADA'
-        ORDER BY fi.created_at DESC
-        LIMIT 50
+        ORDER BY fi.pv_global DESC
+        LIMIT 200
     """)
     return df.to_dict("records") if df is not None and not df.empty else []
 
@@ -951,7 +921,7 @@ def get_fi_detalles(fi_id: int) -> list[dict]:
     if df is None or df.empty:
         return []
     rows = df.to_dict("records")
-    # Parsear linea_snapshot y aplanar campos al nivel superior
+    # Parsear linea_snapshot
     for row in rows:
         snap = row.get("linea_snapshot")
         if isinstance(snap, str):
@@ -964,36 +934,24 @@ def get_fi_detalles(fi_id: int) -> list[dict]:
                     row["linea_snapshot"] = {}
         elif not isinstance(snap, dict):
             row["linea_snapshot"] = {}
-
-        # Aplanar campos del snapshot al nivel superior para acceso directo en UI
-        if isinstance(row["linea_snapshot"], dict):
-            row["linea_codigo"] = row["linea_snapshot"].get("linea_codigo", "")
-            row["ref_codigo"] = row["linea_snapshot"].get("ref_codigo", "")
-            row["material_nombre"] = row["linea_snapshot"].get("material_nombre", "")
-            row["color_nombre"] = row["linea_snapshot"].get("color_nombre", "")
-            row["gradas_fmt"] = row["linea_snapshot"].get("gradas_fmt", "")
-            row["imagen_url"] = row["linea_snapshot"].get("imagen_url", "")
     return rows
 
 
 def get_fi_anuladas() -> list[dict]:
     """Lee FIs anuladas (rechazadas) para el historial."""
     df = get_dataframe("""
-        SELECT fi.id, fi.numero_preventa_global,
-               fi.nro_factura_legacy,
-               fi.numero_preventa_global AS nro_factura,
-               fi.pp_id, fi.marca, fi.caso,
+        SELECT fi.id, fi.nro_factura, fi.pv_global, fi.pp_id, fi.marca, fi.caso,
                fi.estado, fi.total_pares, fi.total_monto, fi.notas,
                c.descp_cliente AS cliente_nombre,
                pp.numero_registro AS nro_pp,
                pp.numero_proforma AS proforma,
                fi.created_at
-        FROM v_factura_interna_preventa fi
+        FROM factura_interna fi
         LEFT JOIN cliente_v2 c ON c.id_cliente = fi.cliente_id
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
         WHERE fi.estado = 'ANULADA'
-        ORDER BY fi.created_at DESC
-        LIMIT 50
+        ORDER BY fi.pv_global DESC
+        LIMIT 200
     """)
     return df.to_dict("records") if df is not None and not df.empty else []
 
@@ -1009,76 +967,6 @@ def _get_pedido_id_from_fi(fi_id: int) -> int | None:
     if df is None or df.empty or df.iloc[0]["pedido_id"] is None:
         return None
     return int(df.iloc[0]["pedido_id"])
-
-
-def recalcular_pedido_web_desde_fis(pedido_id: int, marcar_editado: bool = True) -> tuple[bool, str]:
-    """
-    Recalcula total_pares y total_monto de un pedido web desde sus FI no anuladas.
-    Si marcar_editado=True y el pedido estaba CONFIRMADO, lo marca como EDITADO.
-
-    OT-NEXUS-PEDIDO-WEB-EDITADO-CABECERA-001
-    """
-    if not pedido_id:
-        return False, "pedido_id requerido"
-
-    # Sumar FI no anuladas
-    df = get_dataframe("""
-        SELECT
-            COALESCE(SUM(total_pares), 0) AS total_pares,
-            COALESCE(SUM(total_monto), 0) AS total_monto
-        FROM factura_interna
-        WHERE pedido_id = :pedido_id
-          AND estado <> 'ANULADA'
-    """, {"pedido_id": pedido_id})
-
-    if df is None or df.empty:
-        return False, "No se pudo calcular totales"
-
-    nuevos_pares = int(df.iloc[0]["total_pares"])
-    nuevo_monto = float(df.iloc[0]["total_monto"])
-
-    # Obtener estado actual del pedido
-    df_pedido = get_dataframe("""
-        SELECT estado, total_pares, total_monto
-        FROM pedido_venta_rimec
-        WHERE id = :pedido_id
-    """, {"pedido_id": pedido_id})
-
-    if df_pedido is None or df_pedido.empty:
-        return False, f"Pedido {pedido_id} no encontrado"
-
-    estado_actual = df_pedido.iloc[0]["estado"]
-    pares_viejos = int(df_pedido.iloc[0]["total_pares"])
-    monto_viejo = float(df_pedido.iloc[0]["total_monto"])
-
-    # Determinar nuevo estado
-    nuevo_estado = estado_actual
-    if marcar_editado and estado_actual in ("CONFIRMADO", "AUTORIZADO", "APROBADO"):
-        # Solo marcar EDITADO si hubo cambio real
-        if nuevos_pares != pares_viejos or nuevo_monto != monto_viejo:
-            nuevo_estado = "EDITADO"
-
-    # Actualizar pedido
-    with engine.begin() as conn:
-        conn.execute(sqlt("""
-            UPDATE pedido_venta_rimec
-            SET total_pares = :pares,
-                total_monto = :monto,
-                estado = :estado
-            WHERE id = :pedido_id
-        """), {
-            "pedido_id": pedido_id,
-            "pares": nuevos_pares,
-            "monto": nuevo_monto,
-            "estado": nuevo_estado
-        })
-
-    msg = f"Pedido {pedido_id} recalculado: {nuevos_pares} pares, Gs. {int(nuevo_monto):,}".replace(",", ".")
-    if nuevo_estado != estado_actual:
-        msg += f" | Estado: {estado_actual} > {nuevo_estado}"
-
-    print(f"[PEDIDO] {msg}")
-    return True, msg
 
 
 def _verificar_todas_fis_confirmadas(pedido_id: int) -> bool:
@@ -1438,39 +1326,6 @@ def actualizar_fi_encabezado(
         return False, f"Error: {str(e)}"
 
 
-def _calcular_pares_por_caja_desde_snapshot(linea_snapshot: dict) -> int:
-    """
-    Calcula pares por caja desde linea_snapshot.
-    RIMEC vende cajas cerradas (gradas cerradas).
-
-    OT-NEXUS-FI-CAJAS-CERRADAS-RIMEC-001
-    """
-    if not linea_snapshot:
-        return 12  # Fallback default RIMEC
-
-    # Intento 1: gradas_fmt formato "27(1-1-1-1-2-2-1-1-1-1)36"
-    gradas_fmt = linea_snapshot.get("gradas_fmt", "")
-    if gradas_fmt and "(" in gradas_fmt and ")" in gradas_fmt:
-        inicio = gradas_fmt.index("(") + 1
-        fin = gradas_fmt.index(")")
-        cantidades_str = gradas_fmt[inicio:fin]
-        cantidades = [int(x) for x in cantidades_str.split("-") if x.strip()]
-        pares_por_caja = sum(cantidades)
-        if pares_por_caja > 0:
-            return pares_por_caja
-
-    # Intento 2: pares_por_caja directo
-    if "pares_por_caja" in linea_snapshot:
-        return int(linea_snapshot["pares_por_caja"])
-
-    # Intento 3: pares_curva
-    if "pares_curva" in linea_snapshot:
-        return int(linea_snapshot["pares_curva"])
-
-    # Fallback
-    return 12
-
-
 def modificar_cantidad_item_fi(
     fi_detalle_id: int,
     nuevas_cajas: int,
@@ -1478,32 +1333,26 @@ def modificar_cantidad_item_fi(
 ) -> tuple[bool, str]:
     """Modifica la cantidad de un item existente en una FI.
 
-    OT-NEXUS-FI-CAJAS-CERRADAS-RIMEC-001:
-    RIMEC vende cajas cerradas. Los pares se recalculan automáticamente como:
-    pares = cajas × pares_por_caja (desde linea_snapshot.gradas_fmt)
-
     Recalcula el subtotal basándose en el precio_neto actual.
     Solo para FIs en RESERVADA o CONFIRMADA.
     """
     fi_detalle_id = int(fi_detalle_id)
     nuevas_cajas = int(nuevas_cajas)
-    # nuevos_pares de UI se IGNORA - se recalcula desde cajas
+    nuevos_pares = int(nuevos_pares)
 
-    if nuevas_cajas < 0:
-        return False, "Las cajas no pueden ser negativas."
+    if nuevos_pares <= 0:
+        return False, "Los pares deben ser mayor a 0."
 
     try:
         with engine.begin() as conn:
-            # Obtener detalle actual + linea_snapshot
+            # Obtener detalle actual
             detalle = conn.execute(sqlt("""
                 SELECT
                     fid.id,
                     fid.factura_id,
                     fid.ppd_id,
-                    fid.cajas as cajas_antiguas,
                     fid.pares as pares_antiguos,
                     fid.precio_neto,
-                    fid.linea_snapshot,
                     fi.estado
                 FROM factura_interna_detalle fid
                 JOIN factura_interna fi ON fi.id = fid.factura_id
@@ -1518,17 +1367,8 @@ def modificar_cantidad_item_fi(
 
             fi_id = detalle.factura_id
             ppd_id = detalle.ppd_id
-            cajas_antiguas = detalle.cajas_antiguas
             pares_antiguos = detalle.pares_antiguos
             precio_neto = float(detalle.precio_neto)
-            linea_snapshot = detalle.linea_snapshot or {}
-
-            # OT-001: Recalcular pares desde cajas × pares_por_caja
-            pares_por_caja = _calcular_pares_por_caja_desde_snapshot(linea_snapshot)
-            nuevos_pares = nuevas_cajas * pares_por_caja
-
-            if nuevos_pares <= 0:
-                return False, f"Cajas debe resultar en al menos 1 par. (cajas={nuevas_cajas}, pares_por_caja={pares_por_caja})"
 
             # Calcular diferencia de stock
             diferencia_pares = nuevos_pares - pares_antiguos
@@ -1587,23 +1427,14 @@ def modificar_cantidad_item_fi(
             entidad="factura_interna_detalle", entidad_id=fi_detalle_id,
             accion="ITEM_CANTIDAD_MODIFICADA",
             snap={
-                "cajas_antiguas": cajas_antiguas,
-                "cajas_nuevas": nuevas_cajas,
                 "pares_antiguos": pares_antiguos,
                 "pares_nuevos": nuevos_pares,
-                "pares_por_caja": pares_por_caja,
                 "diferencia": diferencia_pares
             }
         )
 
-        DBInspector.log(f"[FI] Item {fi_detalle_id} cantidad modificada: {cajas_antiguas} cajas ({pares_antiguos} pares) → {nuevas_cajas} cajas ({nuevos_pares} pares)", "SUCCESS")
-
-        # OT-NEXUS-PEDIDO-WEB-EDITADO-CABECERA-001: Recalcular cabecera del pedido web
-        pedido_id = _get_pedido_id_from_fi(fi_id)
-        if pedido_id:
-            recalcular_pedido_web_desde_fis(pedido_id, marcar_editado=True)
-
-        return True, f"✅ {nuevas_cajas} cajas × {pares_por_caja} pares/caja = {nuevos_pares} pares. Subtotal: Gs. {nuevo_subtotal:,.0f}"
+        DBInspector.log(f"[FI] Item {fi_detalle_id} cantidad modificada: {pares_antiguos} → {nuevos_pares} pares", "SUCCESS")
+        return True, f"Cantidad actualizada exitosamente. Nuevo subtotal: Gs. {nuevo_subtotal:,.0f}"
 
     except Exception as e:
         DBInspector.log(f"[FI] Error modificando cantidad item {fi_detalle_id}: {e}", "ERROR")

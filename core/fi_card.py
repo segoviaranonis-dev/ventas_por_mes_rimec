@@ -31,8 +31,6 @@ from typing import Callable, Iterable
 
 import streamlit as st
 
-from core.fi_numbering import fi_numero_legacy, fi_numero_visible
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -57,6 +55,20 @@ def _parse_snap(snap) -> dict:
             except Exception:
                 return {}
     return {}
+
+
+def _formato_pv_display(pv_secuencial: int | None) -> str:
+    """Formatea número PV secuencial global para display.
+
+    Args:
+        pv_secuencial: Número secuencial global (1, 2, 3... N)
+
+    Returns:
+        'PV000071' (6 dígitos con ceros)
+    """
+    if pv_secuencial is None:
+        return "—"
+    return f"PV{pv_secuencial:06d}"
 
 
 def _estado_badge(estado: str) -> tuple[str, str, str]:
@@ -121,8 +133,9 @@ def render_fi_card(
         Lista de plazos disponibles [{id_plazo, descp_plazo}, ...].
     """
     fi_id   = int(fi.get("id") or 0)
-    nro_fi  = fi_numero_visible(fi)
-    nro_legacy = fi_numero_legacy(fi)
+    nro_fi_raw  = fi.get("nro_factura") or "—"  # Legacy: número original en BD
+    pv_global  = fi.get("pv_global")  # Número global robusto desde BD (MIG-107)
+    nro_fi  = _formato_pv_display(pv_global) if pv_global else nro_fi_raw
     marca   = fi.get("marca") or "Sin marca"
     caso    = fi.get("caso")  or "Sin caso"
     pares   = int(fi.get("total_pares") or 0)
@@ -140,7 +153,7 @@ def render_fi_card(
     key_safe = f"{key_prefix}_{fi_id}"
 
     # ── Cabecera ───────────────────────────────────────────────────────────
-    col_header, col_estado = st.columns([5, 1.25])
+    col_header, col_estado, col_actions = st.columns([5, 1.2, 2])
 
     with col_header:
         st.markdown(
@@ -154,8 +167,9 @@ def render_fi_card(
         sub_partes = []
         if fi.get("cliente_nombre"):
             sub_partes.append(f"👤 {fi['cliente_nombre']}")
-        if nro_legacy and nro_legacy != nro_fi:
-            sub_partes.append(f"Legacy: {nro_legacy}")
+        # Mostrar Legacy: número original si hay pv_global
+        if pv_global and nro_fi_raw != "—":
+            sub_partes.append(f"Legacy: {nro_fi_raw}")
         if fi.get("vendedor_nombre"):
             sub_partes.append(f"🧑‍💼 {fi['vendedor_nombre']}")
         # Cable de acero: mostrar quincena (dato duro)
@@ -177,24 +191,24 @@ def render_fi_card(
             unsafe_allow_html=True,
         )
 
-    if actions:
-        visibles = [
-            a for a in actions
-            if not a.get("show_if") or a["show_if"].upper() == estado.upper()
-        ]
-        if visibles:
-            with st.expander("⚙️ Acciones de factura interna", expanded=False):
-                st.markdown('<div class="nx-action-panel">', unsafe_allow_html=True)
-                for action in visibles:
-                    if st.button(
-                        action["label"],
-                        key=f"{key_safe}_{action['key']}",
-                        type=action.get("type") or "secondary",
-                        use_container_width=True,
-                    ):
-                        if action.get("on_click"):
-                            action["on_click"](fi)
-                st.markdown('</div>', unsafe_allow_html=True)
+    with col_actions:
+        if actions:
+            visibles = [
+                a for a in actions
+                if not a.get("show_if") or a["show_if"].upper() == estado.upper()
+            ]
+            if visibles:
+                cols = st.columns(len(visibles))
+                for col, action in zip(cols, visibles):
+                    with col:
+                        if st.button(
+                            action["label"],
+                            key=f"{key_safe}_{action['key']}",
+                            type=action.get("type") or "secondary",
+                            use_container_width=False,
+                        ):
+                            if action.get("on_click"):
+                                action["on_click"](fi)
 
     # ── Encabezado Editable ────────────────────────────────────────────────
     if modo_edicion and estado.upper() == "RESERVADA" and on_actualizar:

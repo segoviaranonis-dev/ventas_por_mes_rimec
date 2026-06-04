@@ -287,7 +287,6 @@ def _render_lista_pp():
                     if st.button("📦 Quincena", key=f"_q_btn_{int(pp['id'])}", help="Asignar quincena (dato duro)"):
                         st.session_state[key_edit_q] = True
                     if st.session_state.get(key_edit_q):
-                        from core.database import get_dataframe
                         from modules.pedido_proveedor.logic import update_quincena_pp
 
                         df_quincenas = get_dataframe("SELECT id, descripcion FROM quincena_arribo ORDER BY id")
@@ -364,6 +363,42 @@ def _render_lista_pp():
                         st.session_state["pp_selected_id"] = int(pp["id"])
                         st.session_state["tab_activa"] = "hijo_menor"
                         st.rerun()
+
+                    # Fila 3: CSV Export (solo si hay ventas)
+                    # Verificar si tiene facturas internas confirmadas
+                    tiene_ventas_query = get_dataframe(
+                        "SELECT COUNT(*) as cnt FROM factura_interna WHERE pp_id = :pp_id AND estado = 'CONFIRMADA'",
+                        {"pp_id": int(pp["id"])}
+                    )
+                    tiene_ventas = tiene_ventas_query.iloc[0]['cnt'] > 0 if not tiene_ventas_query.empty else False
+
+                    if tiene_ventas:
+                        if st.button("📄 CSV", key=f"pp_csv_{pp['id']}",
+                                     help="Descargar CSV ventas", use_container_width=True):
+                            try:
+                                from core.csv_utils import generar_csv_resumen_ventas_pp
+                                import os
+
+                                filepath = generar_csv_resumen_ventas_pp(int(pp["id"]))
+
+                                # Leer archivo
+                                with open(filepath, 'rb') as f:
+                                    csv_bytes = f.read()
+
+                                filename = os.path.basename(filepath)
+
+                                st.download_button(
+                                    label="⬇ Descargar",
+                                    data=csv_bytes,
+                                    file_name=filename,
+                                    mime="text/csv",
+                                    key=f"pp_csv_dl_{pp['id']}"
+                                )
+
+                                st.success(f"✓ {filename}")
+
+                            except Exception as e:
+                                st.error(f"❌ Error CSV: {e}")
 
                 st.divider()
 
@@ -705,7 +740,7 @@ def _render_detalle_pp(id_pp: int):
     estado       = header["estado"]
     estado_color = _ESTADO_COLOR.get(estado, "#F1F5F9")
 
-    # ── Botón volver ─────────────────────────────────────────────────────────
+    # ── Botones de acción ────────────────────────────────────────────────────
     if st.button("← Volver a la lista", key="pp_volver"):
         st.session_state.pop("pp_selected_id", None)
         st.session_state.pop(f"_pp_tab_{id_pp}", None)

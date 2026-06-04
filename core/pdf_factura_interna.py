@@ -142,6 +142,7 @@ def _obtener_facturas_del_pedido(pedido_id: int) -> List[Dict]:
         SELECT
             fi.id as fi_id,
             fi.nro_factura,
+            fi.pv_global,
             fi.pp_id,
             pp.numero_registro as pp_nro,
             qa.descripcion as quincena_llegada,
@@ -211,9 +212,14 @@ def _obtener_facturas_del_pedido(pedido_id: int) -> List[Dict]:
 
         # Crear factura si no existe
         if fi_id not in facturas_dict:
+            # Formatear número PV auditable
+            pv_global = row.get("pv_global")
+            nro_pv_display = f"PV{pv_global:06d}" if pv_global else row["nro_factura"]
+
             facturas_dict[fi_id] = {
                 "fi_id": fi_id,
-                "nro_factura": row["nro_factura"],
+                "nro_factura": nro_pv_display,  # PV000040 (auditable)
+                "nro_factura_legacy": row["nro_factura"],  # 1-PV006 (legacy)
                 "pp_id": int(row["pp_id"]) if row["pp_id"] else None,
                 "pp_nro": row["pp_nro"] or "SIN PP",
                 "quincena": row.get("quincena_llegada") or "Sin definir",

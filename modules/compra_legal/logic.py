@@ -23,7 +23,6 @@ import pandas as pd
 from sqlalchemy import text as sqlt
 
 from core.database import get_dataframe, engine
-from modules.compra_legal.grades import normalizar_tallas_a_pares
 
 ALM_TRANSITO  = 3
 ALM_WEB_BAZAR = 1
@@ -73,8 +72,6 @@ def _resolve_combinacion_id(
     descp_material: str,
     descp_color:    str,
     talla_cod:    str,       # "33", "34", …, "40"
-    material_codigo_proveedor: str | int | None = None,
-    color_codigo_proveedor: str | int | None = None,
 ) -> int | None:
     """
     Lookup: (linea.codigo, referencia.codigo, material.descripcion, color.nombre, talla.codigo)
@@ -85,28 +82,15 @@ def _resolve_combinacion_id(
     (espacio distinto al de las tablas material/color internas).
     Retorna combinacion_id (existente o recién creado), o None si faltan entidades base.
     """
-    material_codigo = str(material_codigo_proveedor or "").strip() or None
-    color_codigo = str(color_codigo_proveedor or "").strip() or None
-
     # OT-2026-020: Usar nombres correctos post-migración 004
-    # OT-2026-028: Si vienen códigos F9/proveedor, resolver material/color por código
-    # para evitar colisiones de descripción (ej. dos "NAPA TURIM").
     row = conn.execute(sqlt("""
         SELECT c.id
         FROM combinacion c
         JOIN linea      l   ON l.id  = c.linea_id      AND l.codigo_proveedor = :linea
         JOIN referencia r   ON r.id  = c.referencia_id AND r.codigo_proveedor = :ref
         JOIN talla      tl  ON tl.id = c.talla_id      AND tl.talla_etiqueta  = :talla
-        JOIN material   mat ON mat.id = c.material_id
-          AND (
-            (:material_codigo IS NOT NULL AND mat.codigo_proveedor::text = :material_codigo)
-            OR (:material_codigo IS NULL AND mat.descripcion = :mat)
-          )
-        JOIN color      col ON col.id = c.color_id
-          AND (
-            (:color_codigo IS NOT NULL AND col.codigo_proveedor::text = :color_codigo)
-            OR (:color_codigo IS NULL AND col.nombre = :col)
-          )
+        JOIN material   mat ON mat.id = c.material_id  AND mat.descripcion    = :mat
+        JOIN color      col ON col.id = c.color_id     AND col.nombre         = :col
         LIMIT 1
     """), {
         "linea": str(linea_codigo_proveedor).strip(),
@@ -114,8 +98,6 @@ def _resolve_combinacion_id(
         "talla": str(talla_cod).strip(),
         "mat":   str(descp_material).strip(),
         "col":   str(descp_color).strip(),
-        "material_codigo": material_codigo,
-        "color_codigo": color_codigo,
     }).fetchone()
 
     if row:
@@ -137,14 +119,8 @@ def _resolve_combinacion_id(
         CROSS JOIN talla tl
         WHERE l.codigo_proveedor = :linea
           AND r.codigo_proveedor = :ref
-          AND (
-            (:material_codigo IS NOT NULL AND mat.codigo_proveedor::text = :material_codigo)
-            OR (:material_codigo IS NULL AND mat.descripcion = :mat)
-          )
-          AND (
-            (:color_codigo IS NOT NULL AND col.codigo_proveedor::text = :color_codigo)
-            OR (:color_codigo IS NULL AND col.nombre = :col)
-          )
+          AND mat.descripcion    = :mat
+          AND col.nombre         = :col
           AND tl.talla_etiqueta  = :talla
         LIMIT 1
     """), {
@@ -153,8 +129,6 @@ def _resolve_combinacion_id(
         "mat":   str(descp_material).strip(),
         "col":   str(descp_color).strip(),
         "talla": str(talla_cod).strip(),
-        "material_codigo": material_codigo,
-        "color_codigo": color_codigo,
     }).fetchone()
 
     if not ids_row:
@@ -245,8 +219,6 @@ def crear_traspaso_por_factura(
                 rec.get("material", ""),
                 rec.get("color", ""),
                 str(t),
-                rec.get("material_code"),
-                rec.get("color_code"),
                 # OT-2026-026: proveedor_id se obtiene internamente de linea
             )
             if comb_id is None:
@@ -299,7 +271,6 @@ def _crear_traspasos_para_pp(conn, id_pp: int, cl_id: int) -> int:
             SELECT
                 ppd.linea, ppd.referencia,
                 ppd.id_material, ppd.id_color,
-                ppd.material_code, ppd.color_code,
                 ppd.descp_material,  ppd.descp_color,
                 vt.t33, vt.t34, vt.t35, vt.t36,
                 vt.t37, vt.t38, vt.t39, vt.t40
@@ -313,7 +284,7 @@ def _crear_traspasos_para_pp(conn, id_pp: int, cl_id: int) -> int:
         items_tallas = []
         for r in rows:
             tallas = {
-                f"t{t}": int(r[8 + (t - 33)] or 0)
+                f"t{t}": int(r[6 + (t - 33)] or 0)
                 for t in range(33, 41)
             }
             items_tallas.append({
@@ -321,10 +292,8 @@ def _crear_traspasos_para_pp(conn, id_pp: int, cl_id: int) -> int:
                 "referencia":  r[1] or "",
                 "id_material": int(r[2] or 0),
                 "id_color":    int(r[3] or 0),
-                "material_code": r[4] or "",
-                "color_code":    r[5] or "",
-                "material":    r[6] or "",
-                "color":       r[7] or "",
+                "material":    r[4] or "",
+                "color":       r[5] or "",
                 "tallas":      {k: v for k, v in tallas.items() if v > 0},
             })
 
@@ -365,7 +334,6 @@ def _crear_traspasos_para_pp(conn, id_pp: int, cl_id: int) -> int:
             SELECT
                 ppd.linea, ppd.referencia,
                 ppd.id_material, ppd.id_color,
-                ppd.material_code, ppd.color_code,
                 ppd.descp_material, ppd.descp_color,
                 ppd.grades_json,
                 fid.linea_snapshot,
@@ -377,19 +345,34 @@ def _crear_traspasos_para_pp(conn, id_pp: int, cl_id: int) -> int:
 
         items_tallas = []
         for r in rows:
-            linea, ref, id_mat, id_col, material_code, color_code, mat, col, grades_json, linea_snapshot, pares = r
+            linea, ref, id_mat, id_col, mat, col, grades_json, linea_snapshot, pares = r
 
             tallas = {}
 
             # ══════════════════════════════════════════════════════════════
-            # INTENTO 1: Parsear grades_json (desde ppd) y escalar a fid.pares.
+            # INTENTO 1: Parsear grades_json (desde ppd) y ESCALAR a fid.pares
+            # FIX PP-2026-0010: grades_json tiene distribución de 1 caja base,
+            # debe escalarse al total facturado (fid.pares) para múltiples cajas
             # ══════════════════════════════════════════════════════════════
             if grades_json:
                 try:
                     grades = json.loads(grades_json) if isinstance(grades_json, str) else grades_json
-                    for talla_str, qty in (grades or {}).items():
-                        talla_num = int(str(talla_str).lower().removeprefix("t"))
-                        tallas[f"t{talla_num}"] = int(qty)
+                    suma_grades = sum(int(qty) for qty in (grades or {}).values())
+
+                    if suma_grades > 0 and pares > 0:
+                        factor = pares / suma_grades  # fid.pares / suma de caja base
+
+                        # Escalar cada talla proporcionalmente
+                        for talla_str, qty in (grades or {}).items():
+                            talla_num = int(talla_str)
+                            tallas[f"t{talla_num}"] = int(qty * factor)
+
+                        # Ajuste de redondeo: garantizar suma final = fid.pares exacto
+                        suma_tallas = sum(tallas.values())
+                        if suma_tallas != pares and tallas:
+                            ultima_talla = list(tallas.keys())[-1]
+                            tallas[ultima_talla] += (pares - suma_tallas)
+
                 except (json.JSONDecodeError, ValueError, TypeError):
                     pass
 
@@ -428,8 +411,6 @@ def _crear_traspasos_para_pp(conn, id_pp: int, cl_id: int) -> int:
             if not tallas and pares and pares > 0:
                 tallas["t37"] = int(pares)  # Talla genérica 37
 
-            tallas = normalizar_tallas_a_pares(tallas, pares)
-
             # Si después de todos los intentos no hay tallas, skip este item
             if not tallas:
                 continue
@@ -439,8 +420,6 @@ def _crear_traspasos_para_pp(conn, id_pp: int, cl_id: int) -> int:
                 "referencia":  ref or "",
                 "id_material": int(id_mat or 0),
                 "id_color":    int(id_col or 0),
-                "material_code": material_code or "",
-                "color_code":    color_code or "",
                 "material":    mat or "",
                 "color":       col or "",
                 "tallas":      tallas,
@@ -484,10 +463,7 @@ def _crear_traspasos_para_pp(conn, id_pp: int, cl_id: int) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_compras_legales() -> pd.DataFrame:
-    """
-    Lista de Compras Legales con KPIs básicos.
-    Solo muestra compras activas (excluye CANCELADO del tablero principal).
-    """
+    """Lista de Compras Legales con KPIs básicos."""
     return get_dataframe("""
         SELECT
             cl.id,
@@ -519,7 +495,6 @@ def get_compras_legales() -> pd.DataFrame:
              WHERE t.compra_legal_id = cl.id
                AND t.estado = 'CONFIRMADO')     AS n_confirmados
         FROM compra_legal cl
-        WHERE cl.estado != 'CANCELADO'
         ORDER BY cl.fecha_factura DESC, cl.id DESC
     """)
 
@@ -562,249 +537,65 @@ def pp_ya_en_compra(id_pp: int) -> int | None:
     return int(df["compra_legal_id"].iloc[0])
 
 
-def _get_snapshot_pp(conn, id_pp: int) -> dict:
-    """
-    Obtiene snapshot de datos auditables del PP para preservar en CL.
-    Retorna dict con categoria_id, precio_evento_id, pares_snapshot.
-    """
-    # Fix: Convertir numpy.int64 a int nativo
-    id_pp = int(id_pp)
-
-    row = conn.execute(sqlt("""
-        SELECT
-            pp.categoria_id,
-            pp.pares_comprometidos,
-            icp.precio_evento_id
-        FROM pedido_proveedor pp
-        LEFT JOIN intencion_compra_pedido icp ON icp.pedido_proveedor_id = pp.id
-        WHERE pp.id = :id_pp
-        LIMIT 1
-    """), {"id_pp": id_pp}).fetchone()
-
-    if not row:
-        return {
-            "categoria_id": None,
-            "precio_evento_id": None,
-            "pares_snapshot": 0,
-        }
-
-    return {
-        "categoria_id": int(row[0]) if row[0] is not None else None,
-        "pares_snapshot": int(row[1]) if row[1] is not None else 0,
-        "precio_evento_id": int(row[2]) if row[2] is not None else None,
-    }
-
-
-def _insertar_log_pp(conn, id_pp: int, estado_anterior: str | None, estado_nuevo: str,
-                     usuario_id: int | None, compra_legal_id: int | None, observaciones: str) -> None:
-    """Inserta registro en pedido_proveedor_log."""
-    # Fix: Convertir numpy.int64 a int nativo
-    id_pp = int(id_pp)
-    if usuario_id is not None:
-        usuario_id = int(usuario_id)
-    if compra_legal_id is not None:
-        compra_legal_id = int(compra_legal_id)
-
+def _marcar_pp_enviado(conn, id_pp: int) -> None:
+    """Cambia pedido_proveedor.estado = 'ENVIADO' dentro de una TX abierta."""
     conn.execute(sqlt("""
-        INSERT INTO pedido_proveedor_log
-            (pp_id, estado_anterior, estado_nuevo, usuario_id, compra_legal_id, observaciones)
-        VALUES
-            (:pp_id, :estado_ant, :estado_nvo, :usuario_id, :cl_id, :obs)
-    """), {
-        "pp_id": id_pp,
-        "estado_ant": estado_anterior,
-        "estado_nvo": estado_nuevo,
-        "usuario_id": usuario_id,
-        "cl_id": compra_legal_id,
-        "obs": observaciones,
-    })
-
-
-def _marcar_pp_enviado(conn, id_pp: int, usuario_id: int | None = None) -> int:
-    """
-    Cambia pedido_proveedor.estado = 'ENVIADO' y registra auditoría.
-    Retorna número de filas afectadas (0 si ya estaba ENVIADO).
-    """
-    # Fix: Convertir numpy.int64 a int nativo
-    id_pp = int(id_pp)
-    if usuario_id is not None:
-        usuario_id = int(usuario_id)
-
-    result = conn.execute(sqlt("""
-        UPDATE pedido_proveedor
-        SET estado = 'ENVIADO',
-            enviado_at = COALESCE(enviado_at, NOW()),
-            enviado_por = COALESCE(enviado_por, :usuario_id),
-            cerrado_at = COALESCE(cerrado_at, NOW()),
-            cerrado_por = COALESCE(cerrado_por, :usuario_id)
+        UPDATE pedido_proveedor SET estado = 'ENVIADO'
         WHERE id = :id_pp AND estado != 'ENVIADO'
-    """), {"id_pp": id_pp, "usuario_id": usuario_id})
-    return result.rowcount
+    """), {"id_pp": id_pp})
 
 
-def create_compra_legal(id_pp: int, numero_proforma: str, usuario_id: int | None = None) -> tuple[bool, str]:
-    """
-    Crea una Compra Legal nueva y vincula el PP. Cambia PP a estado ENVIADO.
-    Registra snapshot auditable y log de cambio.
-
-    OR-005: Backend blindado contra doble vinculación.
-    """
-    # Fix: Convertir numpy.int64 a int nativo
-    id_pp = int(id_pp)
-    if usuario_id is not None:
-        usuario_id = int(usuario_id)
-
+def create_compra_legal(id_pp: int, numero_proforma: str) -> tuple[bool, str]:
+    """Crea una Compra Legal nueva y vincula el PP. Cambia PP a estado ENVIADO."""
     try:
         with engine.begin() as conn:
-            # OR-005: Verificar que PP no esté ya vinculado a alguna CL
-            existing = conn.execute(sqlt("""
-                SELECT compra_legal_id, cl.numero_registro
-                FROM compra_legal_pedido clp
-                JOIN compra_legal cl ON cl.id = clp.compra_legal_id
-                WHERE clp.pedido_proveedor_id = :id_pp
-                LIMIT 1
-            """), {"id_pp": id_pp}).fetchone()
-
-            if existing:
-                cl_id = existing[0]
-                cl_numero = existing[1]
-                return False, f"PP-{id_pp} ya está vinculado a {cl_numero} (ID {cl_id}). No se puede crear nueva Compra Legal."
-
-            # Obtener snapshot del PP antes de sellarlo
-            snapshot = _get_snapshot_pp(conn, id_pp)
-
-            # Crear Compra Legal con snapshot de categoría/precio
             numero = get_next_numero_cl()
             row = conn.execute(sqlt("""
                 INSERT INTO compra_legal (
                     numero_registro, anio_fiscal,
                     numero_factura_proveedor,
-                    fecha_factura, moneda, estado,
-                    categoria_id, precio_evento_id
+                    fecha_factura, moneda, estado
                 ) VALUES (
-                    :num, :anio, :proforma, CURRENT_DATE, 'USD', 'PENDIENTE',
-                    :categoria_id, :precio_evento_id
+                    :num, :anio, :proforma, CURRENT_DATE, 'USD', 'PENDIENTE'
                 )
                 RETURNING id
             """), {
-                "num": numero,
-                "anio": date.today().year,
+                "num":      numero,
+                "anio":     date.today().year,
                 "proforma": str(numero_proforma).strip(),
-                "categoria_id": snapshot["categoria_id"],
-                "precio_evento_id": snapshot["precio_evento_id"],
             }).fetchone()
             cl_id = int(row[0])
 
-            # Vincular PP a CL con snapshot
             conn.execute(sqlt("""
-                INSERT INTO compra_legal_pedido (
-                    compra_legal_id, pedido_proveedor_id,
-                    categoria_id, precio_evento_id, pares_snapshot, snapshot_at
-                ) VALUES (
-                    :cl_id, :pp_id,
-                    :categoria_id, :precio_evento_id, :pares_snapshot, NOW()
-                )
-            """), {
-                "cl_id": cl_id,
-                "pp_id": id_pp,
-                "categoria_id": snapshot["categoria_id"],
-                "precio_evento_id": snapshot["precio_evento_id"],
-                "pares_snapshot": snapshot["pares_snapshot"],
-            })
+                INSERT INTO compra_legal_pedido (compra_legal_id, pedido_proveedor_id)
+                VALUES (:cl_id, :pp_id)
+            """), {"cl_id": cl_id, "pp_id": id_pp})
 
-            # Marcar PP como ENVIADO (con auditoría temporal)
-            rows_affected = _marcar_pp_enviado(conn, id_pp, usuario_id)
-
-            # Insertar log de cambio de estado
-            if rows_affected > 0:
-                _insertar_log_pp(
-                    conn, id_pp,
-                    estado_anterior=None,  # O podríamos obtenerlo antes del UPDATE
-                    estado_nuevo="ENVIADO",
-                    usuario_id=usuario_id,
-                    compra_legal_id=cl_id,
-                    observaciones=f"PP sellado al crear Compra Legal {numero}",
-                )
+            _marcar_pp_enviado(conn, id_pp)
 
         return True, numero
     except Exception as e:
         return False, str(e)
 
 
-def add_pp_to_compra(compra_id: int, id_pp: int, usuario_id: int | None = None) -> tuple[bool, str]:
-    """
-    Agrega un PP a una Compra Legal existente. Cambia PP a estado ENVIADO.
-    Registra snapshot auditable y log de cambio.
-
-    OR-005: Backend blindado contra doble vinculación.
-    """
-    # Fix: Convertir numpy.int64 a int nativo
-    compra_id = int(compra_id)
-    id_pp = int(id_pp)
-    if usuario_id is not None:
-        usuario_id = int(usuario_id)
-
+def add_pp_to_compra(compra_id: int, id_pp: int) -> tuple[bool, str]:
+    """Agrega un PP a una Compra Legal existente. Cambia PP a estado ENVIADO."""
     try:
         with engine.begin() as conn:
-            # OR-005: Verificar si PP ya está vinculado a alguna CL
-            existing = conn.execute(sqlt("""
-                SELECT clp.compra_legal_id, cl.numero_registro
-                FROM compra_legal_pedido clp
-                JOIN compra_legal cl ON cl.id = clp.compra_legal_id
-                WHERE clp.pedido_proveedor_id = :pp_id
-                LIMIT 1
-            """), {"pp_id": id_pp}).fetchone()
+            exists = conn.execute(sqlt("""
+                SELECT 1 FROM compra_legal_pedido
+                WHERE compra_legal_id = :cl_id AND pedido_proveedor_id = :pp_id
+            """), {"cl_id": compra_id, "pp_id": id_pp}).fetchone()
 
-            if existing:
-                existing_cl_id = existing[0]
-                existing_cl_numero = existing[1]
+            if exists:
+                return True, "El PP ya estaba vinculado a esta compra."
 
-                # Si ya está en ESTA compra, OK (idempotente)
-                if existing_cl_id == compra_id:
-                    return True, f"El PP ya estaba vinculado a esta compra ({existing_cl_numero})."
-
-                # Si está en OTRA compra, ERROR
-                return False, f"PP-{id_pp} ya está vinculado a {existing_cl_numero} (ID {existing_cl_id}). No se puede agregar a otra Compra Legal."
-
-            # Obtener snapshot del PP antes de sellarlo
-            snapshot = _get_snapshot_pp(conn, id_pp)
-
-            # Obtener número de CL para el log
-            cl_numero_row = conn.execute(sqlt("""
-                SELECT numero_registro FROM compra_legal WHERE id = :cl_id
-            """), {"cl_id": compra_id}).fetchone()
-            cl_numero = cl_numero_row[0] if cl_numero_row else f"CL-{compra_id}"
-
-            # Vincular PP a CL con snapshot
             conn.execute(sqlt("""
-                INSERT INTO compra_legal_pedido (
-                    compra_legal_id, pedido_proveedor_id,
-                    categoria_id, precio_evento_id, pares_snapshot, snapshot_at
-                ) VALUES (
-                    :cl_id, :pp_id,
-                    :categoria_id, :precio_evento_id, :pares_snapshot, NOW()
-                )
-            """), {
-                "cl_id": compra_id,
-                "pp_id": id_pp,
-                "categoria_id": snapshot["categoria_id"],
-                "precio_evento_id": snapshot["precio_evento_id"],
-                "pares_snapshot": snapshot["pares_snapshot"],
-            })
+                INSERT INTO compra_legal_pedido (compra_legal_id, pedido_proveedor_id)
+                VALUES (:cl_id, :pp_id)
+            """), {"cl_id": compra_id, "pp_id": id_pp})
 
-            # Marcar PP como ENVIADO (con auditoría temporal)
-            rows_affected = _marcar_pp_enviado(conn, id_pp, usuario_id)
-
-            # Insertar log de cambio de estado
-            if rows_affected > 0:
-                _insertar_log_pp(
-                    conn, id_pp,
-                    estado_anterior=None,
-                    estado_nuevo="ENVIADO",
-                    usuario_id=usuario_id,
-                    compra_legal_id=compra_id,
-                    observaciones=f"PP agregado a Compra Legal {cl_numero}",
-                )
+            _marcar_pp_enviado(conn, id_pp)
 
         return True, "PP agregado a la compra."
     except Exception as e:
@@ -1018,10 +809,7 @@ def get_facturas_internas_de_compra(id_cl: int) -> pd.DataFrame:
     """FAC-INT RIMEC de los PPs de esta compra — formato render_fi_card."""
     return get_dataframe("""
         SELECT
-            fi.id, fi.numero_preventa_global,
-            fi.nro_factura_legacy,
-            fi.numero_preventa_global AS nro_factura,
-            fi.estado, fi.created_at,
+            fi.id, fi.nro_factura, fi.estado, fi.created_at,
             fi.pp_id,
             pp.numero_registro        AS nro_pp,
             fi.marca, fi.marca_id,
@@ -1035,14 +823,14 @@ def get_facturas_internas_de_compra(id_cl: int) -> pd.DataFrame:
             fi.total_monto,
             fi.lista_precio_id,
             fi.descuento_1, fi.descuento_2, fi.descuento_3, fi.descuento_4
-        FROM v_factura_interna_preventa fi
+        FROM factura_interna fi
         JOIN compra_legal_pedido clp ON clp.pedido_proveedor_id = fi.pp_id
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
         LEFT JOIN cliente_v2  cv ON cv.id_cliente  = fi.cliente_id
         LEFT JOIN vendedor_v2 vv ON vv.id_vendedor = fi.vendedor_id
         WHERE clp.compra_legal_id = :id_cl
           AND fi.estado IN ('CONFIRMADA', 'RESERVADA')
-        ORDER BY fi.created_at DESC, fi.numero_preventa_global
+        ORDER BY fi.created_at DESC, fi.nro_factura
     """, {"id_cl": id_cl})
 
 
@@ -1092,10 +880,6 @@ def get_compra_hija_deposito(id_cl: int) -> pd.DataFrame:
     """
     Hija Depósito: stock no vendido de los PPs de esta compra.
     Columnas: marca, linea, referencia, material, color, cantidad_inicial, vendido, saldo
-
-    Fix OR-NEXUS-COMPRA-LEGAL-LIMPIEZA-INTENTOS-001:
-    Calcula "vendido" desde factura_interna_detalle (FI activas),
-    no desde venta_transito legacy.
     """
     return get_dataframe("""
         SELECT
@@ -1106,19 +890,15 @@ def get_compra_hija_deposito(id_cl: int) -> pd.DataFrame:
             ppd.descp_color                                              AS color,
             ppd.cantidad_pares                                           AS cantidad_inicial,
             COALESCE(
-                (SELECT SUM(fid.pares)
-                 FROM factura_interna_detalle fid
-                 JOIN factura_interna fi ON fi.id = fid.factura_id
-                 WHERE fid.ppd_id = ppd.id
-                   AND fi.estado != 'ANULADA'),
+                (SELECT SUM(vt.cantidad_vendida)
+                 FROM venta_transito vt
+                 WHERE vt.pedido_proveedor_detalle_id = ppd.id),
                 0
             )                                                            AS vendido,
             ppd.cantidad_pares - COALESCE(
-                (SELECT SUM(fid.pares)
-                 FROM factura_interna_detalle fid
-                 JOIN factura_interna fi ON fi.id = fid.factura_id
-                 WHERE fid.ppd_id = ppd.id
-                   AND fi.estado != 'ANULADA'),
+                (SELECT SUM(vt.cantidad_vendida)
+                 FROM venta_transito vt
+                 WHERE vt.pedido_proveedor_detalle_id = ppd.id),
                 0
             )                                                            AS saldo
         FROM compra_legal_pedido clp
@@ -1142,7 +922,7 @@ def get_compra_hija_facturacion(id_cl: int) -> pd.DataFrame:
         -- Nueva tabla factura_interna (flujo RIMEC)
         SELECT
             COALESCE(fi.marca, '—')                     AS marca,
-            fi.numero_preventa_global                   AS factura,
+            fi.nro_factura                              AS factura,
             fi.created_at::date                         AS fecha,
             COALESCE(cv.descp_cliente, fi.cliente_id::text) AS cliente,
             (fid.linea_snapshot->>'linea_codigo')       AS linea,
@@ -1159,11 +939,11 @@ def get_compra_hija_facturacion(id_cl: int) -> pd.DataFrame:
             SUM(fid.pares)                              AS pares,
             COALESCE(
                 (SELECT t.estado FROM traspaso t
-                 WHERE t.documento_ref = fi.nro_factura_legacy
+                 WHERE t.documento_ref = fi.nro_factura
                  LIMIT 1),
                 'SIN_TRASPASO'
             )                                           AS traspaso_estado
-        FROM v_factura_interna_preventa fi
+        FROM factura_interna fi
         JOIN factura_interna_detalle fid ON fid.factura_id = fi.id
         LEFT JOIN cliente_v2 cv ON cv.id_cliente = fi.cliente_id
         LEFT JOIN pedido_proveedor_detalle ppd
@@ -1175,7 +955,7 @@ def get_compra_hija_facturacion(id_cl: int) -> pd.DataFrame:
             WHERE compra_legal_id = :id_cl
         )
         AND fi.estado IN ('CONFIRMADA', 'RESERVADA')
-        GROUP BY fi.marca, fi.numero_preventa_global, fi.nro_factura_legacy, fi.created_at, cv.descp_cliente,
+        GROUP BY fi.marca, fi.nro_factura, fi.created_at, cv.descp_cliente,
                  fi.cliente_id, fid.linea_snapshot, ppd.descp_material
 
         UNION ALL
@@ -1243,6 +1023,17 @@ def finalizar_compra(id_cl: int) -> tuple[bool, str]:
             conn.execute(sqlt("""
                 UPDATE compra_legal SET estado = 'DISTRIBUIDA'
                 WHERE id = :id_cl
+            """), {"id_cl": id_cl})
+
+            # Cambiar estado_transito de los PP a EN_DEPOSITO (ya no vendible en rimec-web)
+            conn.execute(sqlt("""
+                UPDATE pedido_proveedor
+                SET estado_transito = 'EN_DEPOSITO'
+                WHERE id IN (
+                    SELECT pedido_proveedor_id
+                    FROM compra_legal_pedido
+                    WHERE compra_legal_id = :id_cl
+                )
             """), {"id_cl": id_cl})
 
         return True, f"Compra distribuida. {total_nuevos} traspaso(s) nuevo(s) creado(s)."

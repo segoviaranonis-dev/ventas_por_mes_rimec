@@ -28,11 +28,53 @@ from reportlab.platypus import Image as RLImage
 
 from core.database import get_dataframe
 from core.settings import settings
+from core.pdf_utils import get_pdf_image
+
+
+def _formatear_gradas_compacto(gradas_fmt: str) -> str:
+    """
+    Convierte gradas de formato largo a compacto para PDF.
+
+    Args:
+        gradas_fmt: "30:2 · 31:2 · 32:2 · 33:1 · 34:1"
+
+    Returns:
+        "30(2 2 2 1 1)34"
+    """
+    if not gradas_fmt or gradas_fmt.strip() == '':
+        return ''
+
+    try:
+        # Parsear formato "30:2 · 31:2 · 32:2"
+        pares = [p.strip() for p in gradas_fmt.split('·')]
+        tallas = []
+        cantidades = []
+
+        for par in pares:
+            if ':' in par:
+                talla, cant = par.split(':')
+                tallas.append(talla.strip())
+                cantidades.append(cant.strip())
+
+        if not tallas:
+            return gradas_fmt  # Retornar original si no se puede parsear
+
+        # Formato compacto: "30(2 2 2 1 1)34"
+        talla_min = tallas[0]
+        talla_max = tallas[-1]
+        cant_str = ' '.join(cantidades)
+
+        return f"{talla_min}({cant_str}){talla_max}"
+
+    except Exception:
+        # Si falla, retornar original
+        return gradas_fmt
 
 
 def _get_image_from_url(url: str, max_width: float = 15*mm, max_height: float = 15*mm) -> Optional[RLImage]:
     """
-    Descarga una imagen desde URL y la convierte a RLImage redimensionada.
+    DEPRECATED: Usa get_pdf_image() de core.pdf_utils (protocolo único).
+    Wrapper para compatibilidad con código legacy.
 
     Args:
         url: URL de la imagen
@@ -42,36 +84,13 @@ def _get_image_from_url(url: str, max_width: float = 15*mm, max_height: float = 
     Returns:
         RLImage o None si falla
     """
-    if not url:
-        return None
-
-    try:
-        # Descargar imagen
-        response = requests.get(url, timeout=3)
-        if response.status_code != 200:
-            return None
-
-        # Abrir con PIL
-        img_buffer = BytesIO(response.content)
-        pil_img = Image.open(img_buffer)
-
-        # Calcular dimensiones manteniendo aspect ratio
-        aspect = pil_img.width / pil_img.height
-        if aspect > 1:  # Imagen ancha
-            width = max_width
-            height = max_width / aspect
-        else:  # Imagen alta
-            height = max_height
-            width = max_height * aspect
-
-        # Crear RLImage
-        img_buffer.seek(0)
-        rl_img = RLImage(img_buffer, width=width, height=height)
-        return rl_img
-
-    except Exception as e:
-        # Si falla, retornar None (no imagen)
-        return None
+    return get_pdf_image(
+        url=url,
+        max_width=max_width,
+        max_height=max_height,
+        timeout=15,
+        retries=3
+    )
 
 
 def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
@@ -89,6 +108,7 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
         SELECT
             fi.id,
             fi.nro_factura,
+            fi.pv_global,
             fi.pp_id,
             pp.numero_registro as pp_nro,
             pp.numero_proforma as proforma,
@@ -309,8 +329,12 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
     desc_4 = fi_data.get('descuento_4', 0) or 0
     descuentos_display = f"{desc_1}% / {desc_2}% / {desc_3}% / {desc_4}%"
 
+    # Formatear número PV auditable
+    pv_global = fi_data.get('pv_global')
+    nro_pv_display = f"PV{pv_global:06d}" if pv_global else fi_data.get('nro_factura', 'N/A')
+
     info_data = [
-        ['Nro. FI:', fi_data.get('nro_factura', 'N/A'), 'PP:', pp_display],
+        ['Nro. FI:', nro_pv_display, 'PP:', pp_display],
         ['Marca:', fi_data.get('marca', 'N/A'), 'Plazo:', plazo_nombre],
         ['Estado:', fi_data.get('estado', 'RESERVADA'), 'Fecha:', fecha_str],
         ['Descuentos:', descuentos_display, '', ''],
@@ -367,10 +391,14 @@ def generar_pdf_fi_individual(fi_id: int) -> Optional[bytes]:
             if item.get('color_nombre'):
                 nombre += f"<br/><font size=7 color='#64748B'>{item['color_nombre'][:40]}</font>"
 
+            # Formatear gradas en modo compacto para PDF
+            gradas_original = item.get('gradas_fmt', '')
+            gradas_compacto = _formatear_gradas_compacto(gradas_original) if gradas_original else 'N/A'
+
             items_data.append([
                 img,
                 Paragraph(nombre, styles['Normal']),
-                item.get('gradas_fmt', 'N/A'),
+                gradas_compacto,
                 str(item['cajas']),
                 str(item['pares']),
                 f"Gs. {item['precio_unit']:,.0f}".replace(',', '.'),

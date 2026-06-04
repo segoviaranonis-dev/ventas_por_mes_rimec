@@ -38,6 +38,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 from core.settings import settings
+from core.pdf_utils import get_pdf_image
 
 
 class PDFEngine:
@@ -279,20 +280,17 @@ class PDFEngine:
             items_data = [['', 'Producto', 'Gradas', 'Cj', 'Ps', 'Sin Desc', 'Con Desc', 'Subtotal']]
 
             for item in factura.get('items', []):
-                # Imagen del producto (thumbnail pequeño)
+                # Imagen del producto (thumbnail pequeño) - usando protocolo único
                 img_cell = ""
                 if item.get('imagen_url'):
-                    try:
-                        import urllib.request
-                        from urllib.error import URLError
-                        # Intentar cargar imagen desde URL
-                        with urllib.request.urlopen(item['imagen_url'], timeout=3) as response:
-                            img_data = BytesIO(response.read())
-                            img = RLImage(img_data, width=12*mm, height=12*mm)
-                            img_cell = img
-                    except (URLError, Exception):
-                        # Si falla, usar placeholder
-                        img_cell = "📦"
+                    img = get_pdf_image(
+                        url=item['imagen_url'],
+                        max_width=12*mm,
+                        max_height=12*mm,
+                        timeout=15,
+                        retries=3
+                    )
+                    img_cell = img if img else "📦"
                 else:
                     img_cell = "📦"
 

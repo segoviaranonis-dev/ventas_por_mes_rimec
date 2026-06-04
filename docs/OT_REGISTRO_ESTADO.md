@@ -2,7 +2,7 @@
 
 > **Fuente de verdad del estado operativo.** Actualizado: **2026-05-18** (post OT-511 reset).  
 > Evidencia máquina: `OT-*-EVIDENCIA.json` en raíz del repo.  
-> **Casa holding:** `C:\Users\hecto\Nexus_Core\` — ver [NEXUS_CORE_INDEX.md](NEXUS_CORE_INDEX.md) y [../../OT-RESTABLECIMIENTO-NEXUS-CORE-001.md](../../OT-RESTABLECIMIENTO-NEXUS-CORE-001.md).
+> **Casa holding:** `C:\Users\hecto\Nexus_Core\` — entrada documental: [NEXUS_CORE_INDEX.md](NEXUS_CORE_INDEX.md).
 
 ---
 
@@ -10,13 +10,13 @@
 
 | OT | Título | Estado | Nota |
 |----|--------|--------|------|
-| [OT-RESTABLECIMIENTO-NEXUS-CORE-001](../../OT-RESTABLECIMIENTO-NEXUS-CORE-001.md) | Casa Nexus_Core + `.cursorrules` + roles | **IMPLEMENTADA** | Abrir Cursor en carpeta padre `Nexus_Core` |
+| OT-RESTABLECIMIENTO-NEXUS-CORE-001 | Casa Nexus_Core + `.cursorrules` + roles | **IMPLEMENTADA** | Documento en holding externo; abrir Cursor en carpeta padre `Nexus_Core` |
 
 ## En curso (nueva etapa — carga final)
 
 | OT | Título | Estado | Nota |
 |----|--------|--------|------|
-| [OT-MOTOR-SQL-520-001](../../ot/en_curso/OT-MOTOR-SQL-520-001.md) | Cálculo `precio_lista` SQL masivo + índice triplete | **CONDICIONAL** | Cursor: código OK; aplicar migr. 052/053 + T1/T3 |
+| OT-MOTOR-SQL-520-001 | Cálculo `precio_lista` SQL masivo + índice triplete | **CONDICIONAL** | Documento en holding externo; aplicar migr. 052/053 + T1/T3 |
 | [OT-MOTOR-REING-519-001](../OT-MOTOR-REING-519-001.md) | Reingeniería: Biblioteca ↔ Excel (< 5 min), sin Memoria/Matriz | **PENDIENTE** | Claude Code |
 | [OT-MOTOR-PASO4-AVANCE-516-001](../OT-MOTOR-PASO4-AVANCE-516-001.md) | Paso 3→4: recuperar desde BD tras timeout Cloud | **PENDIENTE** | Claude Code — **urgente carga** |
 | [OT-513B-GITIGNORE-SCRIPTS-LIB](../OT-513B-GITIGNORE-SCRIPTS-LIB.md) | Cerrar 513: `!scripts/lib/` + verificar Streamlit C3 | **PENDIENTE** | Claude Code |

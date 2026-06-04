@@ -1,177 +1,166 @@
-# Nexus Holding — Reglas Canónicas
+# Nexus Holding — Reglas canónicas
 
-Políticas y reglas de negocio fundamentales del ecosistema Nexus.
-
----
-
-## 1. Política de Clientes — Tránsito y Canales de Venta
-
-### 1.1 Universo de Clientes RIMEC
-
-**Mercadería en Tránsito / Compra Previa**:
-- Pertenece al universo general de clientes **RIMEC**
-- NO es exclusiva de un único cliente
-- Disponible para venta a cualquier cliente autorizado RIMEC
-
-### 1.2 Cliente 5000 — Bazar Web Virtual EXCLUSIVO
-
-**Identificación**:
-- `cliente_v2.id_cliente = 5000`
-- Nombre: (verificar en base de datos)
-
-**Función**:
-- **Único cliente autorizado** para alimentar **Bazar Web** (tienda virtual)
-- Flujo: Compra Web → Depósito Web → Bazar Web página
-
-**Restricción**:
-- Solo mercadería asignada/vendida a cliente 5000 aparece en catálogo web público
-- Otros clientes RIMEC NO alimentan la tienda virtual
-
-### 1.3 Clientes Físicos Bazzar (Tiendas Físicas)
-
-**Clientes**:
-- `2100` — Fernando Adultos
-- `2900` — Fernando Niños
-- `2400` — San Martin Adultos
-- `2700` — San Martin Niños
-- `3100` — Palma Adultos
-- `3200` — Palma Niños
-
-**Características**:
-- Clientes **RIMEC** (no Bazar Web)
-- Representan tiendas físicas de la red Bazzar
-- **NO alimentan** la tienda virtual
-- Futuro: módulo de logística / confirmación de entregas
-
-**Restricción**:
-- Mercadería asignada a estos clientes NO debe aparecer en catálogo web
-- Son clientes internos para gestión de stock físico
-
-### 1.4 Implementación Técnica
-
-**Obligatorio**:
-- Todo flujo que alimente **Bazar Web** debe filtrar `WHERE cliente_id = 5000`
-- Vistas de stock web (`v_stock_web`) deben excluir otros clientes
-- Movimientos a `ALM_WEB_01` deben validar cliente 5000
-
-**Verificar**:
-- `modules/compra_web/`
-- `modules/deposito_web/`
-- `modules/pedido_web/`
-- Vistas relacionadas a stock web
+> Fuente compacta para agentes y humanos.  
+> Si una regla dispersa contradice este documento, se debe revisar el documento viejo y corregirlo o marcarlo como historico.
 
 ---
 
-## 2. Ley de Pilares — Todo dato externo pasa por pilares
+## 1. Jerarquia documental
 
-### 2.1 Principio Fundamental
+Cuando haya conflicto, manda este orden:
 
-**Todo dato externo que ingresa al holding debe normalizarse por los 5 pilares antes de alimentar sistemas operativos, reportes o decisiones comerciales.**
-
-### 2.2 Fuentes Externas
-
-Datos que ingresan al ecosistema:
-- Excel de proveedor (listados de precio)
-- CSV / planillas manuales
-- Proformas de proveedor
-- Facturas de proveedor
-- Datos del sistema viejo (legacy)
-- Retail multi-tienda
-- Report / ventas históricas
-- Stock físico / inventarios
-- Imágenes de productos
-
-### 2.3 Los 5 Pilares
-
-| Pilar | Tabla maestra | Descripción |
-|-------|---------------|-------------|
-| **Línea** | `linea` | Línea de producto del proveedor |
-| **Referencia** | `referencia` | Modelo/referencia dentro de la línea |
-| **Material** | `material` | Material de fabricación |
-| **Color** | `color` | Color del producto |
-| **Grada** | `talla` / `curva` | Gradación de tallas (curva cerrada) |
-
-**Clave molecular única**: `linea + referencia + material + color + grada`
-
-### 2.4 Atributos Derivados (No Pilares)
-
-Estos atributos se obtienen **desde** los pilares, no los reemplazan:
-
-| Atributo | Origen | Tabla |
-|----------|--------|-------|
-| Marca | `linea.marca_id` | `marca_v2` |
-| Género | `linea.genero_id` | `genero` |
-| Estilo | `linea_referencia.grupo_estilo_id` | `grupo_estilo_v2` |
-| Tipo_1 | `linea_referencia.tipo_1_id` | `tipo_1` |
-| Caso comercial | `precio_evento_caso.caso_id` | `caso` |
-
-### 2.5 Regla de Filtros y Headers UI
-
-**Prohibido**:
-- Inventar headers/filtros en frontend sin origen en pilares
-- Agrupar datos sin normalización molecular
-- Usar nombres/códigos sin validar contra maestras
-- Crear dropdown values desde texto libre
-
-**Obligatorio**:
-- Headers de tablas vienen de pilares o maestras relacionadas
-- Filtros de catálogo se construyen desde pilares enriquecidos
-- Agrupaciones respetan identidad molecular (5 pilares)
-- Toda UI refleja única verdad de maestras
-
-### 2.6 Aplicación en RIMEC Web
-
-**Estadísticas** (✅ correcto):
-```typescript
-// Lee de tabla base, enriquece con pilares, normaliza molecularmente
-molKeyFila = [pp_id, linea, referencia, material_code, color_code, grada].join('|')
-normalizarFilasMolecula(filas) // Agrupa por 5 pilares
-```
-
-**Catálogo** (⚠️ requiere alineación):
-```typescript
-// Lee de vista, agrupa parcialmente
-buildSkuId = `${lineaId}:${referenciaId}:${materialCode}` // Solo 3 pilares
-// Falta color y grada en agrupación
-```
-
-**Consecuencia**: Estadísticas y Catálogo pueden divergir porque usan diferente granularidad molecular.
-
-### 2.7 Implementación Técnica
-
-**Funciones canónicas**:
-- `lib/controlStock/buildTree.ts` → `molKeyFila()` (5 pilares)
-- `lib/controlStock/buildTree.ts` → `normalizarFilasMolecula()` (agrupación molecular)
-- `lib/atributosLinea.ts` → `cargarAtributosDesdePilar()` (enriquecimiento)
-- `lib/atributosLinea.ts` → `enriquecerMetaConPilar()` (aplicación)
-
-**Vista canónica**:
-- `v_stock_rimec` — stock normalizado con 5 pilares + atributos derivados
-
-**Responsabilidad**:
-- Todo módulo que consuma stock DEBE usar normalización molecular
-- Todo catálogo/reporte DEBE respetar identidad de 5 pilares
-- Toda agrupación DEBE explicitar qué pilares conserva
-
-### 2.8 Caso PP-2026-0012
-
-**Problema identificado**:
-- Estadísticas: 9,904 pares (agrupación molecular correcta)
-- Catálogo: 8,340 pares (agrupación parcial + límite 1000 filas)
-
-**Causas**:
-1. Supabase JS limitaba a 1,000 filas (resuelto con `.range()`)
-2. Catálogo agrupa por SKU (3 pilares) vs Estadísticas por molécula (5 pilares)
-3. Diferentes fuentes: `v_stock_rimec` vs `pedido_proveedor_detalle`
-
-**Fix arquitectónico pendiente**: Alinear catálogo para usar normalización molecular completa.
+1. **Orden directa del Director** en la conversacion actual.
+2. `docs/NEXUS_HOLDING_MEMORIA_ESTRATEGICA.md` — direccion y estrategia.
+3. `docs/NEXUS_HOLDING_MANUAL_PROCEDIMIENTOS.md` — forma de trabajar.
+4. `docs/NEXUS_HOLDING_PROTOCOLO_CLAUDE_CODE.md` — comunicación con ejecutores.
+5. `docs/RIMEC_MISION_VISION_POLITICA.md` — politica macro RIMEC/Nexus.
+6. `docs/NEXUS_POLITICA_FK_EVENTOS.md` — ley FK-first y eventos combinatorios.
+7. `docs/RIMEC_NOMENCLATURA_PILARES.md` y `docs/RIMEC_PILARES_CINCO.md` — datos/pilares.
+8. `.cursor/rules/*.mdc` — reglas ejecutables para agentes.
+9. `docs/OT_REGISTRO_ESTADO.md` y `docs/ot/INDICE_OT.md` — estado vivo de OT.
+10. OT individuales, auditorias y evidencias.
+11. README antiguos, contextos historicos y docs de modulo.
 
 ---
 
-## 3. (Espacio para otras reglas canónicas)
+## 2. Productos y responsabilidades
+
+| Producto | Repo | Rol | Datos principales |
+|---|---|---|---|
+| Nexus Streamlit | `ventas_por_mes_rimec` | Sistema operativo interno | Supabase operativa, pilares, IC, PP, FI |
+| Report | `report` | Cara gerencial / direccion | `registro_ventas_general_v2`, maestras `_v2`, retail staging |
+| RIMEC Web | `rimec-web` | Venta mayorista / transito | `v_stock_rimec`, PP, carrito vendedor |
+| Bazar Web | `bazzar-web` | Venta final / e-commerce | `v_stock_web`, pedidos web, reservas |
+| Info Ventas Fotos | `info_ventas_fotos` | Legacy a absorber | Debe migrar a `report/ventas-fotos` |
 
 ---
 
-**Documento**: NEXUS_HOLDING_REGLAS_CANONICAS.md  
-**Última actualización**: 2026-06-01  
-**OR**: OR-NEXUS-POLITICA-CLIENTE-5000-BAZAR-WEB-001
+## 3. Reglas de datos
+
+### Sales Report
+
+- Usa `registro_ventas_general_v2`.
+- Usa maestras: `cliente_v2`, `marca_v2`, `tipo_v2`, `categoria_v2`, `vendedor_v2`, `cadena_v2`.
+- No usa pilares operativos (`linea`, `referencia`, `material`, `color`, `talla`).
+- El tipo/categoria son el puente conceptual con la operacion.
+
+### Retail
+
+- Puede usar pilares.
+- Depende de Excel multi-tienda / staging.
+- No reemplaza al Motor de precios.
+
+### Motor de precios
+
+- Fuente: Excel proveedor + biblioteca de casos.
+- El caso comercial vive en `precio_evento` / `precio_evento_caso` / `precio_lista`.
+- No usar `linea.caso_id` como fuente nueva.
+
+### RIMEC Web
+
+- Catalogo desde `v_stock_rimec`.
+- Estilo y Tipo 1 desde `linea_referencia`, no desde `linea.caso_id`.
+- Tarjetas multi-origen: mismo SKU con distinto origen se muestra separado.
+
+### Bazar Web
+
+- Catalogo desde `v_stock_web`.
+- Reservas solo por RPC transaccional definida para stock.
+- No calcular precio final con datos enviados por cliente.
+
+---
+
+## 4. Pilares
+
+Pilares canónicos:
+
+1. `linea`
+2. `referencia`
+3. `material`
+4. `color`
+5. `talla` / grada
+
+Reglas:
+
+- FK siempre `{pilar}_id`.
+- Codigo proveedor siempre `codigo_proveedor` en maestros.
+- Copias denormalizadas: `{pilar}_codigo_proveedor`.
+- No inventar alias nuevos como `codigo_linea`, `linea_cod`, `ref_cod` en codigo nuevo.
+- Excel STYLE `1184.100` se parsea como enteros, no como float.
+
+---
+
+## 4B. Ley FK/Eventos
+
+- Excel, CSV y proformas son medios de entrada, no fuentes vivas.
+- Todo dato externo debe cruzar la aduana de pilares.
+- Despues de normalizar, el sistema opera con FKs enteras.
+- Lo que Nexus registra son eventos combinatorios de FKs.
+- Descripciones y strings son presentacion; no deben conducir filtros si existe FK.
+- Si una pantalla agrupa bien y otra no, se audita la fuente FK/evento antes de tocar UI.
+
+---
+
+## 5. Report / Ventas con Fotos
+
+El modulo `ventas-fotos` en `report` debe absorber el flujo legacy `info_ventas_fotos`.
+
+Reglas:
+
+- Fuente de ventas: `registro_ventas_general_v2`.
+- Tipo: solo CALZADOS desde `tipo_v2`.
+- Categoria: usar `categoria_v2`.
+- Marcas: no listar `marca_v2` plano; usar relacion por tipo (`marca_tipo_v2`) cuando exista.
+- Foto: obligatoria desde Supabase Storage bucket `productos`.
+- El campo `imagen` debe resolver a una URL publica tipo:
+  `https://extrlcvcgypwazxipvqm.supabase.co/storage/v1/object/public/productos/1122-828-5881-71523.jpg`
+- Si falta foto, mostrar error visual claro; no esconder el problema.
+- Transito puede quedar para fase posterior si no esta definido.
+
+---
+
+## 6. Reglas de operacion
+
+- Imports masivos: latido cada 60 segundos.
+- UI Streamlit: tras escritura exitosa usar `core.ux_celebrate`.
+- No matar datos productivos con reset sin autorizacion explícita.
+- No commitear secretos.
+- No introducir dependencias pesadas sin necesidad.
+- Probar con runtime real antes de afirmar que algo funciona.
+
+---
+
+## 7. Metodologia GPT / Claude Code
+
+GPT:
+
+- planea;
+- supervisa;
+- audita;
+- redacta OT;
+- revisa impacto macro.
+
+Claude Code:
+
+- ejecuta;
+- modifica codigo;
+- corre pruebas;
+- entrega evidencia.
+
+Regla de trabajo:
+
+> Si la tarea es de arquitectura, reglas, priorizacion o supervision, la hace GPT.  
+> Si la tarea es ejecucion de codigo acotado, la hace Claude Code siguiendo instrucciones.
+
+---
+
+## 8. Documentos historicos
+
+Los docs viejos no se borran por defecto. Se clasifican:
+
+- **Canonico:** fuente actual.
+- **Operativo:** runbook o OT vigente.
+- **Historico:** contexto de una fecha o fase cerrada.
+- **Legacy:** contiene reglas superadas; conservar solo si aporta trazabilidad.
+
+Cada documento nuevo debe indicar su rol.

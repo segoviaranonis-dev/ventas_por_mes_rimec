@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cotizacion Estado Actual - Nexus Holding</title>
+  <style>
+    :root{--ink:#152033;--muted:#697487;--paper:#f8f4ed;--card:#fffaf2;--line:#ded4c1;--accent:#9b6a32;--green:#1f6b4f;--red:#9f2b2b;--dark:#101828}
+    *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;line-height:1.55}
+    header{padding:58px 7vw;background:linear-gradient(135deg,#fbf6ec,#eadcc7);border-bottom:1px solid var(--line)}
+    .eyebrow{text-transform:uppercase;letter-spacing:.25em;color:var(--accent);font-weight:800;font-size:12px}
+    h1{font-family:Georgia,serif;font-size:clamp(42px,7vw,84px);line-height:.95;letter-spacing:-.05em;margin:14px 0}h2{font-family:Georgia,serif;font-size:clamp(28px,4vw,48px);margin:0 0 18px}
+    main{padding:0 7vw 70px}section{padding:54px 0;border-bottom:1px solid var(--line)}
+    .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:22px;box-shadow:0 16px 42px rgba(21,32,51,.06)}
+    .num{font-family:Georgia,serif;font-size:42px;line-height:1;color:var(--green);margin:8px 0}.muted{color:var(--muted)}
+    table{width:100%;border-collapse:collapse;background:#fffaf2;border:1px solid var(--line);border-radius:16px;overflow:hidden}th,td{padding:13px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;font-size:14px}th{background:#efe4d2;text-transform:uppercase;font-size:12px;letter-spacing:.08em}tr:last-child td{border-bottom:0}
+    .tag{display:inline-block;border-radius:999px;padding:4px 9px;background:#eadfcf;color:#51391d;font-size:11px;font-weight:800;text-transform:uppercase;margin:2px 4px 2px 0}.ok{background:rgba(31,107,79,.12);color:var(--green)}.warn{background:rgba(159,43,43,.10);color:var(--red)}
+    .total{background:var(--dark);color:#fff;border-radius:26px;padding:34px;margin-top:22px}.total .num{color:#f2d28a;font-size:56px}
+    footer{padding:34px 7vw;background:#111827;color:#cbd5e1}
+    @media(max-width:980px){.grid,.grid2{grid-template-columns:1fr}}
+    @media print{body{background:white}section{break-inside:avoid}}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="eyebrow">Cotizacion / Estado actual</div>
+    <h1>Nexus Holding: valor del sistema construido.</h1>
+    <p class="muted" style="font-size:20px;max-width:850px">Estimacion pragmatica del valor independiente e integrado de Report, RIMEC Web, Bazzar Web y Nexus Core.</p>
+  </header>
+  <main>
+    <section>
+      <h2>Valor independiente</h2>
+      <div class="grid">
+        <div class="card"><h3>Report</h3><div class="num">US$ 8k-15k</div><p class="muted">Sales Report, Retail, Ventas con Fotos y PDF ejecutivo.</p><span class="tag ok">Gerencia</span></div>
+        <div class="card"><h3>RIMEC Web</h3><div class="num">US$ 10k-20k</div><p class="muted">Venta mayorista en transito con catalogo, carrito y FI.</p><span class="tag ok">Transito</span></div>
+        <div class="card"><h3>Bazzar Web</h3><div class="num">US$ 8k-18k</div><p class="muted">E-commerce real conectado a stock, imagen, precio y pedido.</p><span class="tag ok">Tienda</span></div>
+        <div class="card"><h3>Nexus Core</h3><div class="num">US$ 25k-50k</div><p class="muted">Sistema operativo interno: IC, PP, FI, Compra, Deposito.</p><span class="tag ok">Operacion</span></div>
+      </div>
+      <div class="total"><h3>Total separado</h3><div class="num">US$ 51k-103k</div><p>Valor si cada producto se vendiera como pieza independiente.</p></div>
+    </section>
+    <section>
+      <h2>Valor integrado</h2>
+      <div class="grid2">
+        <div class="card"><h3>Ecosistema operativo</h3><div class="num">US$ 90k-180k</div><p class="muted">Valor de los cuatro productos funcionando como plataforma conectada.</p></div>
+        <div class="card"><h3>Maduro con contabilidad</h3><div class="num">US$ 150k-250k+</div><p class="muted">Con auditoria, permisos, contabilidad, backups, soporte y data warehouse.</p></div>
+      </div>
+    </section>
+    <section>
+      <h2>Estado actual por modulo</h2>
+      <table>
+        <thead><tr><th>Modulo</th><th>Estado</th><th>Entregable</th><th>Riesgo actual</th></tr></thead>
+        <tbody>
+          <tr><td>Sales Report</td><td><span class="tag ok">Operativo</span></td><td>Reporte gerencial en Report/Vercel, paridad visual pendiente para todos los PDFs.</td><td>PDF batch completo aun requiere motor de paridad.</td></tr>
+          <tr><td>Ventas con Fotos</td><td><span class="tag ok">Avanzado</span></td><td>Fotos, estadisticas por pilares, PDF en background.</td><td>Validar performance e imagenes faltantes.</td></tr>
+          <tr><td>Retail Bazzar</td><td><span class="tag ok">Primer puente real</span></td><td>Excel real de tiendas, staging, pilares, tarjetas.</td><td>Ajustar ranking por imagen y lecturas comerciales.</td></tr>
+          <tr><td>RIMEC Web</td><td><span class="tag ok">Operativo</span></td><td>Venta en transito y catalogo mayorista.</td><td>Fortalecer imagenes y PDF catalogo.</td></tr>
+          <tr><td>Bazzar Web</td><td><span class="tag warn">Produccion inicial</span></td><td>Catalogo/stock/pedido web.</td><td>Seguridad, checkout, imagenes y deploy deben blindarse.</td></tr>
+          <tr><td>Nexus Core</td><td><span class="tag ok">Nucleo operativo</span></td><td>PP, Compra, FI, Facturacion, Deposito, sellos auditables.</td><td>UI y robustez operativa en mejora continua.</td></tr>
+        </tbody>
+      </table>
+    </section>
+    <section>
+      <h2>Propuesta comercial sugerida</h2>
+      <table>
+        <thead><tr><th>Concepto</th><th>Rango sugerido</th><th>Observacion</th></tr></thead>
+        <tbody>
+          <tr><td>Entrega inmediata lunes</td><td>US$ 12k-25k</td><td>Report + Retail + Ventas con Fotos + Bazzar Web en estado entregable.</td></tr>
+          <tr><td>Flujo operativo PP a Bazar</td><td>US$ 20k-40k</td><td>Compra, FI, deposito, compra web, deposito web y tienda virtual.</td></tr>
+          <tr><td>Soporte/evolucion mensual</td><td>US$ 1.5k-4k/mes</td><td>Operacion, mantenimiento, nuevas fases y soporte ejecutivo.</td></tr>
+          <tr><td>Absorcion completa futura</td><td>US$ 200k+</td><td>Sistema contable, auditoria, permisos, data warehouse y despliegue total.</td></tr>
+        </tbody>
+      </table>
+    </section>
+    <section>
+      <h2>Justificacion</h2>
+      <div class="grid2">
+        <div class="card"><h3>Valor de negocio</h3><p class="muted">No se vende codigo: se vende control de operacion, informacion y capacidad de absorcion.</p></div>
+        <div class="card"><h3>Valor diferencial</h3><p class="muted">El conocimiento comercial de RIMEC/Bazzar ya esta modelado en flujos, pilares y eventos.</p></div>
+      </div>
+    </section>
+  </main>
+  <footer>Cotizacion referencial. Ajustar segun alcance contractual, soporte, despliegue y responsabilidad operativa.</footer>
+</body>
+</html>

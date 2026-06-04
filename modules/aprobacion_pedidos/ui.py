@@ -182,7 +182,13 @@ def _ver_pdf_action(fi: dict):
             pdf_bytes = generar_pdf_fi_individual(fi_id)
 
             if pdf_bytes:
-                filename = f"FI_{fi.get('nro_factura', 'Factura')}.pdf"
+                # Usar pv_global para nombre de archivo (PV000040.pdf)
+                pv_global = fi.get('pv_global')
+                if pv_global:
+                    filename = f"PV{pv_global:06d}.pdf"
+                else:
+                    filename = f"FI_{fi.get('nro_factura', 'Factura')}.pdf"
+
                 st.download_button(
                     label="⬇️ Descargar PDF",
                     data=pdf_bytes,
@@ -484,48 +490,12 @@ def _dialog_editar_items():
             )
 
         with col3:
-            # Calcular pares automáticamente desde cajas × pares_por_caja
-            from .logic import _calcular_pares_por_caja_desde_snapshot
-            linea_snapshot = item.get("linea_snapshot", {})
-            pares_por_caja = _calcular_pares_por_caja_desde_snapshot(linea_snapshot)
-            new_pares = new_cajas * pares_por_caja
-
-            # Mostrar pares calculados sin estado persistente.
-            # Estilos inline para blindar contraste ante modo claro/oscuro del navegador.
-            st.markdown(
-                f"""
-                <div style="
-                    background:#111827;
-                    border:1px solid rgba(212,175,55,.45);
-                    border-radius:10px;
-                    padding:8px 12px;
-                    text-align:center;
-                    min-height:54px;
-                    box-shadow:inset 0 1px 0 rgba(255,255,255,.05), 0 6px 16px rgba(0,0,0,.18);
-                ">
-                    <div style="
-                        font-size:.64rem;
-                        color:#CBD5E1;
-                        text-transform:uppercase;
-                        letter-spacing:.08em;
-                        font-weight:800;
-                    ">Pares</div>
-                    <div style="
-                        font-size:1.35rem;
-                        font-weight:900;
-                        color:#FFFFFF;
-                        line-height:1.15;
-                        font-variant-numeric:tabular-nums;
-                    ">{new_pares}</div>
-                    <div style="
-                        font-size:.70rem;
-                        color:#D4AF37;
-                        margin-top:3px;
-                        font-weight:700;
-                    ">{new_cajas} × {pares_por_caja} = {new_pares}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
+            new_pares = st.number_input(
+                "Pares",
+                min_value=1,
+                value=int(item.get("pares", 1)),
+                key=f"dlg_pares_{item_id}_{idx}",
+                label_visibility="collapsed"
             )
 
         with col4:
@@ -834,11 +804,10 @@ def render_aprobacion():
             st.cache_data.clear()
             st.rerun()
 
-    tab_pend, tab_res, tab_conf, tab_edit, tab_anul = st.tabs([
+    tab_pend, tab_res, tab_conf, tab_anul = st.tabs([
         "📋 Pendientes",
         "⏳ Reservadas",
         "✅ Confirmadas",
-        "✏️ Editados",
         "❌ Anuladas",
     ])
 
@@ -905,49 +874,26 @@ def render_aprobacion():
                     mostrar_detalle=False,
                 )
 
-                # Acciones en acordeón: evita botones deformados por columnas estrechas.
+                # Expanders colapsados para todas las acciones
                 with st.expander("⚙️ Acciones de esta FI", expanded=False):
-                    st.markdown('<div class="nx-action-panel">', unsafe_allow_html=True)
-                    if st.button("📄 Ver PDF", key=f"pdf_conf_{fi_id}", use_container_width=True):
-                        _ver_pdf_action(fi)
+                    # Fila 1: Acciones rápidas (compactas)
+                    col1, col2, col3 = st.columns(3)
 
-                    with st.expander("✏️ Editar descuentos", expanded=False):
-                        render_editar_descuentos_inline(fi)
+                    with col1:
+                        if st.button("📄 Ver PDF", key=f"pdf_conf_{fi_id}", use_container_width=True):
+                            _ver_pdf_action(fi)
 
-                    with st.expander("👤 Cambiar cliente", expanded=False):
-                        render_cambiar_cliente_inline(fi)
+                    with col2:
+                        with st.expander("✏️ Descuentos", expanded=False):
+                            render_editar_descuentos_inline(fi)
 
-                    with st.expander("📦 Items - Editar cantidades", expanded=False):
+                    with col3:
+                        with st.expander("👤 Cliente", expanded=False):
+                            render_cambiar_cliente_inline(fi)
+
+                    # Fila 2: Items (necesita más espacio por su contenido extenso)
+                    with st.expander("📦 Items - Editar Cantidades", expanded=False):
                         render_editar_items_inline(fi)
-                    st.markdown('</div>', unsafe_allow_html=True)
-
-                st.markdown("---")
-
-    # ── Tab Editados: pedidos web confirmados y luego modificados ─────────
-    with tab_edit:
-        from .logic import get_pedidos_editados
-        pedidos_editados = get_pedidos_editados()
-        if not pedidos_editados:
-            st.info("No hay pedidos editados después de confirmación.", icon="✏️")
-        else:
-            st.caption(f"{len(pedidos_editados)} pedido(s) modificado(s) post-confirmación")
-            st.markdown("---")
-            for p in pedidos_editados:
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.markdown(f"### {p.get('nro_pedido', 'Sin número')}")
-                    st.caption(f"Cliente: {p.get('cliente_nombre', 'N/A')}")
-                with col2:
-                    st.metric("Pares", p.get('total_pares', 0))
-                    st.caption(_fmt_gs(p.get('total_monto', 0)))
-
-                # Mostrar FI asociadas
-                fis_del_pedido = get_fis_de_pedido(p['id'])
-                if fis_del_pedido:
-                    with st.expander(f"📦 {len(fis_del_pedido)} Factura(s) Interna(s)", expanded=False):
-                        for fi in fis_del_pedido:
-                            if fi.get('estado') != 'ANULADA':
-                                st.markdown(f"**{fi.get('nro_factura')}**: {fi.get('total_pares')} pares | {_fmt_gs(fi.get('total_monto'))}")
 
                 st.markdown("---")
 

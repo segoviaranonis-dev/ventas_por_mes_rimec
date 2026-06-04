@@ -1,0 +1,42 @@
+# ============================================================================
+# DOCUMENTACIÓN — Solo fundamentales en git
+# Prevención token waste ($500 cursor incident)
+# ============================================================================
+
+# ARCHIVADOS — no cargar en contexto
+docs/archive/
+
+# ÓRDENES DE TRABAJO COMPLETADAS — histórico local
+OT-*.md
+PLAN_*.md
+AUDIT_*.md
+
+# CABLES DE ACERO — tareas específicas completadas
+CABLE_ACERO_*.md
+
+# MÓDULOS ESPECÍFICOS — docs en código suficiente
+modules/*/GESTION_*.md
+modules/*/*.md
+
+# CONFIGURACIÓN TEMPORAL
+CONFIGURAR_*.md
+DIAGNOSTICO_*.md
+
+# DISASTER RECOVERY — solo cuando se necesite
+DISASTER_RECOVERY.md
+
+# DEPLOY ESPECÍFICOS — info en Vercel/Streamlit
+docs/DEPLOY_*.md
+docs/AUDITORIA_AUTO_*.md
+
+# CONTEXTO DUPLICADO
+docs/RIMEC_CONTEXTO.md
+
+# AGENTES — ya en memoria
+AGENTS.md
+
+# .CLAUDE COMMANDS — ya en memoria de Claude Code
+.claude/commands/
+
+# MODULO ESPECÍFICO — ya documentado en código
+MODULO_APROBACION_*.md
