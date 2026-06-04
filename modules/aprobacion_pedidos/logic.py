@@ -288,9 +288,8 @@ def get_pedidos_editados() -> list[dict]:
 
 def _get_next_nro_pv(pp_id: int) -> str:
     """
-    Genera número de Factura Interna/Preventa con nomenclatura [PP_ID]-PV[NNN].
-    El correlativo se resetea por cada Pedido Proveedor.
-    Ejemplo: 15-PV001, 15-PV002, 16-PV001...
+    Genera documento legacy de FI/Preventa usado como referencia técnica.
+    El número visible global sale de v_factura_interna_preventa.numero_preventa_global.
     """
     df = get_dataframe("""
         SELECT COALESCE(
@@ -312,8 +311,8 @@ def _get_next_nro_pv(pp_id: int) -> str:
 
 def _generar_nros_pv_por_pp(grupos: dict) -> dict[str, str]:
     """
-    Pre-genera números PV para cada grupo (clave → nro_pv).
-    La nomenclatura es [PP_ID]-PV[NNN], correlativo reseteado por PP.
+    Pre-genera documentos legacy para cada grupo (clave → nro_pv).
+    La UI muestra el número global desde v_factura_interna_preventa.
     """
     # Agrupar por pp_id para calcular correlativos
     pp_counts: dict[int, int] = {}
@@ -356,15 +355,17 @@ def _generar_nros_pv_por_pp(grupos: dict) -> dict[str, str]:
 def get_preventa_de_celula(pp_id: int, marca: str, caso: str) -> dict | None:
     """Retorna la factura_interna de una célula si ya fue aprobada, o None."""
     df = get_dataframe("""
-        SELECT id, nro_factura, total_pares, total_monto, estado
-        FROM factura_interna
+        SELECT id, numero_preventa_global, nro_factura_legacy, nro_factura,
+               total_pares, total_monto, estado
+        FROM v_factura_interna_preventa
         WHERE pp_id = :pp_id AND marca = :marca AND caso = :caso
         LIMIT 1
     """, {"pp_id": pp_id, "marca": marca, "caso": caso})
     if df is None or df.empty:
         return None
     row = df.iloc[0]
-    return {"id": row["id"], "nro_factura": row["nro_factura"],
+    return {"id": row["id"], "nro_factura": row.get("numero_preventa_global") or row["nro_factura"],
+            "nro_factura_legacy": row.get("nro_factura_legacy") or row["nro_factura"],
             "total_pares": row["total_pares"], "total_monto": row["total_monto"],
             "estado": row["estado"]}
 
@@ -495,8 +496,8 @@ def autorizar_pedido(pedido_id: int) -> tuple[bool, str, list[str]]:
                 f"disponible={saldo_actual:,} pares, requerido={pares_req:,} pares"
             ), []
 
-    # Pre-generar todos los números PV antes de abrir la transacción
-    # Nomenclatura: [PP_ID]-PV[NNN] — correlativo reseteado por cada PP
+    # Pre-generar documentos legacy antes de abrir la transacción.
+    # El correlativo global visible se lee desde v_factura_interna_preventa tras insertar.
     nros_pv_map = _generar_nros_pv_por_pp(grupos)
     preventas_generadas: list[str] = []
 
@@ -588,8 +589,18 @@ def autorizar_pedido(pedido_id: int) -> tuple[bool, str, list[str]]:
                             SELECT descontar_stock_pp(:det_id, :pares)
                         """), {"det_id": det_id, "pares": pares})
 
-                preventas_generadas.append(nro_pv)
-                DBInspector.log(f"[APROBACION] {nro_pv} creada — PP{grupo['pp_id']} {grupo['marca']} {grupo['caso']}", "SUCCESS")
+                visible_row = conn.execute(sqlt("""
+                    SELECT numero_preventa_global
+                    FROM v_factura_interna_preventa
+                    WHERE id = :fi_id
+                    LIMIT 1
+                """), {"fi_id": fi_id}).fetchone()
+                nro_visible = str(visible_row[0]) if visible_row and visible_row[0] else nro_pv
+                preventas_generadas.append(nro_visible)
+                DBInspector.log(
+                    f"[APROBACION] {nro_visible} ({nro_pv}) creada — PP{grupo['pp_id']} {grupo['marca']} {grupo['caso']}",
+                    "SUCCESS",
+                )
 
             # ── Cerrar pedido ─────────────────────────────────────────────────
             conn.execute(sqlt("""
@@ -875,7 +886,10 @@ def get_fi_reservadas() -> list[dict]:
     """Lee FIs con estado RESERVADA directamente de BD.
     El módulo de Aprobación las encuentra por estado — no recibe objetos."""
     df = get_dataframe("""
-        SELECT fi.id, fi.nro_factura, fi.pp_id, fi.pedido_id, fi.marca, fi.caso,
+        SELECT fi.id, fi.numero_preventa_global,
+               fi.nro_factura_legacy,
+               fi.numero_preventa_global AS nro_factura,
+               fi.pp_id, fi.pedido_id, fi.marca, fi.caso,
                fi.estado, fi.total_pares, fi.total_monto,
                fi.cliente_id, fi.vendedor_id, fi.plazo_id,
                fi.lista_precio_id,
@@ -886,7 +900,7 @@ def get_fi_reservadas() -> list[dict]:
                pp.numero_registro AS nro_pp,
                pp.numero_proforma AS proforma,
                qa.descripcion AS quincena_llegada
-        FROM factura_interna fi
+        FROM v_factura_interna_preventa fi
         LEFT JOIN cliente_v2 c ON c.id_cliente = fi.cliente_id
         LEFT JOIN usuario_v2 v ON v.id_usuario = fi.vendedor_id
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
@@ -900,7 +914,10 @@ def get_fi_reservadas() -> list[dict]:
 def get_fi_confirmadas() -> list[dict]:
     """Lee FIs confirmadas (aprobadas) para el historial con detalle."""
     df = get_dataframe("""
-        SELECT fi.id, fi.nro_factura, fi.pp_id, fi.pedido_id, fi.marca, fi.caso,
+        SELECT fi.id, fi.numero_preventa_global,
+               fi.nro_factura_legacy,
+               fi.numero_preventa_global AS nro_factura,
+               fi.pp_id, fi.pedido_id, fi.marca, fi.caso,
                fi.estado, fi.total_pares, fi.total_monto,
                fi.cliente_id, fi.vendedor_id,
                fi.descuento_1, fi.descuento_2, fi.descuento_3, fi.descuento_4,
@@ -910,7 +927,7 @@ def get_fi_confirmadas() -> list[dict]:
                pp.numero_proforma AS proforma,
                qa.descripcion AS quincena_llegada,
                fi.created_at
-        FROM factura_interna fi
+        FROM v_factura_interna_preventa fi
         LEFT JOIN cliente_v2 c ON c.id_cliente = fi.cliente_id
         LEFT JOIN usuario_v2 v ON v.id_usuario = fi.vendedor_id
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
@@ -962,13 +979,16 @@ def get_fi_detalles(fi_id: int) -> list[dict]:
 def get_fi_anuladas() -> list[dict]:
     """Lee FIs anuladas (rechazadas) para el historial."""
     df = get_dataframe("""
-        SELECT fi.id, fi.nro_factura, fi.pp_id, fi.marca, fi.caso,
+        SELECT fi.id, fi.numero_preventa_global,
+               fi.nro_factura_legacy,
+               fi.numero_preventa_global AS nro_factura,
+               fi.pp_id, fi.marca, fi.caso,
                fi.estado, fi.total_pares, fi.total_monto, fi.notas,
                c.descp_cliente AS cliente_nombre,
                pp.numero_registro AS nro_pp,
                pp.numero_proforma AS proforma,
                fi.created_at
-        FROM factura_interna fi
+        FROM v_factura_interna_preventa fi
         LEFT JOIN cliente_v2 c ON c.id_cliente = fi.cliente_id
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
         WHERE fi.estado = 'ANULADA'
