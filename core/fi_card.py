@@ -68,7 +68,7 @@ def _formato_pv_display(pv_secuencial: int | None) -> str:
     """
     if pv_secuencial is None:
         return "—"
-    return f"PV{pv_secuencial:06d}"
+    return f"PV{int(pv_secuencial):06d}"
 
 
 def _estado_badge(estado: str) -> tuple[str, str, str]:
