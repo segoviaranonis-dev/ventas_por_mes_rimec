@@ -12,7 +12,7 @@ def fi_numero_visible(fi: dict) -> str:
     """Número visible: global si existe, legacy como fallback."""
     pv_global = fi.get("pv_global")
     if pv_global:
-        return f"PV{pv_global:06d}"
+        return f"PV{int(pv_global):06d}"
     
     return (
         fi.get("numero_preventa_global")
