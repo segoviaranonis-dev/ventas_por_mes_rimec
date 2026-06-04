@@ -287,7 +287,6 @@ def _render_lista_pp():
                     if st.button("📦 Quincena", key=f"_q_btn_{int(pp['id'])}", help="Asignar quincena (dato duro)"):
                         st.session_state[key_edit_q] = True
                     if st.session_state.get(key_edit_q):
-                        from core.database import get_dataframe
                         from modules.pedido_proveedor.logic import update_quincena_pp
 
                         df_quincenas = get_dataframe("SELECT id, descripcion FROM quincena_arribo ORDER BY id")
