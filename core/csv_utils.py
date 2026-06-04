@@ -217,8 +217,8 @@ def _obtener_datos_ventas_pp(pp_id: int) -> List[Dict[str, Any]]:
             fi.descuento_3 AS desc3,
             fi.descuento_4 AS desc4,
 
-            -- Vendedor (de usuario_v2 o auth.users)
-            COALESCE(u.nombre, 'N/A') AS vendedor,
+            -- Vendedor (de usuario_v2)
+            COALESCE(u.descp_usuario, 'N/A') AS vendedor,
 
             -- CASO: desde precio_lista.nombre_caso_aplicado
             -- (mismo JOIN que v_stock_rimec)
@@ -232,7 +232,7 @@ def _obtener_datos_ventas_pp(pp_id: int) -> List[Dict[str, Any]]:
         JOIN pedido_proveedor_detalle ppd ON ppd.id = fid.ppd_id
         LEFT JOIN marca_v2 mv ON mv.id_marca = ppd.id_marca
         LEFT JOIN plazo_v2 plz ON plz.id_plazo = fi.plazo_id
-        LEFT JOIN usuario_v2 u ON u.id = fi.vendedor_id
+        LEFT JOIN usuario_v2 u ON u.id_usuario = fi.vendedor_id
         LEFT JOIN linea l ON l.codigo_proveedor::text = ppd.linea
         LEFT JOIN referencia ref ON ref.codigo_proveedor::text = ppd.referencia
             AND ref.linea_id = l.id
