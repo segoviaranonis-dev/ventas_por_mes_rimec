@@ -1899,7 +1899,7 @@ def _render_enviar_a_compra(id_pp: int, numero_proforma: str):
         usuario_id = st.session_state.get("user", {}).get("id")
 
         if sel == "🆕 Nueva Compra":
-            ok, result = create_compra_legal(id_pp, numero_proforma, usuario_id)
+            ok, result = create_compra_legal(id_pp, numero_proforma)
         else:
             # Extraer el id de la fila correspondiente al label
             idx = opts.index(sel) - 1
