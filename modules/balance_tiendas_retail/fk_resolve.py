@@ -1034,6 +1034,74 @@ def resolve_retail_fks(
     out["grupo_estilo_id"] = ge_ids
     out["tipo_1_id"] = t1_ids
 
+    # ========================================================================
+    # NUEVO: Resolver linea_id, referencia_id, cliente_id, tipo_v2_id
+    # Para sistema "Venta en Tienda" - Base de todas las proyecciones
+    # ========================================================================
+
+    # 1. Resolver linea_id desde linea_codigo_proveedor
+    linea_ids: list[int | None] = []
+    referencia_ids: list[int | None] = []
+
+    with engine.connect() as conn:
+        for _, row in out.iterrows():
+            lc = _parse_codigo_bigint_non_negative(row["linea_codigo_proveedor"])
+            if lc is not None:
+                lid = _get_linea_id(conn, pid, lc)
+                linea_ids.append(lid)
+            else:
+                linea_ids.append(None)
+
+        # 2. Resolver referencia_id desde referencia_codigo_proveedor + linea_id
+        for i, row in enumerate(out.iterrows()):
+            _, row_data = row
+            rc = _parse_codigo_bigint_non_negative(row_data["referencia_codigo_proveedor"])
+            lid = linea_ids[i]
+
+            if rc is not None and lid is not None:
+                rid = _get_referencia_id(conn, pid, lid, rc)
+                referencia_ids.append(rid)
+            else:
+                referencia_ids.append(None)
+
+    out["linea_id"] = linea_ids
+    out["referencia_id"] = referencia_ids
+
+    # 3. Resolver cliente_id desde origen_holding + marca_id
+    # Marcas Molekinha/Molekinho (IDs 5 y 6) → Tiendas Niños
+    MARCAS_NINOS = {5, 6}  # MOLEKINHA, MOLEKINHO
+
+    cliente_ids: list[int | None] = []
+    for _, row in out.iterrows():
+        origen = str(row.get("origen_holding", "")).strip().lower()
+        marca_id = row.get("marca_id")
+
+        # RIMEC o vacío → NULL
+        if not origen or "rimec" in origen or "import" in origen:
+            cliente_ids.append(None)
+            continue
+
+        # Determinar si es tienda Niños o Adultos
+        es_ninos = marca_id in MARCAS_NINOS
+
+        # Mapear origen_holding + tipo → cliente_id
+        if "fernando" in origen:
+            cliente_ids.append(2900 if es_ninos else 2100)
+        elif "san" in origen and "mart" in origen:
+            cliente_ids.append(2700 if es_ninos else 2400)
+        elif "palma" in origen:
+            cliente_ids.append(3200 if es_ninos else 3100)
+        else:
+            # origen_holding desconocido
+            warns.append(f"origen_holding desconocido: {row.get('origen_holding')} -> cliente_id NULL")
+            cliente_ids.append(None)
+
+    out["cliente_id"] = cliente_ids
+
+    # 4. Asignar tipo_v2_id = 1 (CALZADO) para todos los registros actuales
+    # Futuro: cuando se importen confecciones, será tipo_v2_id = 2
+    out["tipo_v2_id"] = [1] * len(out)
+
     uniq_warns = sorted(set(warns))
     if uniq_warns:
         print(

@@ -259,9 +259,13 @@ def insert_batch(
     out["genero_id"] = resolved["genero_id"]
     out["grupo_estilo_id"] = resolved["grupo_estilo_id"]
     out["tipo_1_id"] = resolved["tipo_1_id"]
-    # linea_id y referencia_id: resolver desde códigos proveedor (backfill en migración 063)
-    out["linea_id"] = pd.NA
-    out["referencia_id"] = pd.NA
+    # MODIFICADO: linea_id y referencia_id ahora se resuelven en fk_resolve (no backfill manual)
+    out["linea_id"] = resolved["linea_id"]
+    out["referencia_id"] = resolved["referencia_id"]
+    # NUEVO: cliente_id derivado desde origen_holding + marca_id (Venta en Tienda)
+    out["cliente_id"] = resolved["cliente_id"]
+    # NUEVO: tipo_v2_id (1=CALZADO, futuro 2=CONFECCIONES)
+    out["tipo_v2_id"] = resolved["tipo_v2_id"]
     out["archivo_origen"] = (archivo_origen or "").strip() or None
     out["excel_sheet"] = excel_sheet
     out["created_by"] = (created_by or "").strip() or None
@@ -272,6 +276,7 @@ def insert_batch(
         "excel_material_code", "excel_color_code",
         "material_id", "color_id", "linea_id", "referencia_id",
         "marca_id", "genero_id", "grupo_estilo_id", "tipo_1_id",
+        "cliente_id", "tipo_v2_id",  # NUEVO: Para Venta en Tienda
         "grada", "cantidad", "precio_unitario", "monto", "imagen_nombre",
         "archivo_origen", "excel_sheet", "created_by",
     ]
