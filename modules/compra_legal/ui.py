@@ -125,10 +125,9 @@ def _render_lista_compras():
                               <div style="font-size:.68rem;color:#64748B;text-transform:uppercase;
                                           letter-spacing:.06em;">Compra</div>
                               <div style="font-size:1.1rem;font-weight:700;color:#F1F5F9;">
-                                {cl['numero_registro']}</div>
+                                {cl['numero_registro']} &nbsp;·&nbsp; {cl['pps_vinculados']}</div>
                               <div style="font-size:.78rem;color:#94A3B8;margin-top:2px;">
-                                Proforma: {cl['proforma_referencia'] or '—'}
-                                &nbsp;·&nbsp;PPs: {cl['pps_vinculados']}</div>
+                                Proforma: {cl['proforma_referencia'] or '—'}</div>
                             </div>
                             <span style="background:{e_color}22;color:{e_color};font-size:.68rem;
                                          font-weight:600;padding:3px 8px;border-radius:4px;">
@@ -179,10 +178,9 @@ def _render_detalle_compra(id_cl: int):
               if header["total_pares_f9"] > 0 else 0.0
 
     st.markdown(
-        f"<h2 style='color:#D4AF37;margin-bottom:2px;'>🏭 {header['numero_registro']}</h2>"
+        f"<h2 style='color:#D4AF37;margin-bottom:2px;'>🏭 {header['numero_registro']} · {header['pps_vinculados']}</h2>"
         f"<p style='color:#94A3B8;margin:0;'>"
         f"Proforma: <b style='color:#F1F5F9;'>{header['proforma']}</b>"
-        f"&nbsp;·&nbsp;PPs: <b style='color:#F1F5F9;'>{header['pps_vinculados']}</b>"
         f"&nbsp;·&nbsp;Estado: <b style='color:{e_color};'>{estado}</b></p>",
         unsafe_allow_html=True,
     )

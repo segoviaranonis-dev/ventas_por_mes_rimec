@@ -83,12 +83,16 @@ def get(key: str) -> dict | None:
 def get_nav_options(user_role: str) -> dict[str, str]:
     """
     Retorna el menú de navegación filtrado por rol.
-    Formato: {"📊 Inteligencia de Ventas": "sales", ...}
-    El Navigator lo pasa directamente al st.radio().
+    Nivel Dios (rol_id=1 + DIOS) ve todos los módulos registrados.
     """
+    from core.auth import AuthManager
+
+    full_access = AuthManager.has_full_access()
     opts = {}
     for info in get_all():
-        if user_role.upper() in [r.upper() for r in info.get("allowed_roles", [])]:
+        allowed = [r.upper() for r in info.get("allowed_roles", ["ADMIN"])]
+        role_ok = user_role.upper() in allowed
+        if full_access or role_ok:
             label = f"{info['icon']} {info['label']}"
             opts[label] = info["key"]
     return opts

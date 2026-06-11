@@ -95,14 +95,14 @@ def aduana_de_seguridad(modulo_key):
 
     role = AuthManager.get_role() # Ya viene normalizado por el nuevo AuthManager
 
-    # PRIVILEGIOS TOTALES: ADMIN, DIRECTOR y ROOT tienen pase libre total.
-    if role in ["ADMIN", "DIRECTOR", "ROOT"] or st.session_state.user.get('bypass'):
+    # PRIVILEGIOS TOTALES: ADMIN, DIRECTOR, ROOT, Nivel Dios (rol 1 + DIOS)
+    if AuthManager.has_full_access():
         return True
 
     # MATRIZ DE PERMISOS — leída desde el Registry (no hardcodeada aquí)
-    permitidos = registry.get_allowed_roles(modulo_key)
+    permitidos = [r.upper() for r in registry.get_allowed_roles(modulo_key)]
 
-    if role in permitidos:
+    if role.upper() in permitidos:
         return True
 
     # [IRONCORE-TELEMETRY] Registro asíncrono de intento de acceso no autorizado
