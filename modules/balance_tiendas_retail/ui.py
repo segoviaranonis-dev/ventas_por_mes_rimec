@@ -62,7 +62,7 @@ def _render_import_gate(ok: bool, reasons: list[str], diag: dict) -> None:
     for i, r in enumerate(reasons, 1):
         st.markdown(f"{i}. {r}")
     st.info(
-        "Si no ves build `2026-06-15-b3` arriba: en la PC ejecutá `git pull origin main` en control_central "
+        "Si no ves build `2026-06-15-b4` arriba: en la PC ejecutá `git pull origin main` en control_central "
         "y reiniciá Streamlit."
     )
 
@@ -73,9 +73,14 @@ def _render_excel_import(engine, created_by: str) -> None:
         "Cada importación **borra todo** lo que había en `registro_st_vt_rc_reposicion` "
         "y deja **solo** este archivo (hoja `st+vt+RC`). Sales Report no se toca."
     )
+    if retail.RETAIL_IMPORT_SKIP_CONFECCIONES:
+        st.info(
+            "**Hotfix activo:** se importa solo **calzado** (TIPO_V2=1/654). "
+            "Confecciones Kyly (tipo 2/638) quedan **fuera** hasta nueva OT."
+        )
     st.caption(
-        f"Hoja operativa: **`{retail.EXCEL_SHEET_RETAIL}`**. "
-        "**TIPO_V2:** `1`/`654` calzado (LINEA+REF obligatorios) · `2`/`638` Kyly (tal cual)."
+        f"Hoja: **`{retail.EXCEL_SHEET_RETAIL}`** · build `{retail.RETAIL_IMPORT_BUILD}` · "
+        "modo rápido (sin alta automática de pilares en este import)."
     )
 
     f = st.file_uploader("Archivo .xlsx", type=["xlsx", "xls"], key="retail_xlsx_up")
@@ -105,12 +110,15 @@ def _render_excel_import(engine, created_by: str) -> None:
         return
     diag = retail.diagnose_retail_import(raw, norm)
     can_import, block_reasons = retail.assess_import_gate(norm, errs, diag)
+    _, filter_preview = retail.apply_import_row_filters(norm)
+    n_import = filter_preview.get("filas_a_importar", len(norm))
+    n_skip_kyly = filter_preview.get("excluidas_confecciones", 0)
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Hoja", sheet_name)
-    c2.metric("Filas", len(norm))
-    c3.metric("Calzado OK", diag["filas_ok"])
-    c4.metric("Sin L+R (calzado)", diag["filas_sin_lr"])
+    c2.metric("Filas Excel", len(norm))
+    c3.metric("A importar (calzado)", n_import)
+    c4.metric("Kyly excluidas", n_skip_kyly)
 
     with st.expander("Diagnóstico — columnas que leyó Nexus", expanded=not can_import):
         st.dataframe(pd.DataFrame(diag["columnas_mapeadas"]), hide_index=True, width="stretch")
@@ -158,7 +166,8 @@ def _render_excel_import(engine, created_by: str) -> None:
             n_ins = int(result.get("n_ins", 0))
             total = retail.count_all_rows(engine)
             celebrate_import_done(
-                f"Reemplazo total: −{n_del} / +{n_ins} filas · total tabla {total}",
+                f"Reemplazo total: −{n_del} / +{n_ins} filas calzado · total tabla {total}"
+                + (f" · Kyly excluidas: {n_skip_kyly}" if n_skip_kyly else ""),
                 modulo="Retail",
             )
         except Exception as e:

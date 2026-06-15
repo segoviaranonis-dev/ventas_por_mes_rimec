@@ -7,8 +7,6 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from modules.sales_report.styles_sales_report import SalesGridStyles
-
 # Alineado con Sales Report (tablas Enterprise — solo vista jerárquica)
 _RETAIL_HIERARCHY_LOCALE = {
     "searchOoo": "Buscar…",
@@ -103,6 +101,7 @@ def render_retail_hierarchy_grid(
         return
     try:
         from st_aggrid import AgGrid, ColumnsAutoSizeMode, GridOptionsBuilder, GridUpdateMode
+        from modules.sales_report.styles_sales_report import SalesGridStyles
     except ImportError:
         st.dataframe(df, hide_index=True, width="stretch")
         return

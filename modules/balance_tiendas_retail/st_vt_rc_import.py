@@ -41,7 +41,12 @@ TIPO_V2_CALZADO = 1       # 654 calzados Beira Rio — pilares línea+referencia
 TIPO_V2_CONFECCIONES = 2  # 638 confecciones Kyly — sin reglas STYLE/L+R; tal cual Excel
 
 # Versión visible en UI — el operador remoto confirma que hizo git pull si coincide.
-RETAIL_IMPORT_BUILD = "2026-06-15-b3"
+RETAIL_IMPORT_BUILD = "2026-06-15-b4"
+
+# HOTFIX operativo: Kyly (tipo_v2=2) fuera del lote hasta OT confecciones.
+RETAIL_IMPORT_SKIP_CONFECCIONES = True
+# Sin alta automática L+R/material/color en import (solo mapeo existente → mucho más rápido).
+RETAIL_IMPORT_FAST = True
 
 CANON = [
     "origen_holding",
@@ -268,6 +273,18 @@ def assess_import_gate(norm: pd.DataFrame, errors: list[str], diag: dict[str, An
     return len(reasons) == 0, reasons
 
 
+def apply_import_row_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Filtros de importación (hotfix velocidad / confecciones)."""
+    out = df.copy()
+    stats: dict[str, int] = {"filas_entrada": len(out)}
+    if RETAIL_IMPORT_SKIP_CONFECCIONES and "tipo_v2_id" in out.columns:
+        mask_conf = out["tipo_v2_id"] == TIPO_V2_CONFECCIONES
+        stats["excluidas_confecciones"] = int(mask_conf.sum())
+        out = out.loc[~mask_conf].copy()
+    stats["filas_a_importar"] = len(out)
+    return out, stats
+
+
 def read_excel_retail_sheet(
     file_like,
     *,
@@ -445,13 +462,26 @@ def insert_batch(
         _progress("Eliminando registros Retail anteriores…", 0.12)
         n_deleted = purge_all_retail(engine)
 
-    work = df.copy()
+    import_df, filter_stats = apply_import_row_filters(df)
+    if import_df.empty:
+        raise ValueError("No quedaron filas para importar tras aplicar filtros (¿solo confecciones Kyly?).")
+
+    n_skip = filter_stats.get("excluidas_confecciones", 0)
+    if n_skip:
+        _progress(f"Importando solo calzado — {n_skip} filas Kyly (tipo 2) excluidas…", 0.18)
+
+    work = import_df.copy()
     work["material_id"] = pd.to_numeric(work["excel_material_code"], errors="coerce")
     work["color_id"] = pd.to_numeric(work["excel_color_code"], errors="coerce")
-    _progress("Pilares (filtros / imágenes)…", 0.25)
-    resolved, _ = resolve_retail_fks(engine, work)
+    _progress("Resolviendo FKs (modo rápido, sin alta pilares)…", 0.25)
+    resolved, _ = resolve_retail_fks(
+        engine,
+        work,
+        auto_provision_lr=not RETAIL_IMPORT_FAST,
+        auto_provision_mat_col=not RETAIL_IMPORT_FAST,
+    )
 
-    out = df.copy()
+    out = import_df.copy()
     out.insert(0, "batch_id", bid)
     out.insert(1, "batch_label", (batch_label or "").strip() or None)
     # FKs desde resolve_retail_fks

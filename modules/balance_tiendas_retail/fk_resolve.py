@@ -198,8 +198,12 @@ def infer_proveedor_importacion_id(engine: Engine, df: pd.DataFrame) -> int:
     if not provs:
         raise RuntimeError("proveedor_importacion vacío.")
     sub = df[["linea_codigo_proveedor", "referencia_codigo_proveedor"]].copy()
+    if "tipo_v2_id" in df.columns:
+        sub = df.loc[df["tipo_v2_id"] == TIPO_V2_CALZADO, ["linea_codigo_proveedor", "referencia_codigo_proveedor"]].copy()
     sub["lc"] = sub["linea_codigo_proveedor"].map(_canon_codigo_pilar)
     sub["rc"] = sub["referencia_codigo_proveedor"].map(_canon_codigo_pilar)
+    # Solo pares numéricos calzado — Kyly REF=K no entra al scoring de proveedor
+    sub = sub[sub["lc"].str.isdigit() & sub["rc"].str.isdigit()]
     sub = sub.drop_duplicates(subset=["lc", "rc"], keep="first")
     if sub.empty:
         return provs[0]
@@ -913,7 +917,12 @@ def provision_missing_linea_referencia_pairs(
 
 
 def resolve_retail_fks(
-    engine: Engine, df: pd.DataFrame, *, proveedor_id: int | None = None
+    engine: Engine,
+    df: pd.DataFrame,
+    *,
+    proveedor_id: int | None = None,
+    auto_provision_lr: bool = True,
+    auto_provision_mat_col: bool = True,
 ) -> tuple[pd.DataFrame, list[str]]:
     """
     Enriquece el DataFrame normalizado con FKs de maestros.
@@ -941,9 +950,10 @@ def resolve_retail_fks(
 
     mat_ids, mat_by_cod = _load_material_maps(engine, pid)
     col_ids, col_by_cod = _load_color_maps(engine, pid)
-    _provision_missing_material_color_codes(engine, pid, df)
-    mat_ids, mat_by_cod = _load_material_maps(engine, pid)
-    col_ids, col_by_cod = _load_color_maps(engine, pid)
+    if auto_provision_mat_col:
+        _provision_missing_material_color_codes(engine, pid, df)
+        mat_ids, mat_by_cod = _load_material_maps(engine, pid)
+        col_ids, col_by_cod = _load_color_maps(engine, pid)
     lr_map = _load_linea_ref_attrs(engine, pid)
     lr_explicit = _load_explicit_linea_referencia_keys(engine, pid)
     print(
@@ -965,7 +975,7 @@ def resolve_retail_fks(
         k = _lr_key(row["linea_codigo_proveedor"], row["referencia_codigo_proveedor"])
         if k not in lr_explicit:
             missing_lr.add(k)
-    if missing_lr:
+    if missing_lr and auto_provision_lr:
         n_num = provision_missing_linea_referencia_pairs(
             engine,
             pid,

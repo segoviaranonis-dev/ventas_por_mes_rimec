@@ -1,10 +1,6 @@
 # =============================================================================
 # MÓDULO: Retail — importación Excel (staging Supabase)
-# UBICACIÓN: modules/balance_tiendas_retail/__init__.py
-# DESCRIPCIÓN: Excel VTA SM hoja st+vt+RC → registro_st_vt_rc_reposicion; pilares para filtros/imágenes.
 # =============================================================================
-
-from .ui import render_balance_tiendas_retail
 
 MODULE_INFO = {
     "key":            "balance_tiendas",
@@ -15,5 +11,11 @@ MODULE_INFO = {
     "needs_engine":   True,
     "order":          2.1,
 }
+
+
+def render_balance_tiendas_retail(engine, **kwargs):
+    from .ui import render_balance_tiendas_retail as _render
+    return _render(engine, **kwargs)
+
 
 __all__ = ["render_balance_tiendas_retail", "MODULE_INFO"]
