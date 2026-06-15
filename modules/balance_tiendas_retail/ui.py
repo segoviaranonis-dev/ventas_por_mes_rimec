@@ -48,6 +48,25 @@ def _render_table_missing(exc: BaseException) -> None:
     st.caption(f"Detalle: {exc}")
 
 
+def _render_import_gate(ok: bool, reasons: list[str], diag: dict) -> None:
+    """Siempre visible encima del botón Importar — el operador remoto ve el porqué."""
+    st.caption(f"Motor import Retail · build `{retail.RETAIL_IMPORT_BUILD}`")
+    if ok:
+        st.success(
+            f"**Listo para importar** — {len(diag.get('columnas_mapeadas', []))} columnas mapeadas · "
+            f"{diag.get('filas_calzado', 0)} calzado · {diag.get('filas_confecciones', 0)} confecciones Kyly. "
+            "Al importar se **borra** el Retail anterior y queda solo este Excel."
+        )
+        return
+    st.error("**Importar bloqueado** — corregí lo siguiente y volvé a subir el archivo:")
+    for i, r in enumerate(reasons, 1):
+        st.markdown(f"{i}. {r}")
+    st.info(
+        "Si no ves build `2026-06-15-b2` arriba: en la PC ejecutá `git pull origin main` en control_central "
+        "y reiniciá Streamlit."
+    )
+
+
 def _render_excel_import(engine, created_by: str) -> None:
     st.markdown("### Importar Excel Retail (VTA SM)")
     st.warning(
@@ -56,7 +75,7 @@ def _render_excel_import(engine, created_by: str) -> None:
     )
     st.caption(
         f"Hoja operativa: **`{retail.EXCEL_SHEET_RETAIL}`**. "
-        "Otras hojas del libro no se importan. Pilares: filtros e imágenes."
+        "**TIPO_V2:** `1`/`654` calzado (LINEA+REF obligatorios) · `2`/`638` Kyly (tal cual)."
     )
 
     f = st.file_uploader("Archivo .xlsx", type=["xlsx", "xls"], key="retail_xlsx_up")
@@ -74,55 +93,49 @@ def _render_excel_import(engine, created_by: str) -> None:
         return
 
     if sheet_name is None:
-        st.error(f"No se encontró la hoja `{retail.EXCEL_SHEET_RETAIL}`.")
+        st.error(f"No se encontró la hoja `{retail.EXCEL_SHEET_RETAIL}`. Hojas: {[m['hoja'] for m in meta]}")
         st.dataframe(pd.DataFrame(meta), hide_index=True, width="stretch")
         return
 
     norm, errs = retail.normalize_retail_dataframe(raw)
     diag = retail.diagnose_retail_import(raw, norm)
+    can_import, block_reasons = retail.assess_import_gate(norm, errs, diag)
+
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Hoja", sheet_name)
     c2.metric("Filas", len(norm))
     c3.metric("Calzado OK", diag["filas_ok"])
     c4.metric("Sin L+R (calzado)", diag["filas_sin_lr"])
-    if diag.get("filas_confecciones"):
-        st.caption(f"Confecciones Kyly (638 / tipo_v2=2): **{diag['filas_confecciones']}** filas — no exigen línea+referencia.")
+
+    with st.expander("Diagnóstico — columnas que leyó Nexus", expanded=not can_import):
+        st.dataframe(pd.DataFrame(diag["columnas_mapeadas"]), hide_index=True, width="stretch")
+        if diag.get("muestra_mala"):
+            st.markdown("**Ejemplo filas bloqueadas (calzado sin L+R)**")
+            st.json(diag["muestra_mala"])
+        if diag.get("muestra_ok"):
+            st.markdown("**Ejemplo filas OK**")
+            st.json(diag["muestra_ok"])
 
     with st.expander("Hojas del libro"):
         st.dataframe(pd.DataFrame(meta), hide_index=True, width="stretch")
     with st.expander("Vista previa"):
         st.dataframe(norm.head(150), height=360, width="stretch")
 
-    if errs:
-        st.error("**Import bloqueado** — hay filas sin línea o referencia. Corregí el Excel o revisá el diagnóstico abajo.")
-        with st.expander("Diagnóstico — qué columnas leyó Nexus", expanded=True):
-            st.caption(
-                "**Tipo_v2:** `654` o `1` = calzado Beira Rio (LINEA+REFERENCIA obligatorios). "
-                "`638` o `2` = confecciones Kyly (se importa tal cual, sin pilares L+R)."
-            )
-            st.markdown("**Mapeo columnas Excel → sistema**")
-            st.dataframe(pd.DataFrame(diag["columnas_mapeadas"]), hide_index=True, width="stretch")
-            if not diag["tiene_columnas_lr"]:
-                st.warning(
-                    f"No se detectó columna LINEA/REFERENCIA/LINE-REF. "
-                    f"Columnas con «line/ref/style» en el Excel: {diag['columnas_lr_en_excel'] or '(ninguna)'}"
-                )
-            if diag["muestra_ok"]:
-                st.markdown("**Ejemplo filas OK**")
-                st.json(diag["muestra_ok"])
-            if diag["muestra_mala"]:
-                st.markdown("**Ejemplo filas bloqueadas**")
-                st.json(diag["muestra_mala"])
+    _render_import_gate(can_import, block_reasons, diag)
 
-    for e in errs:
-        st.warning(e)
-
-    if st.button("⬆️ Importar", type="primary", disabled=bool(errs) or norm.empty, key="retail_do_imp"):
+    if st.button(
+        "⬆️ Importar",
+        type="primary",
+        disabled=not can_import,
+        key="retail_do_imp",
+        help="Deshabilitado mientras haya errores arriba en rojo." if not can_import else "Reemplazo total Retail",
+    ):
         result: dict[str, object] = {}
 
         def _do(progress_cb: Callable[[str, float | None], None]) -> None:
             bid, n_del, n_ins = retail.insert_batch(
-                engine, norm,
+                engine,
+                norm,
                 batch_label=batch_label or None,
                 archivo_origen=f.name,
                 excel_sheet=sheet_name,
@@ -136,7 +149,6 @@ def _render_excel_import(engine, created_by: str) -> None:
 
         try:
             _run_with_progress("Importando Retail…", "Importación en curso.", _do)
-            bid = str(result["batch_id"])
             n_del = int(result.get("n_deleted", 0))
             n_ins = int(result.get("n_ins", 0))
             total = retail.count_all_rows(engine)
@@ -148,7 +160,7 @@ def _render_excel_import(engine, created_by: str) -> None:
             if retail.table_missing(e):
                 _render_table_missing(e)
             else:
-                st.error(str(e))
+                st.error(f"**Error al importar:** {e}")
 
 
 def render_balance_tiendas_retail(engine, **kwargs) -> None:

@@ -40,6 +40,9 @@ _IMAGEN_LR_RE = re.compile(r"^(\d+)\s*[-_.]\s*(\d+)\s*[-_.]")
 TIPO_V2_CALZADO = 1       # 654 calzados Beira Rio — pilares línea+referencia obligatorios
 TIPO_V2_CONFECCIONES = 2  # 638 confecciones Kyly — sin reglas STYLE/L+R; tal cual Excel
 
+# Versión visible en UI — el operador remoto confirma que hizo git pull si coincide.
+RETAIL_IMPORT_BUILD = "2026-06-15-b2"
+
 CANON = [
     "origen_holding",
     "tipo_movimiento",
@@ -102,6 +105,14 @@ def parse_tipo_v2_id(raw: Any) -> int:
     2 / 638 / confección / kyly → CONFECCIONES
     Vacío → CALZADO (legacy Beira Rio).
     """
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return TIPO_V2_CALZADO
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        n = int(raw)
+        if n in (TIPO_V2_CONFECCIONES, 638):
+            return TIPO_V2_CONFECCIONES
+        if n in (TIPO_V2_CALZADO, 654):
+            return TIPO_V2_CALZADO
     s = _cell_str(raw).lower()
     if not s:
         return TIPO_V2_CALZADO
@@ -156,6 +167,12 @@ def map_header_retail(col: str) -> str | None:
         "p.total": "monto",
         "calce": "grada",
         "imagen": "imagen_nombre",
+        "lin": "linea_codigo_proveedor",
+        "ref": "referencia_codigo_proveedor",
+        "mat": "excel_material_code",
+        "colo": "excel_color_code",
+        "color": "excel_color_code",
+        "material": "excel_material_code",
     }
     if h in exact_extra or hns in {k.replace(".", ""): v for k, v in exact_extra.items()}:
         return exact_extra.get(h) or exact_extra.get(hns.replace(".", ""))
@@ -221,10 +238,33 @@ def diagnose_retail_import(raw: pd.DataFrame, norm: pd.DataFrame) -> dict[str, A
         "filas_calzado": n_calz,
         "filas_confecciones": n_conf,
         "tiene_columnas_lr": has_lr_mapped,
+        "tiene_tipo_v2": any(m["mapeo"] == "excel_tipo_v2" for m in mapped),
         "columnas_lr_en_excel": lr_cols,
         "muestra_ok": sample_ok.to_dict("records"),
         "muestra_mala": sample_bad.to_dict("records"),
     }
+
+
+def assess_import_gate(norm: pd.DataFrame, errors: list[str], diag: dict[str, Any] | None = None) -> tuple[bool, list[str]]:
+    """¿Puede pulsarse Importar? + motivos legibles para el operador."""
+    reasons: list[str] = []
+    if norm is None or norm.empty:
+        reasons.append("La hoja st+vt+RC no tiene filas para importar.")
+    if diag:
+        if not diag.get("tiene_columnas_lr"):
+            reasons.append(
+                "Nexus no mapeó LINEA ni REFERENCIA. Revisá cabeceras (LINEA, REFERENCIA, lin, ref o LINE-REF). "
+                f"Columnas en Excel: {[m['columna_excel'] for m in diag.get('columnas_mapeadas', [])]}"
+            )
+        if not diag.get("tiene_tipo_v2"):
+            reasons.append(
+                "Columna TIPO_V2 no detectada: todas las filas se tratan como calzado (654). "
+                "Para Kyly usá columna TIPO_V2 con valor 2 o 638."
+            )
+    for e in errors:
+        if e not in reasons:
+            reasons.append(e)
+    return len(reasons) == 0, reasons
 
 
 def read_excel_retail_sheet(
