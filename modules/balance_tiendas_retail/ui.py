@@ -79,15 +79,40 @@ def _render_excel_import(engine, created_by: str) -> None:
         return
 
     norm, errs = retail.normalize_retail_dataframe(raw)
-    c1, c2, c3 = st.columns(3)
+    diag = retail.diagnose_retail_import(raw, norm)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Hoja", sheet_name)
     c2.metric("Filas", len(norm))
-    c3.metric("Avisos", len(errs))
+    c3.metric("Calzado OK", diag["filas_ok"])
+    c4.metric("Sin L+R (calzado)", diag["filas_sin_lr"])
+    if diag.get("filas_confecciones"):
+        st.caption(f"Confecciones Kyly (638 / tipo_v2=2): **{diag['filas_confecciones']}** filas — no exigen línea+referencia.")
 
     with st.expander("Hojas del libro"):
         st.dataframe(pd.DataFrame(meta), hide_index=True, width="stretch")
     with st.expander("Vista previa"):
         st.dataframe(norm.head(150), height=360, width="stretch")
+
+    if errs:
+        st.error("**Import bloqueado** — hay filas sin línea o referencia. Corregí el Excel o revisá el diagnóstico abajo.")
+        with st.expander("Diagnóstico — qué columnas leyó Nexus", expanded=True):
+            st.caption(
+                "**Tipo_v2:** `654` o `1` = calzado Beira Rio (LINEA+REFERENCIA obligatorios). "
+                "`638` o `2` = confecciones Kyly (se importa tal cual, sin pilares L+R)."
+            )
+            st.markdown("**Mapeo columnas Excel → sistema**")
+            st.dataframe(pd.DataFrame(diag["columnas_mapeadas"]), hide_index=True, width="stretch")
+            if not diag["tiene_columnas_lr"]:
+                st.warning(
+                    f"No se detectó columna LINEA/REFERENCIA/LINE-REF. "
+                    f"Columnas con «line/ref/style» en el Excel: {diag['columnas_lr_en_excel'] or '(ninguna)'}"
+                )
+            if diag["muestra_ok"]:
+                st.markdown("**Ejemplo filas OK**")
+                st.json(diag["muestra_ok"])
+            if diag["muestra_mala"]:
+                st.markdown("**Ejemplo filas bloqueadas**")
+                st.json(diag["muestra_mala"])
 
     for e in errs:
         st.warning(e)

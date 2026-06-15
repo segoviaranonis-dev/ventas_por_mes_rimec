@@ -21,10 +21,24 @@ from modules.balance_tiendas_retail.logic import (
     _excel_scalar_to_float,
     _norm_header,
     _series_excel_float,
+    map_header_to_canon,
 )
 
 EXCEL_SHEET_RETAIL = "st+vt+RC"
 TABLE_RETAIL = "registro_st_vt_rc_reposicion"  # Frontend /retail lee esta tabla (migración 060)
+
+# Cabeceras logic.py → nombres CANON de st+vt+RC
+_LOGIC_TO_CANON: dict[str, str] = {
+    "origen_tienda": "origen_holding",
+    "material_id": "excel_material_code",
+    "color_id": "excel_color_code",
+}
+
+_IMAGEN_LR_RE = re.compile(r"^(\d+)\s*[-_.]\s*(\d+)\s*[-_.]")
+
+# tipo_v2_id en BD · categorías negocio (Excel columna Tipo_v2)
+TIPO_V2_CALZADO = 1       # 654 calzados Beira Rio — pilares línea+referencia obligatorios
+TIPO_V2_CONFECCIONES = 2  # 638 confecciones Kyly — sin reglas STYLE/L+R; tal cual Excel
 
 CANON = [
     "origen_holding",
@@ -40,6 +54,8 @@ CANON = [
     "precio_unitario",
     "monto",
     "imagen_nombre",
+    "excel_tipo_v2",
+    "tipo_v2_id",
 ]
 
 
@@ -60,50 +76,155 @@ def sheet_es_retail(name: str) -> bool:
     return s == re.sub(r"\s+", "", EXCEL_SHEET_RETAIL.casefold())
 
 
+def _split_linea_referencia(raw: Any) -> tuple[str, str]:
+    """STYLE 1184.100 · LINE-REF 1184-100 · solo línea si no hay separador."""
+    s = _cell_str(raw)
+    if not s:
+        return "", ""
+    for sep in (".", "-", "/"):
+        if sep in s:
+            a, b = s.split(sep, 1)
+            return _cell_str(a), _cell_str(b)
+    return s, ""
+
+
+def _fill_linea_referencia_from_pair(df: pd.DataFrame, i: int, linea: str, ref: str) -> None:
+    if linea and not str(df.at[i, "linea_codigo_proveedor"]).strip():
+        df.at[i, "linea_codigo_proveedor"] = linea
+    if ref and not str(df.at[i, "referencia_codigo_proveedor"]).strip():
+        df.at[i, "referencia_codigo_proveedor"] = ref
+
+
+def parse_tipo_v2_id(raw: Any) -> int:
+    """
+    Excel Tipo_v2 → tipo_v2_id BD.
+    1 / 654 / calzado / beira → CALZADO
+    2 / 638 / confección / kyly → CONFECCIONES
+    Vacío → CALZADO (legacy Beira Rio).
+    """
+    s = _cell_str(raw).lower()
+    if not s:
+        return TIPO_V2_CALZADO
+    digits = re.sub(r"\D", "", s)
+    if digits in ("654", "1"):
+        return TIPO_V2_CALZADO
+    if digits in ("638", "2"):
+        return TIPO_V2_CONFECCIONES
+    if "638" in s or "confec" in s or "kyly" in s:
+        return TIPO_V2_CONFECCIONES
+    if "654" in s or "calz" in s or "beira" in s:
+        return TIPO_V2_CALZADO
+    try:
+        n = int(float(s.replace(",", ".")))
+        if n == TIPO_V2_CONFECCIONES:
+            return TIPO_V2_CONFECCIONES
+        if n == TIPO_V2_CALZADO:
+            return TIPO_V2_CALZADO
+    except (ValueError, TypeError):
+        pass
+    return TIPO_V2_CALZADO
+
+
 def map_header_retail(col: str) -> str | None:
     raw = str(col).strip()
     if not raw or raw.lower().startswith("unnamed"):
         return None
     h = _norm_header(raw)
-    hns = h.replace(" ", "")
+    hns = h.replace(" ", "").replace("_", "")
 
-    exact: dict[str, str] = {
+    # Tipo_v2 — categoría producto (654 calzado / 638 confecciones)
+    if hns in ("tipov2", "tipo2", "tipov2id", "tipoproducto") or h in ("tipo v2", "tipo_v2", "tipo v2 id"):
+        return "excel_tipo_v2"
+
+    # Par línea+referencia combinado (STYLE / LINE-REF)
+    if hns in ("lineref", "style", "line-ref", "linerefstyle"):
+        return "line_ref_raw"
+    if re.search(r"line.*ref", h, re.I) or h == "style":
+        return "line_ref_raw"
+
+    canon = map_header_to_canon(raw)
+    if canon:
+        mapped = _LOGIC_TO_CANON.get(canon, canon)
+        if mapped in CANON:
+            return mapped
+
+    # Alias cortos no cubiertos por logic (p.unit, cod.barra…)
+    exact_extra: dict[str, str] = {
         "cod.barra": "codigo_barras",
         "codbarra": "codigo_barras",
-        "line-ref": "line_ref_raw",
-        "linea": "linea_codigo_proveedor",
-        "línea": "linea_codigo_proveedor",
-        "ref": "referencia_codigo_proveedor",
-        "referencia": "referencia_codigo_proveedor",
-        "mat": "excel_material_code",
-        "material": "excel_material_code",
-        "color": "excel_color_code",
-        "imagen": "imagen_nombre",
-        "grada": "grada",
-        "calce": "grada",
-        "cantidad": "cantidad",
         "p.unit": "precio_unitario",
         "p.total": "monto",
-        "monto": "monto",
-        "tienda": "origen_holding",
-        "tipo": "tipo_movimiento",
-        "fecha": "fecha_mov",
+        "calce": "grada",
+        "imagen": "imagen_nombre",
     }
-    if h in exact or hns in {k.replace(" ", ""): v for k, v in exact.items()}:
-        return exact.get(h) or exact.get(hns)
+    if h in exact_extra or hns in {k.replace(".", ""): v for k, v in exact_extra.items()}:
+        return exact_extra.get(h) or exact_extra.get(hns.replace(".", ""))
     if re.search(r"cod.*barra", h, re.I):
         return "codigo_barras"
-    if re.search(r"line.*ref", h, re.I):
-        return "line_ref_raw"
-    if h in ("linea", "línea"):
-        return "linea_codigo_proveedor"
-    if h in ("ref", "referencia"):
-        return "referencia_codigo_proveedor"
-    if re.search(r"precio.*unit|p\.?\s*unit", h, re.I):
-        return "precio_unitario"
-    if re.search(r"p\.?\s*total|^total$", h, re.I) and "linea" not in h:
-        return "monto"
     return None
+
+
+def _backfill_linea_ref_desde_imagen(df: pd.DataFrame) -> int:
+    """Si LINEA/REF vacíos, intenta parsear nombre imagen tipo 9093-300-31263.jpg."""
+    if "imagen_nombre" not in df.columns:
+        return 0
+    filled = 0
+    for i in range(len(df)):
+        l = str(df.at[i, "linea_codigo_proveedor"]).strip()
+        r = str(df.at[i, "referencia_codigo_proveedor"]).strip()
+        if l and r:
+            continue
+        img = _cell_str(df.at[i, "imagen_nombre"])
+        m = _IMAGEN_LR_RE.match(img)
+        if not m:
+            continue
+        if not l:
+            df.at[i, "linea_codigo_proveedor"] = m.group(1)
+        if not r:
+            df.at[i, "referencia_codigo_proveedor"] = m.group(2)
+        filled += 1
+    return filled
+
+
+def diagnose_retail_import(raw: pd.DataFrame, norm: pd.DataFrame) -> dict[str, Any]:
+    """Diagnóstico legible cuando el import queda bloqueado."""
+    mapped: list[dict[str, str | None]] = []
+    for col in raw.columns:
+        mapped.append({"columna_excel": str(col), "mapeo": map_header_retail(str(col))})
+
+    vacias = norm["linea_codigo_proveedor"].eq("") | norm["referencia_codigo_proveedor"].eq("")
+    if "tipo_v2_id" in norm.columns:
+        calzado = norm["tipo_v2_id"] == TIPO_V2_CALZADO
+        vacias_check = vacias & calzado
+        n_conf = int((norm["tipo_v2_id"] == TIPO_V2_CONFECCIONES).sum())
+        n_calz = int(calzado.sum())
+    else:
+        vacias_check = vacias
+        n_conf = 0
+        n_calz = len(norm)
+
+    n_bad = int(vacias_check.sum())
+    n_ok = int(len(norm) - n_bad) if "tipo_v2_id" in norm.columns else int((~vacias).sum())
+
+    sample_bad = norm.loc[vacias_check if "tipo_v2_id" in norm.columns else vacias,
+                          ["tipo_v2_id", "excel_tipo_v2", "linea_codigo_proveedor", "referencia_codigo_proveedor", "imagen_nombre"]].head(5)
+    sample_ok = norm.loc[~(vacias_check if "tipo_v2_id" in norm.columns else vacias),
+                         ["tipo_v2_id", "excel_tipo_v2", "linea_codigo_proveedor", "referencia_codigo_proveedor", "imagen_nombre"]].head(3)
+
+    lr_cols = [str(c) for c in raw.columns if re.search(r"line|ref|style", str(c), re.I)]
+    has_lr_mapped = any(m["mapeo"] in ("linea_codigo_proveedor", "referencia_codigo_proveedor", "line_ref_raw") for m in mapped)
+
+    return {
+        "columnas_mapeadas": mapped,
+        "filas_ok": n_ok,
+        "filas_sin_lr": n_bad,
+        "filas_calzado": n_calz,
+        "filas_confecciones": n_conf,
+        "tiene_columnas_lr": has_lr_mapped,
+        "columnas_lr_en_excel": lr_cols,
+        "muestra_ok": sample_ok.to_dict("records"),
+        "muestra_mala": sample_bad.to_dict("records"),
+    }
 
 
 def read_excel_retail_sheet(
@@ -147,35 +268,55 @@ def normalize_retail_dataframe(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[st
 
     ren: dict[str, str] = {}
     used: set[str] = set()
+    line_ref_cols: list[str] = []
     for col in raw.columns:
         canon = map_header_retail(str(col))
-        if canon and canon not in ("line_ref_raw",) and canon not in used:
+        if canon == "line_ref_raw":
+            line_ref_cols.append(str(col))
+            continue
+        if canon and canon not in used:
             ren[str(col)] = canon
             used.add(canon)
     df = raw.rename(columns=ren)
+
+    if line_ref_cols:
+        df["line_ref_raw"] = df[line_ref_cols[0]].astype(str)
+        for extra in line_ref_cols[1:]:
+            empty = df["line_ref_raw"].map(_cell_str).eq("")
+            df.loc[empty, "line_ref_raw"] = df.loc[empty, extra].astype(str)
 
     for c in CANON:
         if c not in df.columns:
             if c in ("fecha_mov", "codigo_barras", "precio_unitario", "monto", "imagen_nombre"):
                 df[c] = None
-            elif c in ("origen_holding", "tipo_movimiento"):
+            elif c in ("origen_holding", "tipo_movimiento", "excel_tipo_v2"):
                 df[c] = ""
             elif c == "grada":
                 df[c] = "(sin grada)"
             else:
                 df[c] = ""
 
+    df["excel_tipo_v2"] = df["excel_tipo_v2"].map(_cell_str)
+    df["tipo_v2_id"] = df["excel_tipo_v2"].map(parse_tipo_v2_id).astype(int)
+    mask_calzado = df["tipo_v2_id"] == TIPO_V2_CALZADO
+
     if "line_ref_raw" in df.columns:
         for i, raw_lr in enumerate(df["line_ref_raw"]):
-            s = _cell_str(raw_lr)
-            if not s or "-" not in s:
+            if not mask_calzado.iloc[i]:
                 continue
-            a, b = s.split("-", 1)
-            if not str(df.at[i, "linea_codigo_proveedor"]).strip():
-                df.at[i, "linea_codigo_proveedor"] = a.strip()
-            if not str(df.at[i, "referencia_codigo_proveedor"]).strip():
-                df.at[i, "referencia_codigo_proveedor"] = b.strip()
+            linea, ref = _split_linea_referencia(raw_lr)
+            _fill_linea_referencia_from_pair(df, i, linea, ref)
         df = df.drop(columns=["line_ref_raw"], errors="ignore")
+
+    # STYLE 1184.100 — solo calzado (tipo_v2=1)
+    for i in range(len(df)):
+        if not mask_calzado.iloc[i]:
+            continue
+        if str(df.at[i, "linea_codigo_proveedor"]).strip() and str(df.at[i, "referencia_codigo_proveedor"]).strip():
+            continue
+        linea, ref = _split_linea_referencia(df.at[i, "linea_codigo_proveedor"])
+        if ref:
+            _fill_linea_referencia_from_pair(df, i, linea, ref)
 
     for col in ("linea_codigo_proveedor", "referencia_codigo_proveedor"):
         df[col] = df[col].map(_cell_str)
@@ -195,9 +336,29 @@ def normalize_retail_dataframe(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[st
     df["precio_unitario"] = _series_excel_float(df["precio_unitario"])
     df["monto"] = _series_excel_float(df["monto"])
 
+    n_img = 0
+    if mask_calzado.any():
+        sub = df.loc[mask_calzado].copy()
+        n_img = _backfill_linea_ref_desde_imagen(sub)
+        df.loc[mask_calzado, ["linea_codigo_proveedor", "referencia_codigo_proveedor"]] = sub[
+            ["linea_codigo_proveedor", "referencia_codigo_proveedor"]
+        ].values
+
     vacias = df["linea_codigo_proveedor"].eq("") | df["referencia_codigo_proveedor"].eq("")
-    if vacias.any():
-        errors.append(f"Hay {int(vacias.sum())} filas sin línea o referencia.")
+    vacias_calzado = vacias & mask_calzado
+    n_conf = int((df["tipo_v2_id"] == TIPO_V2_CONFECCIONES).sum())
+    n_calz = int(mask_calzado.sum())
+
+    if vacias_calzado.any():
+        n = int(vacias_calzado.sum())
+        hint = (
+            f"Hay {n} filas **calzado** (tipo_v2=1/654) sin línea o referencia. "
+            "Revisá **LINEA** + **REFERENCIA** o **STYLE** `9093.300`. "
+            f"Confecciones Kyly (tipo_v2=2/638): {n_conf} filas — no exigen L+R."
+        )
+        if n_img:
+            hint += f" Desde IMAGEN se completaron {n_img} filas calzado; aún faltan {n}."
+        errors.append(hint)
 
     return df[CANON].copy(), errors
 
