@@ -41,7 +41,7 @@ TIPO_V2_CALZADO = 1       # 654 calzados Beira Rio — pilares línea+referencia
 TIPO_V2_CONFECCIONES = 2  # 638 confecciones Kyly — sin reglas STYLE/L+R; tal cual Excel
 
 # Versión visible en UI — el operador remoto confirma que hizo git pull si coincide.
-RETAIL_IMPORT_BUILD = "2026-06-15-b2"
+RETAIL_IMPORT_BUILD = "2026-06-15-b3"
 
 CANON = [
     "origen_holding",
@@ -92,10 +92,11 @@ def _split_linea_referencia(raw: Any) -> tuple[str, str]:
 
 
 def _fill_linea_referencia_from_pair(df: pd.DataFrame, i: int, linea: str, ref: str) -> None:
-    if linea and not str(df.at[i, "linea_codigo_proveedor"]).strip():
-        df.at[i, "linea_codigo_proveedor"] = linea
-    if ref and not str(df.at[i, "referencia_codigo_proveedor"]).strip():
-        df.at[i, "referencia_codigo_proveedor"] = ref
+    """i = posición iloc (no etiqueta de índice del Excel)."""
+    if linea and not str(df.iloc[i]["linea_codigo_proveedor"]).strip():
+        df.iloc[i, df.columns.get_loc("linea_codigo_proveedor")] = linea
+    if ref and not str(df.iloc[i]["referencia_codigo_proveedor"]).strip():
+        df.iloc[i, df.columns.get_loc("referencia_codigo_proveedor")] = ref
 
 
 def parse_tipo_v2_id(raw: Any) -> int:
@@ -187,18 +188,18 @@ def _backfill_linea_ref_desde_imagen(df: pd.DataFrame) -> int:
         return 0
     filled = 0
     for i in range(len(df)):
-        l = str(df.at[i, "linea_codigo_proveedor"]).strip()
-        r = str(df.at[i, "referencia_codigo_proveedor"]).strip()
+        l = str(df.iloc[i]["linea_codigo_proveedor"]).strip()
+        r = str(df.iloc[i]["referencia_codigo_proveedor"]).strip()
         if l and r:
             continue
-        img = _cell_str(df.at[i, "imagen_nombre"])
+        img = _cell_str(df.iloc[i]["imagen_nombre"])
         m = _IMAGEN_LR_RE.match(img)
         if not m:
             continue
         if not l:
-            df.at[i, "linea_codigo_proveedor"] = m.group(1)
+            df.iloc[i, df.columns.get_loc("linea_codigo_proveedor")] = m.group(1)
         if not r:
-            df.at[i, "referencia_codigo_proveedor"] = m.group(2)
+            df.iloc[i, df.columns.get_loc("referencia_codigo_proveedor")] = m.group(2)
         filled += 1
     return filled
 
@@ -296,7 +297,7 @@ def read_excel_retail_sheet(
         return pd.DataFrame(), None, meta
 
     df = pd.read_excel(xl, sheet_name=target, engine=engine, dtype=object, keep_default_na=False)
-    df = df.replace("", pd.NA).dropna(how="all")
+    df = df.replace("", pd.NA).dropna(how="all").reset_index(drop=True)
     return df, target, meta
 
 
@@ -352,9 +353,9 @@ def normalize_retail_dataframe(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[st
     for i in range(len(df)):
         if not mask_calzado.iloc[i]:
             continue
-        if str(df.at[i, "linea_codigo_proveedor"]).strip() and str(df.at[i, "referencia_codigo_proveedor"]).strip():
+        if str(df.iloc[i]["linea_codigo_proveedor"]).strip() and str(df.iloc[i]["referencia_codigo_proveedor"]).strip():
             continue
-        linea, ref = _split_linea_referencia(df.at[i, "linea_codigo_proveedor"])
+        linea, ref = _split_linea_referencia(df.iloc[i]["linea_codigo_proveedor"])
         if ref:
             _fill_linea_referencia_from_pair(df, i, linea, ref)
 

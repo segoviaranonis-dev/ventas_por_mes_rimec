@@ -62,7 +62,7 @@ def _render_import_gate(ok: bool, reasons: list[str], diag: dict) -> None:
     for i, r in enumerate(reasons, 1):
         st.markdown(f"{i}. {r}")
     st.info(
-        "Si no ves build `2026-06-15-b2` arriba: en la PC ejecutá `git pull origin main` en control_central "
+        "Si no ves build `2026-06-15-b3` arriba: en la PC ejecutá `git pull origin main` en control_central "
         "y reiniciá Streamlit."
     )
 
@@ -97,7 +97,12 @@ def _render_excel_import(engine, created_by: str) -> None:
         st.dataframe(pd.DataFrame(meta), hide_index=True, width="stretch")
         return
 
-    norm, errs = retail.normalize_retail_dataframe(raw)
+    try:
+        norm, errs = retail.normalize_retail_dataframe(raw)
+    except Exception as e:
+        st.error(f"**Error al procesar el Excel:** {type(e).__name__}: {e}")
+        st.caption("Si el mensaje es solo un número (ej. 5844), había filas vacías en el Excel — hacé git pull y reiniciá Streamlit.")
+        return
     diag = retail.diagnose_retail_import(raw, norm)
     can_import, block_reasons = retail.assess_import_gate(norm, errs, diag)
 
