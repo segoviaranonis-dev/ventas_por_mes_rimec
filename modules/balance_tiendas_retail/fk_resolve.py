@@ -1070,40 +1070,45 @@ def resolve_retail_fks(
     # Para sistema "Venta en Tienda" - Base de todas las proyecciones
     # ========================================================================
 
-    # 1. Resolver linea_id desde linea_codigo_proveedor
-    linea_ids: list[int | None] = []
-    referencia_ids: list[int | None] = []
+    # 1. Resolver linea_id / referencia_id (modo rápido: omitir N×SELECT; códigos van en columnas Excel)
+    if auto_provision_lr:
+        linea_ids: list[int | None] = []
+        referencia_ids: list[int | None] = []
 
-    with engine.connect() as conn:
-        for _, row in out.iterrows():
-            tv2 = int(row.get("tipo_v2_id") or TIPO_V2_CALZADO)
-            if tv2 == TIPO_V2_CONFECCIONES:
-                linea_ids.append(None)
-                continue
-            lc = _parse_codigo_bigint_non_negative(row["linea_codigo_proveedor"])
-            if lc is not None:
-                lid = _get_linea_id(conn, pid, lc)
-                linea_ids.append(lid)
-            else:
-                linea_ids.append(None)
+        with engine.connect() as conn:
+            for _, row in out.iterrows():
+                tv2 = int(row.get("tipo_v2_id") or TIPO_V2_CALZADO)
+                if tv2 == TIPO_V2_CONFECCIONES:
+                    linea_ids.append(None)
+                    continue
+                lc = _parse_codigo_bigint_non_negative(row["linea_codigo_proveedor"])
+                if lc is not None:
+                    lid = _get_linea_id(conn, pid, lc)
+                    linea_ids.append(lid)
+                else:
+                    linea_ids.append(None)
 
-        for i, row in enumerate(out.iterrows()):
-            _, row_data = row
-            tv2 = int(row_data.get("tipo_v2_id") or TIPO_V2_CALZADO)
-            if tv2 == TIPO_V2_CONFECCIONES:
-                referencia_ids.append(None)
-                continue
-            rc = _parse_codigo_bigint_non_negative(row_data["referencia_codigo_proveedor"])
-            lid = linea_ids[i]
+            for i, row in enumerate(out.iterrows()):
+                _, row_data = row
+                tv2 = int(row_data.get("tipo_v2_id") or TIPO_V2_CALZADO)
+                if tv2 == TIPO_V2_CONFECCIONES:
+                    referencia_ids.append(None)
+                    continue
+                rc = _parse_codigo_bigint_non_negative(row_data["referencia_codigo_proveedor"])
+                lid = linea_ids[i]
 
-            if rc is not None and lid is not None:
-                rid = _get_referencia_id(conn, pid, lid, rc)
-                referencia_ids.append(rid)
-            else:
-                referencia_ids.append(None)
+                if rc is not None and lid is not None:
+                    rid = _get_referencia_id(conn, pid, lid, rc)
+                    referencia_ids.append(rid)
+                else:
+                    referencia_ids.append(None)
 
-    out["linea_id"] = linea_ids
-    out["referencia_id"] = referencia_ids
+        out["linea_id"] = linea_ids
+        out["referencia_id"] = referencia_ids
+    else:
+        out["linea_id"] = None
+        out["referencia_id"] = None
+        print("[RETAIL-STAGING] modo rápido: linea_id/referencia_id NULL (códigos proveedor en fila)", flush=True)
 
     # 3. Resolver cliente_id desde origen_holding + marca_id
     # Marcas Molekinha/Molekinho (IDs 5 y 6) → Tiendas Niños

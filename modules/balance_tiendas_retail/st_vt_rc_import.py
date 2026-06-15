@@ -41,7 +41,7 @@ TIPO_V2_CALZADO = 1       # 654 calzados Beira Rio — pilares línea+referencia
 TIPO_V2_CONFECCIONES = 2  # 638 confecciones Kyly — sin reglas STYLE/L+R; tal cual Excel
 
 # Versión visible en UI — el operador remoto confirma que hizo git pull si coincide.
-RETAIL_IMPORT_BUILD = "2026-06-15-b4"
+RETAIL_IMPORT_BUILD = "2026-06-15-b5"
 
 # HOTFIX operativo: Kyly (tipo_v2=2) fuera del lote hasta OT confecciones.
 RETAIL_IMPORT_SKIP_CONFECCIONES = True

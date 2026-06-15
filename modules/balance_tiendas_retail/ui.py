@@ -62,7 +62,7 @@ def _render_import_gate(ok: bool, reasons: list[str], diag: dict) -> None:
     for i, r in enumerate(reasons, 1):
         st.markdown(f"{i}. {r}")
     st.info(
-        "Si no ves build `2026-06-15-b4` arriba: en la PC ejecutá `git pull origin main` en control_central "
+        "Si no ves build `2026-06-15-b5` arriba: en la PC ejecutá `git pull origin main` en control_central "
         "y reiniciá Streamlit."
     )
 
