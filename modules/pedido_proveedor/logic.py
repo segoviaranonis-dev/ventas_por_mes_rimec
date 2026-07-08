@@ -23,10 +23,7 @@ from sqlalchemy import text as sqlt
 
 from core.database import get_dataframe, commit_query, engine, DBInspector
 from core.auditoria import log_flujo, A
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# HELPERS
+from core.holding_governance import require_pp_pre_compra
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _safe_int(val) -> int:
@@ -1367,6 +1364,7 @@ def parse_proforma(file_bytes: bytes) -> tuple[pd.DataFrame, int, str | None]:
             "color_code":    str(_safe_int(row.iloc[6 + offset])) if len(row) > 6 + offset else "0",
             "color":         str(row.iloc[7 + offset]).strip() if len(row) > 7 + offset and pd.notna(row.iloc[7 + offset]) else "",
             "brand":         str(row.iloc[8 + offset]).strip() if len(row) > 8 + offset and pd.notna(row.iloc[8 + offset]) else "",
+            "shop":          str(_safe_int(row.iloc[9 + offset])) if len(row) > 9 + offset else "",
             "boxes":         _safe_int(row.iloc[10 + offset]) if len(row) > 10 + offset else 0,
             "pairs":         _safe_int(row.iloc[11 + offset]) if len(row) > 11 + offset else 0,
             "unit_fob":      _safe_float(row.iloc[12 + offset]) if len(row) > 12 + offset else 0.0,
@@ -1419,7 +1417,21 @@ def get_estado_borrado_importacion_pp(pp_id: int) -> dict:
         vendido_ppd = int(row.vendido_ppd or 0)
         vendido = max(vendido_vt, vendido_ppd)
         n_fi = int(row.n_facturas or 0)
-        puede = vendido == 0
+        fi_conf = 0
+        if n_fi > 0:
+            with engine.connect() as conn2:
+                fi_conf = int(
+                    conn2.execute(
+                        sqlt(
+                            "SELECT COUNT(*)::int FROM factura_interna "
+                            "WHERE pp_id = :pp_id AND UPPER(TRIM(estado)) = 'CONFIRMADA'"
+                        ),
+                        {"pp_id": pp_id},
+                    ).scalar()
+                    or 0
+                )
+        # Reimport programado: bloquear solo si hay ventas reales o FI confirmadas
+        puede = fi_conf == 0 and vendido_vt == 0
         motivo = ""
         if not puede:
             motivo = (
@@ -1537,7 +1549,25 @@ def populate_pp_from_proforma(
     - Regla 2.2: si el pilar color/material tiene nombre/descripcion NULL y la proforma
       trae texto, ejecuta UPDATE en ``public.color`` / ``public.material`` (mismo proveedor).
     """
+    ok_pre, msg_pre = require_pp_pre_compra(pp_id, "cargar proforma")
+    if not ok_pre:
+        return False, msg_pre
+
     import json
+    import math
+
+    def _null_if_nan(v):
+        if v is None:
+            return None
+        try:
+            if pd.isna(v):
+                return None
+        except Exception:
+            if isinstance(v, float) and math.isnan(v):
+                return None
+        if isinstance(v, str) and v.strip().lower() == "nan":
+            return None
+        return v
 
     total_pares = sum(int(r.get("pairs", 0)) for r in detalle_rows)
     total_fob   = round(sum(float(r.get("amount_fob", 0)) for r in detalle_rows), 2)
@@ -1560,12 +1590,12 @@ def populate_pp_from_proforma(
                 WHERE id = :pp_id
             """), {
                 "pf":    proforma.strip() or None,
-                "ext":   nro_externo.strip() or None,
+                "ext":   (_null_if_nan(nro_externo.strip()) if nro_externo else None) or None,
                 "d1":    descuento_1,
                 "d2":    descuento_2,
                 "d3":    descuento_3,
                 "d4":    descuento_4,
-                "eta":   fecha_eta or None,
+                "eta":   _null_if_nan(fecha_eta),
                 "pares": total_pares,
                 "cat":   categoria_id,
                 "pp_id": pp_id,
@@ -1754,6 +1784,444 @@ def populate_pp_from_proforma(
     except Exception as e:
         DBInspector.log(f"[PP] Error cargando proforma en PP {pp_id}: {e}", "ERROR")
         return False, f"Error al cargar proforma: {e}"
+
+
+def _factor_descuento_ic_pct(d1, d2, d3, d4) -> float:
+    """Descuentos IC/FI en porcentaje entero (5 = 5%)."""
+    factor = 1.0
+    for d in (d1, d2, d3, d4):
+        if d and float(d) > 0:
+            factor *= 1 - float(d) / 100.0
+    return factor
+
+
+def _mol_key_proforma_row(r: dict) -> tuple:
+    import json as _json
+
+    grades = r.get("grades_json") or {}
+    if not isinstance(grades, dict):
+        grades = {}
+    return (
+        str(r.get("linea_codigo_proveedor", "")),
+        str(r.get("referencia_codigo_proveedor", "")),
+        str(r.get("material_code", "")),
+        str(r.get("color_code", "")),
+        _json.dumps(grades, sort_keys=True),
+    )
+
+
+def _aggregate_ics_por_cliente(ics: pd.DataFrame) -> dict[int, dict]:
+    """Varias IC por mismo id_cliente → suma pares (programado multi-IC)."""
+    agg: dict[int, dict] = {}
+    for _, r in ics.iterrows():
+        cid = int(r["id_cliente"])
+        bucket = agg.setdefault(
+            cid,
+            {
+                "pares_ic": 0,
+                "ic_ids": [],
+                "ic_nros": [],
+                "cliente_nombre": str(r.get("descp_cliente") or ""),
+            },
+        )
+        bucket["pares_ic"] += int(r["cantidad_total_pares"] or 0)
+        bucket["ic_ids"].append(int(r["ic_id"]))
+        bucket["ic_nros"].append(str(r["numero_registro"]))
+        if not bucket["cliente_nombre"] and r.get("descp_cliente"):
+            bucket["cliente_nombre"] = str(r["descp_cliente"])
+    return agg
+
+
+def _split_proforma_rows_por_quotas(quotas: list[int], rows: list[dict]) -> list[list[dict]]:
+    """Reparte filas proforma entre ICs del mismo SHOP según cupo de pares."""
+    out: list[list[dict]] = [[] for _ in quotas]
+    if not quotas or sum(quotas) <= 0:
+        return out
+    qi = 0
+    quota_left = quotas[0]
+    for row in rows:
+        p = int(row.get("pairs", 0) or 0)
+        p_orig = p
+        boxes_orig = int(row.get("boxes", 0) or 0) or 1
+        while p > 0 and qi < len(quotas):
+            if quota_left <= 0:
+                qi += 1
+                quota_left = quotas[qi] if qi < len(quotas) else 0
+                continue
+            take = min(p, quota_left)
+            r2 = dict(row)
+            r2["pairs"] = take
+            if p_orig > 0 and boxes_orig > 0:
+                r2["boxes"] = max(1, round(boxes_orig * take / p_orig))
+            out[qi].append(r2)
+            p -= take
+            quota_left -= take
+    return out
+
+
+def _get_ics_pp_programado(pp_id: int) -> pd.DataFrame:
+    return get_dataframe(
+        """
+        SELECT ic.id AS ic_id, ic.numero_registro, ic.id_cliente, ic.id_vendedor,
+               ic.cantidad_total_pares, ic.descuento_1, ic.descuento_2,
+               ic.descuento_3, ic.descuento_4, ic.id_plazo, ic.listado_precio_id,
+               icp.precio_evento_id,
+               cv.descp_cliente
+        FROM intencion_compra_pedido icp
+        JOIN intencion_compra ic ON ic.id = icp.intencion_compra_id
+        LEFT JOIN cliente_v2 cv ON cv.id_cliente = ic.id_cliente
+        WHERE icp.pedido_proveedor_id = :pp_id
+        ORDER BY ic.id_cliente
+        """,
+        {"pp_id": pp_id},
+    )
+
+
+def preview_import_proforma_programado(
+    pp_id: int, file_bytes: bytes
+) -> tuple[dict | None, str | None]:
+    """
+    Paso manual previo a import: parse proforma, pilares, agrupación SHOP y emparejamiento IC.
+    """
+    df, total_pares, err = parse_proforma(file_bytes)
+    if err:
+        return None, err
+
+    ics = _get_ics_pp_programado(pp_id)
+    if ics is None or ics.empty:
+        return None, "El PP no tiene ICs vinculadas."
+
+    evento_ids = {int(x) for x in ics["precio_evento_id"].dropna().unique()}
+    if len(evento_ids) != 1:
+        return None, "Las ICs del PP deben compartir un único listado de precios vinculado."
+    evento_id = int(next(iter(evento_ids)))
+
+    pp_row = get_dataframe(
+        "SELECT proveedor_importacion_id, pares_comprometidos FROM pedido_proveedor WHERE id = :id",
+        {"id": pp_id},
+    )
+    if pp_row is None or pp_row.empty:
+        return None, f"PP {pp_id} no encontrado."
+    prov_id = int(pp_row.iloc[0]["proveedor_importacion_id"] or 654)
+
+    grupos: dict[tuple[str, str], int] = {}
+    for _, row in df.iterrows():
+        brand = str(row.get("brand", "")).strip().upper()
+        shop = str(row.get("shop", "")).strip()
+        p = int(row.get("pairs", 0) or 0)
+        if p <= 0:
+            continue
+        key = (brand, shop)
+        grupos[key] = grupos.get(key, 0) + p
+
+    shop_pares: dict[str, int] = {}
+    shop_brands: dict[str, set[str]] = {}
+    for (brand, shop), pares in grupos.items():
+        shop_pares[shop] = shop_pares.get(shop, 0) + pares
+        shop_brands.setdefault(shop, set()).add(brand)
+
+    ic_by_cliente = _aggregate_ics_por_cliente(ics)
+    emparejamientos: list[dict] = []
+    errores: list[str] = []
+    matched_shops: set[str] = set()
+
+    for shop, pares_proforma in sorted(shop_pares.items(), key=lambda x: -x[1]):
+        try:
+            shop_i = int(shop)
+        except ValueError:
+            brands = ", ".join(sorted(shop_brands.get(shop, set())))
+            errores.append(f"SHOP no numérico: {brands} / {shop}")
+            continue
+        ic_agg = ic_by_cliente.get(shop_i)
+        if ic_agg is None:
+            brands = ", ".join(sorted(shop_brands.get(shop, set())))
+            errores.append(f"SHOP {shop} ({brands}) sin IC con id_cliente={shop}")
+            continue
+        ic_pares = int(ic_agg["pares_ic"])
+        ok_match = ic_pares == pares_proforma
+        if not ok_match:
+            ic_label = ", ".join(ic_agg["ic_nros"])
+            errores.append(
+                f"SHOP {shop} · IC [{ic_label}]: "
+                f"proforma {pares_proforma} ≠ IC {ic_pares} pares (suma {len(ic_agg['ic_nros'])} IC)"
+            )
+        matched_shops.add(shop)
+        brands = ", ".join(sorted(shop_brands.get(shop, set())))
+        emparejamientos.append(
+            {
+                "brand": brands,
+                "shop": shop,
+                "pares_proforma": pares_proforma,
+                "ic_id": ic_agg["ic_ids"][0],
+                "ic_nro": ", ".join(ic_agg["ic_nros"]),
+                "id_cliente": shop_i,
+                "cliente_nombre": ic_agg["cliente_nombre"],
+                "pares_ic": ic_pares,
+                "match": ok_match,
+                "n_ics": len(ic_agg["ic_nros"]),
+            }
+        )
+
+    for cid in sorted(ic_by_cliente.keys()):
+        shop_s = str(cid)
+        if shop_s not in matched_shops:
+            ic_label = ", ".join(ic_by_cliente[cid]["ic_nros"])
+            errores.append(f"Cliente {shop_s} · IC [{ic_label}] sin filas en proforma")
+
+    pillar_preview: list[dict] = []
+    for rec in df.head(5).to_dict("records"):
+        pillar_preview.append(
+            {
+                "style": rec.get("style_code"),
+                "shop": rec.get("shop"),
+                "linea": rec.get("linea_codigo_proveedor"),
+                "referencia": rec.get("referencia_codigo_proveedor"),
+                "material_code": rec.get("material_code"),
+                "color_code": rec.get("color_code"),
+                "pairs": rec.get("pairs"),
+            }
+        )
+
+    pl_n = get_dataframe(
+        "SELECT COUNT(*)::int AS c FROM precio_lista WHERE evento_id = :e",
+        {"e": evento_id},
+    )
+    listado_ok = pl_n is not None and not pl_n.empty and int(pl_n.iloc[0]["c"]) > 0
+
+    payload = {
+        "ok": len(errores) == 0,
+        "pp_id": pp_id,
+        "total_pares": total_pares,
+        "n_filas": len(df),
+        "n_grupos_shop": len(shop_pares),
+        "evento_id": evento_id,
+        "emparejamientos": emparejamientos,
+        "errores": errores,
+        "pillar_preview": pillar_preview,
+        "proveedor_id": prov_id,
+        "listado_vinculado": listado_ok,
+    }
+    return payload, None
+
+
+def import_proforma_programado(
+    pp_id: int,
+    proforma: str,
+    nro_externo: str,
+    descuento_1: float,
+    descuento_2: float,
+    descuento_3: float,
+    descuento_4: float,
+    fecha_eta,
+    categoria_id: int | None,
+    file_bytes: bytes,
+    *,
+    crear_fi: bool = True,
+) -> tuple[bool, str, dict]:
+    """
+    Protocolo PROGRAMADO (Alejandro Magno):
+    1) parse + pilares en PPD
+    2) agrupar por BRAND+SHOP → emparejar id_cliente IC
+    3) una FI RESERVADA por IC con cabecera IC y detalle proforma de ese SHOP
+    """
+    preview, err = preview_import_proforma_programado(pp_id, file_bytes)
+    if err:
+        return False, err, {}
+    if not preview or not preview.get("ok"):
+        msg = "; ".join(preview.get("errores") or ["Emparejamiento SHOP↔IC inválido"])
+        return False, msg, preview or {}
+
+    if not preview.get("listado_vinculado"):
+        return False, "Vinculá el listado de precios RIMEC antes de importar programado.", preview
+
+    df, total_pares, err = parse_proforma(file_bytes)
+    if err:
+        return False, err, preview
+
+    detalle = df.to_dict("records")
+    ok, msg = populate_pp_from_proforma(
+        pp_id=pp_id,
+        proforma=proforma,
+        nro_externo=nro_externo,
+        descuento_1=descuento_1,
+        descuento_2=descuento_2,
+        descuento_3=descuento_3,
+        descuento_4=descuento_4,
+        fecha_eta=fecha_eta,
+        categoria_id=categoria_id,
+        detalle_rows=detalle,
+    )
+    if not ok:
+        return False, msg, preview
+
+    evento_id = int(preview["evento_id"])
+    df_skus = get_skus_con_precio_para_fi(pp_id, evento_id)
+    if df_skus is None or df_skus.empty:
+        return False, "Sin SKUs PPD tras import (listado/pilares).", preview
+
+    sku_by_ppd: dict[int, dict] = {
+        int(r["ppd_id"]): r.to_dict() for _, r in df_skus.iterrows()
+    }
+
+    ppd_map = get_dataframe(
+        """
+        SELECT ppd.id, ppd.linea, ppd.referencia, ppd.material_code, ppd.color_code,
+               ppd.grades_json::text AS grades_json
+        FROM pedido_proveedor_detalle ppd
+        WHERE ppd.pedido_proveedor_id = :pp_id
+        """,
+        {"pp_id": pp_id},
+    )
+    ppd_by_mol = {}
+    if ppd_map is not None and not ppd_map.empty:
+        import json as _json
+
+        for _, pr in ppd_map.iterrows():
+            try:
+                gj = _json.loads(pr["grades_json"]) if pr["grades_json"] else {}
+            except Exception:
+                gj = {}
+            mol = (
+                str(pr["linea"]),
+                str(pr["referencia"]),
+                str(pr["material_code"]),
+                str(pr["color_code"]),
+                _json.dumps(gj, sort_keys=True),
+            )
+            ppd_by_mol[mol] = int(pr["id"])
+
+    ics = _get_ics_pp_programado(pp_id)
+    fi_resultados: list[dict] = []
+    fi_errores: list[str] = []
+
+    if crear_fi and ics is not None and not ics.empty:
+        rows_by_shop: dict[str, list[dict]] = {}
+        for r in detalle:
+            shop = str(r.get("shop", "")).strip()
+            rows_by_shop.setdefault(shop, []).append(r)
+
+        ics_by_shop: dict[str, list] = {}
+        for _, ic_row in ics.iterrows():
+            shop = str(int(ic_row["id_cliente"]))
+            ics_by_shop.setdefault(shop, []).append(ic_row)
+
+        for shop, ic_group in ics_by_shop.items():
+            ic_rows = rows_by_shop.get(shop, [])
+            if not ic_rows:
+                for ic_row in ic_group:
+                    fi_errores.append(f"IC {ic_row['numero_registro']}: sin filas proforma")
+                continue
+
+            quotas = [int(r["cantidad_total_pares"] or 0) for r in ic_group]
+            split_rows = _split_proforma_rows_por_quotas(quotas, ic_rows)
+
+            for ic_row, assigned in zip(ic_group, split_rows):
+                if not assigned:
+                    fi_errores.append(f"IC {ic_row['numero_registro']}: cupo sin filas asignadas")
+                    continue
+
+                d1 = float(ic_row["descuento_1"] or 0)
+                d2 = float(ic_row["descuento_2"] or 0)
+                d3 = float(ic_row["descuento_3"] or 0)
+                d4 = float(ic_row["descuento_4"] or 0)
+                factor = _factor_descuento_ic_pct(d1, d2, d3, d4)
+                items: list[dict] = []
+
+                for r in assigned:
+                    mol = _mol_key_proforma_row(r)
+                    ppd_id = ppd_by_mol.get(mol)
+                    if not ppd_id:
+                        fi_errores.append(
+                            f"IC {ic_row['numero_registro']}: molécula {mol[0]}.{mol[1]} sin PPD"
+                        )
+                        continue
+                    sku = sku_by_ppd.get(ppd_id)
+                    if not sku or not sku.get("linea_id"):
+                        fi_errores.append(
+                            f"IC {ic_row['numero_registro']}: pilares/LPN faltantes PPD {ppd_id}"
+                        )
+                        continue
+                    pares_i = int(r.get("pairs", 0) or 0)
+                    cajas_i = int(r.get("boxes", 0) or 0) or 1
+                    lpn_base = float(sku.get("lpn", 0) or 0)
+                    lpn_neto = round(lpn_base * factor)
+                    items.append(
+                        {
+                            "ppd_id": ppd_id,
+                            "linea_id": int(sku["linea_id"]),
+                            "referencia_id": int(sku["referencia_id"]),
+                            "material_id": int(sku["material_id"]),
+                            "color_id": int(sku["color_id"]) if sku.get("color_id") else None,
+                            "linea_codigo": r.get("linea_codigo_proveedor"),
+                            "ref_codigo": r.get("referencia_codigo_proveedor"),
+                            "material_nombre": r.get("material"),
+                            "color_nombre": r.get("color"),
+                            "cajas": cajas_i,
+                            "pares": pares_i,
+                            "precio_unit": lpn_base,
+                            "precio_neto": lpn_neto,
+                            "subtotal": round(pares_i * lpn_neto),
+                        }
+                    )
+
+                if not items:
+                    continue
+                lp_ic = int(ic_row["listado_precio_id"]) if ic_row.get("listado_precio_id") is not None else 1
+                plazo_ic = int(ic_row["id_plazo"]) if ic_row.get("id_plazo") is not None else None
+                ok_fi, nro_fi = crear_factura_interna(
+                    pp_id=pp_id,
+                    cliente_id=int(ic_row["id_cliente"]),
+                    vendedor_id=int(ic_row["id_vendedor"]) if ic_row["id_vendedor"] is not None else None,
+                    lista_precio_id=lp_ic,
+                    descuento_1=d1,
+                    descuento_2=d2,
+                    descuento_3=d3,
+                    descuento_4=d4,
+                    items=items,
+                    plazo_id=plazo_ic,
+                )
+                pares_fi = sum(i["pares"] for i in items)
+                if ok_fi:
+                    fi_resultados.append(
+                        {
+                            "ic_nro": str(ic_row["numero_registro"]),
+                            "shop": shop,
+                            "fi_nro": nro_fi,
+                            "pares": pares_fi,
+                        }
+                    )
+                else:
+                    fi_errores.append(f"IC {ic_row['numero_registro']}: {nro_fi}")
+
+    # Programado: 100 % vendido al importar — sincronizar PPD (1 fila Excel = 1 PPD;
+    # descontar_stock_pp solo alcanza la última fila por molécula en ppd_by_mol).
+    if crear_fi and fi_resultados and not fi_errores:
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    sqlt(
+                        """
+                    UPDATE pedido_proveedor_detalle
+                    SET pares_vendidos = cantidad_pares
+                    WHERE pedido_proveedor_id = :pp_id
+                """
+                    ),
+                    {"pp_id": pp_id},
+                )
+        except Exception as exc:
+            fi_errores.append(f"Sync vendido programado: {exc}")
+
+    result = {
+        **preview,
+        "pares": total_pares,
+        "n_articulos": len(detalle),
+        "fi_creadas": fi_resultados,
+        "fi_errores": fi_errores,
+        "n_fi": len(fi_resultados),
+    }
+    if fi_errores and crear_fi:
+        return False, "; ".join(fi_errores[:3]), result
+    return True, msg, result
 
 
 def parse_f9(
@@ -2329,6 +2797,10 @@ def guardar_configuracion_pp(
     - evento_id        → intencion_compra_pedido.precio_evento_id (todas las ICs del PP)
     Registra en auditoría.
     """
+    ok_pre, msg_pre = require_pp_pre_compra(pp_id, "guardar configuración")
+    if not ok_pre:
+        return False
+
     try:
         with engine.begin() as conn:
             pp_row = conn.execute(sqlt(
@@ -2443,11 +2915,206 @@ def get_evento_precio_pp_detalle(pp_id: int) -> dict | None:
 
 
 def _factor_descuentos_fi(d1: float, d2: float, d3: float, d4: float) -> float:
+    """Descuentos FI en porcentaje entero (50 = 50 %)."""
     f = 1.0
     for d in (d1, d2, d3, d4):
         if d and float(d) > 0:
-            f *= 1.0 - float(d)
+            f *= 1.0 - float(d) / 100.0
     return f
+
+
+def _fi_lista_tier(lista_precio_id) -> int:
+    """Report/Aprobaciones: 1=LPN … 4=LPC04. Legacy: evento_id > 4 → tier 1."""
+    try:
+        t = int(lista_precio_id or 1)
+    except (TypeError, ValueError):
+        return 1
+    return t if 1 <= t <= 4 else 1
+
+
+_TIER_COL_PL = {1: "lpn", 2: "lpc02", 3: "lpc03", 4: "lpc04"}
+_TIER_COL_PPD = {1: "precio_lpn", 2: "precio_lpc02", 3: "precio_lpc03", 4: "precio_lpc04"}
+
+
+def _ppd_saldo_meta(conn, ppd_id: int) -> dict | None:
+    row = conn.execute(
+        sqlt("""
+        SELECT
+            listado_precio_id,
+            COALESCE(cantidad_pares, 0) AS cantidad_pares,
+            COALESCE(pares_vendidos, 0) AS pares_vendidos,
+            GREATEST(0, COALESCE(cantidad_pares, 0) - COALESCE(pares_vendidos, 0)) AS saldo,
+            precio_lpn, precio_lpc02, precio_lpc03, precio_lpc04
+        FROM pedido_proveedor_detalle
+        WHERE id = :ppd
+        """),
+        {"ppd": ppd_id},
+    ).fetchone()
+    if not row:
+        return None
+    return dict(row._mapping)
+
+
+def _lookup_lp_ppd_snapshot(conn, ppd_id: int, tier: int, evento_id: int) -> float | None:
+    """Precio ya congelado en PPD tras vincular_listado_a_pp (MIG-139)."""
+    meta = _ppd_saldo_meta(conn, ppd_id)
+    if not meta or int(meta.get("listado_precio_id") or 0) != int(evento_id):
+        return None
+    col = _TIER_COL_PPD.get(_fi_lista_tier(tier), "precio_lpn")
+    val = meta.get(col)
+    if val is not None and float(val) > 0:
+        return float(val)
+    return None
+
+
+def _lookup_lp_evento(
+    conn,
+    evento_id: int,
+    tier: int,
+    *,
+    ppd_id: int | None = None,
+    linea_id: int | None = None,
+    material_id: int | None = None,
+) -> float | None:
+    """LPN/LPC del evento — match FK (paso 1) y códigos denormalizados (paso 2, MIG-077)."""
+    tier = _fi_lista_tier(tier)
+    col = {1: "lpn", 2: "lpc02", 3: "lpc03", 4: "lpc04"}.get(tier, "lpn")
+
+    if ppd_id:
+        row = conn.execute(
+            sqlt(f"""
+            WITH fk AS (
+                SELECT
+                    CASE :tier
+                        WHEN 2 THEN pl.lpc02
+                        WHEN 3 THEN pl.lpc03
+                        WHEN 4 THEN pl.lpc04
+                        ELSE pl.lpn
+                    END AS lp
+                FROM pedido_proveedor_detalle ppd
+                JOIN pedido_proveedor pp ON pp.id = ppd.pedido_proveedor_id
+                LEFT JOIN linea l ON l.proveedor_id = pp.proveedor_importacion_id
+                                 AND l.codigo_proveedor::text = ppd.linea
+                LEFT JOIN material m ON m.proveedor_id = pp.proveedor_importacion_id
+                                     AND m.codigo_proveedor::text = ppd.material_code
+                LEFT JOIN referencia ref_j ON ref_j.codigo_proveedor::text = ppd.referencia
+                                          AND ref_j.linea_id = l.id
+                LEFT JOIN precio_lista pl ON pl.evento_id = :eid
+                    AND pl.linea_id = COALESCE(l.id, ref_j.linea_id)
+                    AND pl.referencia_id = ref_j.id
+                    AND pl.material_id = m.id
+                WHERE ppd.id = :ppd
+                LIMIT 1
+            ),
+            cod AS (
+                SELECT
+                    CASE :tier
+                        WHEN 2 THEN pl.lpc02
+                        WHEN 3 THEN pl.lpc03
+                        WHEN 4 THEN pl.lpc04
+                        ELSE pl.lpn
+                    END AS lp
+                FROM pedido_proveedor_detalle ppd
+                JOIN pedido_proveedor pp ON pp.id = ppd.pedido_proveedor_id
+                LEFT JOIN material m ON m.proveedor_id = pp.proveedor_importacion_id
+                                     AND m.codigo_proveedor::text = ppd.material_code
+                JOIN precio_lista pl ON pl.evento_id = :eid
+                    AND TRIM(pl.linea_codigo) = TRIM(ppd.linea)
+                    AND TRIM(pl.referencia_codigo) = TRIM(ppd.referencia)
+                    AND pl.material_id = m.id
+                WHERE ppd.id = :ppd
+                  AND m.id IS NOT NULL
+                ORDER BY pl.id
+                LIMIT 1
+            )
+            SELECT lp FROM fk WHERE lp IS NOT NULL AND lp > 0
+            UNION ALL
+            SELECT lp FROM cod WHERE lp IS NOT NULL AND lp > 0
+            LIMIT 1
+        """),
+            {"eid": evento_id, "ppd": ppd_id, "tier": tier},
+        ).fetchone()
+        if row and row[0] is not None:
+            return float(row[0])
+
+    if linea_id and material_id:
+        row = conn.execute(
+            sqlt(f"""
+            SELECT
+                CASE :tier
+                    WHEN 2 THEN pl.lpc02
+                    WHEN 3 THEN pl.lpc03
+                    WHEN 4 THEN pl.lpc04
+                    ELSE pl.lpn
+                END AS lp
+            FROM precio_lista pl
+            WHERE pl.evento_id = :eid
+              AND pl.linea_id = :lid
+              AND pl.material_id = :mid
+              AND (
+                CASE :tier
+                    WHEN 2 THEN pl.lpc02
+                    WHEN 3 THEN pl.lpc03
+                    WHEN 4 THEN pl.lpc04
+                    ELSE pl.lpn
+                END
+              ) IS NOT NULL
+              AND (
+                CASE :tier
+                    WHEN 2 THEN pl.lpc02
+                    WHEN 3 THEN pl.lpc03
+                    WHEN 4 THEN pl.lpc04
+                    ELSE pl.lpn
+                END
+              ) > 0
+            ORDER BY pl.id
+            LIMIT 1
+        """),
+            {"eid": evento_id, "lid": linea_id, "mid": material_id, "tier": tier},
+        ).fetchone()
+        if row and row[0] is not None:
+            return float(row[0])
+    return None
+
+
+def _lookup_lp_for_fi_recalc(
+    conn,
+    evento_id: int,
+    tier: int,
+    *,
+    ppd_id: int | None = None,
+    linea_id: int | None = None,
+    material_id: int | None = None,
+) -> tuple[float | None, str]:
+    """
+    Resuelve LP/LPC para recalc FI.
+    Retorna (valor, estado): ok | frozen | sin_match
+    """
+    if ppd_id:
+        meta = _ppd_saldo_meta(conn, int(ppd_id))
+        if meta:
+            saldo = int(meta.get("saldo") or 0)
+            vendidos = int(meta.get("pares_vendidos") or 0)
+            if saldo == 0 and vendidos > 0:
+                return None, "frozen"
+
+    lp = _lookup_lp_evento(
+        conn,
+        evento_id,
+        tier,
+        ppd_id=ppd_id,
+        linea_id=linea_id,
+        material_id=material_id,
+    )
+    if lp is not None and lp > 0:
+        return lp, "ok"
+
+    if ppd_id:
+        snap = _lookup_lp_ppd_snapshot(conn, int(ppd_id), tier, evento_id)
+        if snap is not None and snap > 0:
+            return snap, "ok"
+
+    return None, "sin_match"
 
 
 def _lookup_lpn_evento(
@@ -2458,51 +3125,11 @@ def _lookup_lpn_evento(
     linea_id: int | None = None,
     material_id: int | None = None,
 ) -> float | None:
-    """Resuelve LPN base (sin descuentos FI) desde precio_lista del evento."""
-    if ppd_id:
-        row = conn.execute(sqlt("""
-            SELECT pl.lpn
-            FROM pedido_proveedor_detalle ppd
-            JOIN pedido_proveedor pp ON pp.id = ppd.pedido_proveedor_id
-            LEFT JOIN linea l ON l.proveedor_id = pp.proveedor_importacion_id
-                             AND l.codigo_proveedor::text = ppd.linea
-            LEFT JOIN material m ON m.proveedor_id = pp.proveedor_importacion_id
-                                 AND m.codigo_proveedor::text = ppd.material_code
-            LEFT JOIN LATERAL (
-                SELECT lpn
-                FROM precio_lista
-                WHERE evento_id = :eid
-                  AND (
-                        (linea_id IS NOT NULL AND material_id IS NOT NULL
-                         AND linea_id = l.id AND material_id = m.id)
-                     OR (linea_codigo = l.id::text
-                         AND material_descripcion = m.id::text)
-                  )
-                  AND lpn IS NOT NULL AND lpn > 0
-                ORDER BY CASE WHEN linea_id IS NOT NULL THEN 0 ELSE 1 END
-                LIMIT 1
-            ) pl ON true
-            WHERE ppd.id = :ppd
-        """), {"eid": evento_id, "ppd": ppd_id}).fetchone()
-        if row and row[0] is not None:
-            return float(row[0])
-
-    if linea_id and material_id:
-        row = conn.execute(sqlt("""
-            SELECT lpn
-            FROM precio_lista
-            WHERE evento_id = :eid
-              AND lpn IS NOT NULL AND lpn > 0
-              AND (
-                    (linea_id = :lid AND material_id = :mid)
-                 OR (linea_codigo = :lid::text AND material_descripcion = :mid::text)
-              )
-            ORDER BY CASE WHEN linea_id IS NOT NULL THEN 0 ELSE 1 END
-            LIMIT 1
-        """), {"eid": evento_id, "lid": linea_id, "mid": material_id}).fetchone()
-        if row and row[0] is not None:
-            return float(row[0])
-    return None
+    """Compat: siempre tier LPN (1)."""
+    return _lookup_lp_evento(
+        conn, evento_id, 1,
+        ppd_id=ppd_id, linea_id=linea_id, material_id=material_id,
+    )
 
 
 def recalcular_facturas_internas_pp(
@@ -2520,7 +3147,11 @@ def recalcular_facturas_internas_pp(
         "fi_procesadas": 0,
         "fi_actualizadas": 0,
         "lineas_actualizadas": 0,
+        "lineas_congeladas_venta": 0,
         "lineas_sin_precio": 0,
+        "monto_fi_antes": 0.0,
+        "monto_fi_despues": 0.0,
+        "delta_monto_fi": 0.0,
     }
     estados = (
         _ESTADOS_FI_RECALC_CON_CONFIRMADAS
@@ -2529,8 +3160,20 @@ def recalcular_facturas_internas_pp(
     )
     try:
         with engine.begin() as conn:
+            m_antes = conn.execute(
+                sqlt("""
+                SELECT COALESCE(SUM(total_monto), 0)
+                FROM factura_interna
+                WHERE pp_id = :pp
+                  AND UPPER(TRIM(estado)) = ANY(:estados)
+            """),
+                {"pp": pp_id, "estados": list(estados)},
+            ).scalar()
+            stats["monto_fi_antes"] = round(float(m_antes or 0), 2)
+
             fi_rows = conn.execute(sqlt("""
                 SELECT id, nro_factura, estado,
+                       COALESCE(lista_precio_id, 1) AS lista_tier,
                        COALESCE(descuento_1, 0) AS d1,
                        COALESCE(descuento_2, 0) AS d2,
                        COALESCE(descuento_3, 0) AS d3,
@@ -2543,6 +3186,7 @@ def recalcular_facturas_internas_pp(
             for fi in fi_rows:
                 stats["fi_procesadas"] += 1
                 fi_id = int(fi.id)
+                tier = _fi_lista_tier(fi.lista_tier)
                 factor = _factor_descuentos_fi(fi.d1, fi.d2, fi.d3, fi.d4)
 
                 det_rows = conn.execute(sqlt("""
@@ -2555,24 +3199,26 @@ def recalcular_facturas_internas_pp(
 
                 total_pares = 0
                 total_monto = 0.0
-                lineas_ok = 0
-                lineas_sin = 0
 
                 for det in det_rows:
                     pares = int(det.pares or 0)
-                    lpn_base = _lookup_lpn_evento(
+                    lp_base, estado = _lookup_lp_for_fi_recalc(
                         conn,
                         evento_id,
+                        tier,
                         ppd_id=int(det.ppd_id) if det.ppd_id else None,
                         linea_id=int(det.linea_id) if det.linea_id else None,
                         material_id=int(det.material_id) if det.material_id else None,
                     )
-                    if lpn_base is None or lpn_base <= 0:
-                        lineas_sin += 1
+                    if estado == "frozen":
+                        stats["lineas_congeladas_venta"] += 1
+                        pu = float(det.precio_unit or 0)
+                    elif lp_base is None or lp_base <= 0:
+                        stats["lineas_sin_precio"] += 1
                         pu = float(det.precio_unit or 0)
                     else:
-                        pu = round(lpn_base * factor)
-                        lineas_ok += 1
+                        pu = round(lp_base * factor)
+                        stats["lineas_actualizadas"] += 1
 
                     subtotal = round(pares * pu, 2)
                     conn.execute(sqlt("""
@@ -2585,37 +3231,47 @@ def recalcular_facturas_internas_pp(
                     total_pares += pares
                     total_monto += subtotal
 
-                if lineas_ok > 0 or det_rows:
+                if det_rows:
                     conn.execute(sqlt("""
                         UPDATE factura_interna
-                        SET lista_precio_id = :ev,
-                            total_pares     = :tp,
-                            total_monto     = :tm
+                        SET total_pares = :tp,
+                            total_monto = :tm
                         WHERE id = :fi
                     """), {
-                        "ev": evento_id,
                         "tp": total_pares,
                         "tm": round(total_monto, 2),
                         "fi": fi_id,
                     })
                     stats["fi_actualizadas"] += 1
-                    stats["lineas_actualizadas"] += lineas_ok
-                    stats["lineas_sin_precio"] += lineas_sin
 
-            # Sincronizar puntero lista_precio en FI no recalculadas (p. ej. FACTURADA)
-            conn.execute(sqlt("""
-                UPDATE factura_interna
-                SET lista_precio_id = :ev
+            m_despues = conn.execute(
+                sqlt("""
+                SELECT COALESCE(SUM(total_monto), 0)
+                FROM factura_interna
                 WHERE pp_id = :pp
-                  AND UPPER(TRIM(estado)) NOT IN ('ANULADA', 'CANCELADA')
-            """), {"ev": evento_id, "pp": pp_id})
+                  AND UPPER(TRIM(estado)) = ANY(:estados)
+            """),
+                {"pp": pp_id, "estados": list(estados)},
+            ).scalar()
+            stats["monto_fi_despues"] = round(float(m_despues or 0), 2)
+            stats["delta_monto_fi"] = round(stats["monto_fi_despues"] - stats["monto_fi_antes"], 2)
 
         msg = (
             f"{stats['fi_actualizadas']} factura(s) recalculada(s), "
             f"{stats['lineas_actualizadas']} línea(s) con precio nuevo."
         )
+        if stats["lineas_congeladas_venta"]:
+            msg += f" {stats['lineas_congeladas_venta']} línea(s) vendidas congeladas (sin cambio)."
+        msg += (
+            f" Σ FI: Gs. {stats['monto_fi_antes']:,.0f} → "
+            f"Gs. {stats['monto_fi_despues']:,.0f} "
+            f"(Δ {stats['delta_monto_fi']:+,.0f})."
+        )
         if stats["lineas_sin_precio"]:
-            msg += f" {stats['lineas_sin_precio']} línea(s) sin LPN en el evento (precio anterior conservado)."
+            msg += (
+                f" {stats['lineas_sin_precio']} línea(s) con saldo sin LPN en el evento"
+                f" (precio anterior conservado)."
+            )
 
         log_flujo(
             entidad="PP",
@@ -2890,58 +3546,170 @@ def crear_factura_interna(
     descuento_4: float,
     items: list[dict],
     usuario_id: int | None = None,
+    plazo_id: int | None = None,
 ) -> tuple[bool, str]:
     """
     Crea una Factura Interna con estado RESERVADA (soft-discount).
     `nro_factura` queda como documento legacy; la UI muestra numero_preventa_global.
     """
-    nro  = _get_next_nro_fi(pp_id)
+    import json as _json
+
+    nro = _get_next_nro_fi(pp_id)
     total_pares = sum(int(i.get("pares", 0)) for i in items)
-    total_neto  = round(sum(float(i.get("subtotal", 0)) for i in items), 2)
+    total_monto = round(sum(float(i.get("subtotal", 0)) for i in items), 2)
+
+    def _snap_from_ppd(row) -> str:
+        return _json.dumps(
+            {
+                "linea_codigo": str(row[0] or ""),
+                "ref_codigo": str(row[1] or ""),
+                "material_nombre": str(row[2] or ""),
+                "color_nombre": str(row[3] or ""),
+                "material_code": str(row[4] or ""),
+                "color_code": str(row[5] or ""),
+            },
+            ensure_ascii=False,
+        )
+
     try:
         with engine.begin() as conn:
-            row = conn.execute(sqlt("""
+            row = conn.execute(
+                sqlt(
+                    """
                 INSERT INTO factura_interna
-                    (pp_id, nro_factura, cliente_id, vendedor_id,
+                    (pp_id, nro_factura, cliente_id, vendedor_id, plazo_id,
                      lista_precio_id, descuento_1, descuento_2, descuento_3, descuento_4,
-                     total_pares, total_neto, estado)
-                VALUES (:pp_id, :nro, :cli, :vend, :lp,
-                        :d1, :d2, :d3, :d4, :pares, :neto, 'RESERVADA')
+                     total_pares, total_monto, estado)
+                VALUES (:pp_id, :nro, :cli, :vend, :plazo, :lp,
+                        :d1, :d2, :d3, :d4, :pares, :tm, 'RESERVADA')
                 RETURNING id
-            """), {
-                "pp_id": pp_id, "nro": nro, "cli": cliente_id,
-                "vend": vendedor_id, "lp": lista_precio_id,
-                "d1": descuento_1, "d2": descuento_2,
-                "d3": descuento_3, "d4": descuento_4,
-                "pares": total_pares, "neto": total_neto,
-            }).fetchone()
+            """
+                ),
+                {
+                    "pp_id": pp_id,
+                    "nro": nro,
+                    "cli": cliente_id,
+                    "vend": vendedor_id,
+                    "plazo": int(plazo_id) if plazo_id is not None else None,
+                    "lp": lista_precio_id,
+                    "d1": descuento_1,
+                    "d2": descuento_2,
+                    "d3": descuento_3,
+                    "d4": descuento_4,
+                    "pares": total_pares,
+                    "tm": total_monto,
+                },
+            ).fetchone()
             fi_id = int(row[0])
+
             for item in items:
-                conn.execute(sqlt("""
+                ppd_id = item.get("ppd_id")
+                if not ppd_id and item.get("linea_id") and item.get("referencia_id") and item.get("material_id"):
+                    found = conn.execute(
+                        sqlt(
+                            """
+                        SELECT ppd.id
+                        FROM pedido_proveedor_detalle ppd
+                        JOIN pedido_proveedor pp ON pp.id = ppd.pedido_proveedor_id
+                        JOIN linea l ON l.proveedor_id = pp.proveedor_importacion_id
+                                    AND l.codigo_proveedor::TEXT = ppd.linea
+                        JOIN referencia ref ON ref.linea_id = l.id
+                                          AND ref.codigo_proveedor::TEXT = ppd.referencia
+                        JOIN material m ON m.proveedor_id = pp.proveedor_importacion_id
+                                       AND m.codigo_proveedor::TEXT = ppd.material_code
+                        LEFT JOIN color c ON c.codigo_proveedor::TEXT = ppd.color_code
+                        WHERE ppd.pedido_proveedor_id = :pp_id
+                          AND l.id = :li AND ref.id = :ri AND m.id = :mi
+                          AND (
+                            (:ci IS NULL AND (c.id IS NULL OR ppd.color_code IS NULL))
+                            OR c.id = :ci
+                          )
+                        LIMIT 1
+                    """
+                        ),
+                        {
+                            "pp_id": pp_id,
+                            "li": int(item["linea_id"]),
+                            "ri": int(item["referencia_id"]),
+                            "mi": int(item["material_id"]),
+                            "ci": int(item["color_id"]) if item.get("color_id") else None,
+                        },
+                    ).fetchone()
+                    ppd_id = int(found[0]) if found else None
+
+                snap = item.get("linea_snapshot")
+                if isinstance(snap, dict):
+                    snap_json = _json.dumps(snap, ensure_ascii=False)
+                elif isinstance(snap, str) and snap.strip():
+                    snap_json = snap
+                elif ppd_id:
+                    ppd_row = conn.execute(
+                        sqlt(
+                            """
+                        SELECT linea, referencia, descp_material, descp_color,
+                               material_code, color_code
+                        FROM pedido_proveedor_detalle WHERE id = :id
+                    """
+                        ),
+                        {"id": int(ppd_id)},
+                    ).fetchone()
+                    snap_json = _snap_from_ppd(ppd_row) if ppd_row else "{}"
+                else:
+                    snap_json = _json.dumps(
+                        {
+                            "linea_codigo": item.get("linea_codigo", ""),
+                            "ref_codigo": item.get("ref_codigo", ""),
+                            "material_nombre": item.get("material_nombre", item.get("material", "")),
+                            "color_nombre": item.get("color_nombre", item.get("color", "")),
+                        },
+                        ensure_ascii=False,
+                    )
+
+                pares_i = int(item["pares"])
+                precio_neto = float(item.get("precio_neto", item.get("precio_unit", 0)))
+                conn.execute(
+                    sqlt(
+                        """
                     INSERT INTO factura_interna_detalle
-                        (factura_id, linea_id, referencia_id, material_id, color_id,
-                         cajas, pares, precio_unit, subtotal)
-                    VALUES (:fi, :li, :ri, :mi, :ci, :c, :p, :pu, :st)
-                """), {
-                    "fi": fi_id,
-                    "li": item["linea_id"], "ri": item["referencia_id"],
-                    "mi": item["material_id"],
-                    "ci": item["color_id"] if item.get("color_id") else None,
-                    "c": int(item["cajas"]), "p": int(item["pares"]),
-                    "pu": float(item["precio_unit"]),
-                    "st": float(item["subtotal"]),
-                })
-        visible = get_dataframe("""
+                        (factura_id, ppd_id, cajas, pares, precio_unit, subtotal,
+                         precio_neto, linea_snapshot)
+                    VALUES (:fi, :ppd, :c, :p, :pu, :st, :pn, CAST(:snap AS jsonb))
+                """
+                    ),
+                    {
+                        "fi": fi_id,
+                        "ppd": int(ppd_id) if ppd_id else None,
+                        "c": int(item["cajas"]),
+                        "p": pares_i,
+                        "pu": float(item.get("precio_unit", precio_neto)),
+                        "st": float(item["subtotal"]),
+                        "pn": precio_neto,
+                        "snap": snap_json,
+                    },
+                )
+                if ppd_id and pares_i > 0:
+                    conn.execute(
+                        sqlt("SELECT descontar_stock_pp(:det_id, :pares)"),
+                        {"det_id": int(ppd_id), "pares": pares_i},
+                    )
+
+        visible = get_dataframe(
+            """
             SELECT numero_preventa_global
             FROM v_factura_interna_preventa
             WHERE id = :fi_id
-        """, {"fi_id": fi_id})
+        """,
+            {"fi_id": fi_id},
+        )
         nro_visible = (
             str(visible["numero_preventa_global"].iloc[0])
             if visible is not None and not visible.empty
             else nro
         )
-        DBInspector.log(f"[FI] Creada {nro_visible} ({nro}): {total_pares} pares · ${total_neto:,.0f}", "SUCCESS")
+        DBInspector.log(
+            f"[FI] Creada {nro_visible} ({nro}): {total_pares} pares · ${total_monto:,.0f}",
+            "SUCCESS",
+        )
         return True, nro_visible
     except Exception as e:
         DBInspector.log(f"[FI] Error creando factura interna: {e}", "ERROR")
