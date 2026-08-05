@@ -316,8 +316,9 @@ def render_sales_interface():
         with m2: card_metric("Atendimiento", f"{k['atendimiento']:.1f}%")
         with m3: card_metric("Variación Global", f"{pkg['kpis']['variacion_total']:+.1f}%")
         st.divider()
-        render_table_header("Evolución Mensual", pkg['evolucion'], ['Semestre'], "evol", show_total=False)
-        render_fragmented_grid(pkg['evolucion'], height=350, key_suffix="evol", group_cols=['Semestre'])
+        # Canon: Semestre · Mes · Monto Obj · Monto 26 · Variación % (paridad Report)
+        render_table_header("Evolución Mensual", pkg['evolucion'], ['Semestre'], "evol", show_total=True)
+        render_fragmented_grid(pkg['evolucion'], height=350, key_suffix="evol", group_cols=[])
 
     with tabs[1]:
         # ── VISTA UNIFICADA (cabecera + botones) ──────────────────────────────

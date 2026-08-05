@@ -53,6 +53,8 @@ def _agg(df, group_cols):
         ALIAS_CURRENT_VALUE: (ALIAS_CURRENT_VALUE, 'sum'),
         ALIAS_TARGET_VALUE:  (ALIAS_TARGET_VALUE,  'sum'),
     }
+    if 'monto_25' in df.columns:
+        agg_kw['monto_25'] = ('monto_25', 'sum')
     for cant_col in [_CANT_OBJ, _CANT_ACT]:
         if cant_col in df.columns:
             agg_kw[cant_col] = (cant_col, 'sum')
@@ -117,18 +119,21 @@ class SalesLogic:
                 df[col] = 0.0
 
         # ── ARTERIA A: EVOLUCIÓN MENSUAL ──────────────────────────────────────
+        # Canon PDF/UI (paridad Report): Semestre · Mes · Monto Obj · Monto 26 · Variación %
         if 'mes_idx' in df.columns:
             df_evol = _agg(df, ['mes_idx'])
-            df_evol['Semestre'] = df_evol['mes_idx'].apply(
-                lambda x: '1er SEMESTRE' if int(x) <= 6 else '2do SEMESTRE'
-            )
             df_evol['Mes'] = df_evol['mes_idx'].map(MES_NOMBRES).fillna('S/D')
+            df_evol['Semestre'] = df_evol['mes_idx'].apply(
+                lambda m: '1er SEMESTRE' if int(m) <= 6 else '2do SEMESTRE'
+            )
             df_evol = df_evol.sort_values('mes_idx').drop(columns=['mes_idx'])
-            col_order = ['Semestre', 'Mes', ALIAS_TARGET_VALUE, ALIAS_CURRENT_VALUE, ALIAS_VARIATION]
+            col_order = [
+                'Semestre', 'Mes', ALIAS_TARGET_VALUE, ALIAS_CURRENT_VALUE, ALIAS_VARIATION,
+            ]
             df_evol = df_evol[[c for c in col_order if c in df_evol.columns]]
         else:
             df_evol = pd.DataFrame(
-                columns=['Semestre', 'Mes', ALIAS_CURRENT_VALUE, ALIAS_TARGET_VALUE, ALIAS_VARIATION]
+                columns=['Semestre', 'Mes', ALIAS_TARGET_VALUE, ALIAS_CURRENT_VALUE, ALIAS_VARIATION]
             )
 
         # ── ARTERIA B: CARTERA (Cadena → Cliente → Marca) ────────────────────

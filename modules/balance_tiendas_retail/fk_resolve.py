@@ -44,6 +44,8 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import ProgrammingError
 
 from modules.rimec_engine.lr_schema import linea_referencia_tiene_codigos_proveedor
+from modules.balance_tiendas_retail.confecciones_fk import resolve_confecciones_fks
+from core.pilares.proveedor import PROVEEDOR_ID_CALZADO
 
 OTROS_CODIGO = "RETAIL_OTROS"
 # Debe coincidir con migrations/033_retail_staging_fk_dims.sql (marca_v2 sin columna codigo).
@@ -52,7 +54,13 @@ OTROS_MARCA_DESCP = "Otros (retail staging)"
 SENTINEL_CODIGO_PROVEEDOR = -999001
 
 TIPO_V2_CALZADO = 1       # 654 Beira Rio — pilares línea+referencia
-TIPO_V2_CONFECCIONES = 2  # 638 Kyly — sin alta automática L+R
+TIPO_V2_CONFECCIONES = 2  # 638 Kyly — alta perezosa L+R; dimensiones NULL hasta completar
+
+# Enriquecimiento humano de pilares (marca, género, estilo, tipo_1):
+#   Streamlit → Motor de Precios (modules/rimec_engine) → pestaña «Administración de Líneas»
+#   + cierre listado Excel → provisionar_pilares_desde_evento (pillar_fk.py)
+# Retail import: si falta línea numérica → upsert_linea ciega (NULL marca/género/estilo);
+#   no bloquear import; operador completa después en Administrador de Líneas.
 
 # Coherencia por rango de **mil** líneas (ej. 1000–1999): plantilla = línea numérica
 # del mismo proveedor en ese bloque, más cercana en código a la línea nueva.
@@ -641,6 +649,39 @@ def _get_linea_id(conn: Connection, proveedor_id: int, cod_linea: int) -> int | 
     return int(r[0]) if r else None
 
 
+def _load_linea_id_by_codigo(engine: Engine, proveedor_id: int) -> dict[int, int]:
+    q = text(
+        """
+        SELECT codigo_proveedor, id FROM public.linea
+        WHERE proveedor_id = CAST(:p AS bigint)
+        """
+    )
+    with engine.connect() as c:
+        df = pd.read_sql(q, c, params={"p": proveedor_id})
+    if df.empty:
+        return {}
+    return {int(r["codigo_proveedor"]): int(r["id"]) for _, r in df.iterrows()}
+
+
+def _load_referencia_id_by_linea_codigo(engine: Engine, proveedor_id: int) -> dict[tuple[int, int], int]:
+    q = text(
+        """
+        SELECT l.codigo_proveedor AS lc, r.codigo_proveedor AS rc, r.id
+        FROM public.referencia r
+        INNER JOIN public.linea l ON l.id = r.linea_id AND l.proveedor_id = r.proveedor_id
+        WHERE r.proveedor_id = CAST(:p AS bigint)
+        """
+    )
+    with engine.connect() as c:
+        df = pd.read_sql(q, c, params={"p": proveedor_id})
+    if df.empty:
+        return {}
+    out: dict[tuple[int, int], int] = {}
+    for _, r in df.iterrows():
+        out[(int(r["lc"]), int(r["rc"]))] = int(r["id"])
+    return out
+
+
 def _get_referencia_id(conn: Connection, proveedor_id: int, linea_id: int, cod_ref: int) -> int | None:
     r = conn.execute(
         text(
@@ -930,16 +971,66 @@ def resolve_retail_fks(
     Agrega marca_id, genero_id, grupo_estilo_id, tipo_1_id.
     """
     warns: list[str] = []
+    out = df.copy()
+    if "tipo_v2_id" not in out.columns:
+        out["tipo_v2_id"] = TIPO_V2_CALZADO
+    else:
+        out["tipo_v2_id"] = out["tipo_v2_id"].fillna(TIPO_V2_CALZADO).astype(int)
+
+    conf_mask = out["tipo_v2_id"] == TIPO_V2_CONFECCIONES
+    conf_fk_by_idx: dict[Any, dict[str, Any]] = {}
+    if conf_mask.any() and auto_provision_lr:
+        conf_df, conf_warns = resolve_confecciones_fks(engine, out.loc[conf_mask])
+        warns.extend(conf_warns)
+        fk_keys = (
+            "linea_id", "referencia_id", "material_id", "color_id",
+            "marca_id", "genero_id", "grupo_estilo_id", "tipo_1_id", "cliente_id",
+        )
+        for idx, row in conf_df.iterrows():
+            conf_fk_by_idx[idx] = {k: row[k] for k in fk_keys}
+        print(
+            f"[RETAIL-STAGING] Kyly 638: {len(conf_df)} filas confecciones con FK pilares",
+            flush=True,
+        )
+
+    calz_df = out.loc[~conf_mask].copy()
+    if calz_df.empty:
+        fk_cols = [
+            "material_id", "color_id", "marca_id", "genero_id", "grupo_estilo_id", "tipo_1_id",
+            "linea_id", "referencia_id", "cliente_id",
+        ]
+        for col in fk_cols:
+            if col not in out.columns:
+                out[col] = None
+        for idx, fk in conf_fk_by_idx.items():
+            for col, val in fk.items():
+                out.at[idx, col] = val
+        uniq_warns = sorted(set(warns))
+        if uniq_warns:
+            print(
+                f"[RETAIL-STAGING] FK resolve: {len(uniq_warns)} avisos (muestra 5): {uniq_warns[:5]}",
+                flush=True,
+            )
+        return out, uniq_warns
+
     if proveedor_id is not None:
         pid = proveedor_id
     else:
-        pid = infer_proveedor_importacion_id(engine, df)
+        pid = infer_proveedor_importacion_id(engine, calz_df)
+        if pid != PROVEEDOR_ID_CALZADO:
+            print(
+                f"[RETAIL-STAGING] calzado: proveedor inferido {pid} "
+                f"(canónico Beira Rio = {PROVEEDOR_ID_CALZADO})",
+                flush=True,
+            )
         fb = default_proveedor_importacion_id(engine)
         print(
-            f"[RETAIL-STAGING] proveedor_id para pilares/material-color: {pid}"
+            f"[RETAIL-STAGING] proveedor_id pilares calzado: {pid}"
             + (f" (fallback mínimo id sería {fb})" if pid != fb else ""),
             flush=True,
         )
+
+    df = calz_df
 
     marca_o = _otros_marca_id(engine)
     gen_o = _otros_genero_id(engine)
@@ -997,11 +1088,11 @@ def resolve_retail_fks(
             flush=True,
         )
 
-    out = df.copy()
-    if "tipo_v2_id" not in out.columns:
-        out["tipo_v2_id"] = TIPO_V2_CALZADO
+    out_calz = df.copy()
+    if "tipo_v2_id" not in out_calz.columns:
+        out_calz["tipo_v2_id"] = TIPO_V2_CALZADO
     else:
-        out["tipo_v2_id"] = out["tipo_v2_id"].fillna(TIPO_V2_CALZADO).astype(int)
+        out_calz["tipo_v2_id"] = out_calz["tipo_v2_id"].fillna(TIPO_V2_CALZADO).astype(int)
 
     mids: list[int] = []
     cids: list[int] = []
@@ -1010,24 +1101,18 @@ def resolve_retail_fks(
     ge_ids: list[int] = []
     t1_ids: list[int] = []
 
-    for _, row in out.iterrows():
-        tv2 = int(row.get("tipo_v2_id") or TIPO_V2_CALZADO)
+    for _, row in out_calz.iterrows():
+        key = _lr_key(row["linea_codigo_proveedor"], row["referencia_codigo_proveedor"])
+        attrs = lr_map.get(key)
 
-        if tv2 == TIPO_V2_CONFECCIONES:
-            # Kyly 638 — sin catálogo línea+referencia; material/color sí (tal cual códigos Excel)
+        if attrs is None:
+            warns.append(f"Sin linea+ref en catálogo tras alta automática ({key}); dimensiones → Otros.")
             m_m, m_g, m_ge, m_t1 = marca_o, gen_o, ge_o, t1_o
         else:
-            key = _lr_key(row["linea_codigo_proveedor"], row["referencia_codigo_proveedor"])
-            attrs = lr_map.get(key)
-
-            if attrs is None:
-                warns.append(f"Sin linea+ref en catálogo tras alta automática ({key}); dimensiones → Otros.")
-                m_m, m_g, m_ge, m_t1 = marca_o, gen_o, ge_o, t1_o
-            else:
-                m_m = int(attrs["marca_id"]) if attrs["marca_id"] is not None else marca_o
-                m_g = int(attrs["genero_id"]) if attrs["genero_id"] is not None else gen_o
-                m_ge = int(attrs["grupo_estilo_id"]) if attrs["grupo_estilo_id"] is not None else ge_o
-                m_t1 = int(attrs["tipo_1_id"]) if attrs["tipo_1_id"] is not None else t1_o
+            m_m = int(attrs["marca_id"]) if attrs["marca_id"] is not None else marca_o
+            m_g = int(attrs["genero_id"]) if attrs["genero_id"] is not None else gen_o
+            m_ge = int(attrs["grupo_estilo_id"]) if attrs["grupo_estilo_id"] is not None else ge_o
+            m_t1 = int(attrs["tipo_1_id"]) if attrs["tipo_1_id"] is not None else t1_o
 
         raw_mat = safe_int_or_none(row["material_id"])
         if raw_mat is None:
@@ -1058,64 +1143,36 @@ def resolve_retail_fks(
         ge_ids.append(m_ge)
         t1_ids.append(m_t1)
 
-    out["material_id"] = mids
-    out["color_id"] = cids
-    out["marca_id"] = marca_ids
-    out["genero_id"] = genero_ids
-    out["grupo_estilo_id"] = ge_ids
-    out["tipo_1_id"] = t1_ids
+    out_calz["material_id"] = mids
+    out_calz["color_id"] = cids
+    out_calz["marca_id"] = marca_ids
+    out_calz["genero_id"] = genero_ids
+    out_calz["grupo_estilo_id"] = ge_ids
+    out_calz["tipo_1_id"] = t1_ids
 
-    # ========================================================================
-    # NUEVO: Resolver linea_id, referencia_id, cliente_id, tipo_v2_id
-    # Para sistema "Venta en Tienda" - Base de todas las proyecciones
-    # ========================================================================
-
-    # 1. Resolver linea_id / referencia_id (modo rápido: omitir N×SELECT; códigos van en columnas Excel)
     if auto_provision_lr:
+        linea_by_cod = _load_linea_id_by_codigo(engine, pid)
+        ref_by_lr = _load_referencia_id_by_linea_codigo(engine, pid)
         linea_ids: list[int | None] = []
         referencia_ids: list[int | None] = []
-
-        with engine.connect() as conn:
-            for _, row in out.iterrows():
-                tv2 = int(row.get("tipo_v2_id") or TIPO_V2_CALZADO)
-                if tv2 == TIPO_V2_CONFECCIONES:
-                    linea_ids.append(None)
-                    continue
-                lc = _parse_codigo_bigint_non_negative(row["linea_codigo_proveedor"])
-                if lc is not None:
-                    lid = _get_linea_id(conn, pid, lc)
-                    linea_ids.append(lid)
-                else:
-                    linea_ids.append(None)
-
-            for i, row in enumerate(out.iterrows()):
-                _, row_data = row
-                tv2 = int(row_data.get("tipo_v2_id") or TIPO_V2_CALZADO)
-                if tv2 == TIPO_V2_CONFECCIONES:
-                    referencia_ids.append(None)
-                    continue
-                rc = _parse_codigo_bigint_non_negative(row_data["referencia_codigo_proveedor"])
-                lid = linea_ids[i]
-
-                if rc is not None and lid is not None:
-                    rid = _get_referencia_id(conn, pid, lid, rc)
-                    referencia_ids.append(rid)
-                else:
-                    referencia_ids.append(None)
-
-        out["linea_id"] = linea_ids
-        out["referencia_id"] = referencia_ids
+        for _, row in out_calz.iterrows():
+            lc = _parse_codigo_bigint_non_negative(row["linea_codigo_proveedor"])
+            rc = _parse_codigo_bigint_non_negative(row["referencia_codigo_proveedor"])
+            lid = linea_by_cod.get(lc) if lc is not None else None
+            rid = ref_by_lr.get((lc, rc)) if lc is not None and rc is not None and lid is not None else None
+            linea_ids.append(lid)
+            referencia_ids.append(rid)
+        out_calz["linea_id"] = linea_ids
+        out_calz["referencia_id"] = referencia_ids
     else:
-        out["linea_id"] = None
-        out["referencia_id"] = None
+        out_calz["linea_id"] = None
+        out_calz["referencia_id"] = None
         print("[RETAIL-STAGING] modo rápido: linea_id/referencia_id NULL (códigos proveedor en fila)", flush=True)
 
-    # 3. Resolver cliente_id desde origen_holding + marca_id
-    # Marcas Molekinha/Molekinho (IDs 5 y 6) → Tiendas Niños
-    MARCAS_NINOS = {5, 6}  # MOLEKINHA, MOLEKINHO
+    MARCAS_NINOS = {5, 6}
 
     cliente_ids: list[int | None] = []
-    for _, row in out.iterrows():
+    for _, row in out_calz.iterrows():
         origen = str(row.get("origen_holding", "")).strip().lower()
         marca_id = row.get("marca_id")
 
@@ -1139,9 +1196,21 @@ def resolve_retail_fks(
             warns.append(f"origen_holding desconocido: {row.get('origen_holding')} -> cliente_id NULL")
             cliente_ids.append(None)
 
-    out["cliente_id"] = cliente_ids
+    out_calz["cliente_id"] = cliente_ids
 
-    # tipo_v2_id viene del Excel (654/638); no pisar con calzado por defecto
+    fk_cols = [
+        "material_id", "color_id", "marca_id", "genero_id", "grupo_estilo_id", "tipo_1_id",
+        "linea_id", "referencia_id", "cliente_id",
+    ]
+    for col in fk_cols:
+        out[col] = pd.array([pd.NA] * len(out), dtype="Int64")
+    if not out_calz.empty:
+        for col in fk_cols:
+            out.loc[out_calz.index, col] = pd.array(out_calz[col].tolist(), dtype="Int64")
+    for idx, fk in conf_fk_by_idx.items():
+        for col, val in fk.items():
+            out.at[idx, col] = val
+
     if "tipo_v2_id" not in out.columns:
         out["tipo_v2_id"] = TIPO_V2_CALZADO
 

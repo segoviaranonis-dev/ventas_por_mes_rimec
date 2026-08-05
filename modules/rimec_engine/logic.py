@@ -36,8 +36,14 @@ def _insert_returning(query: str, params: dict) -> int | None:
 # MOTOR DE CÁLCULO
 # ─────────────────────────────────────────────────────────────────────────────
 
+def redondeo_centena_proxima(x: float) -> int:
+    """Centena más próxima — 230.048→230.000 · 230.051→230.100 (Director 2026-07-20)."""
+    return int(round(x / 100) * 100)
+
+
 def redondeo_centena_inferior(x: float) -> int:
-    return math.floor(x / 100) * 100
+    """Alias legacy — usa centena próxima desde 2026-07-20."""
+    return redondeo_centena_proxima(x)
 
 
 def calcular_fob_ajustado(fob: float, d1, d2, d3, d4) -> float:
@@ -60,8 +66,17 @@ def calcular_precios_caso(fob: float, caso: dict) -> dict:
     lpn_raw = fob_ajustado * indice
     lpn     = redondeo_centena_inferior(lpn_raw)
 
-    lpc03 = redondeo_centena_inferior(lpn * 1.12) if caso.get("genera_lpc03_lpc04") else None
-    lpc04 = redondeo_centena_inferior(lpn * 1.20) if caso.get("genera_lpc03_lpc04") else None
+    nombre = str(caso.get("nombre_caso") or "").strip().upper()
+    if caso.get("genera_lpc03_lpc04"):
+        # Ley Excel: un redondeo sobre base bruta × factor (no centena(LPN)×factor)
+        lpc03 = redondeo_centena_inferior(lpn_raw * 1.12)
+        lpc04 = redondeo_centena_inferior(lpn_raw * 1.20)
+    elif nombre == "PROMOCIONAL":
+        lpc03 = lpn
+        lpc04 = lpn
+    else:
+        lpc03 = None
+        lpc04 = None
 
     return {
         "fob_ajustado": round(fob_ajustado, 4),

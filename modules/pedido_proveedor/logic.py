@@ -3085,12 +3085,13 @@ def _lookup_lp_for_fi_recalc(
     ppd_id: int | None = None,
     linea_id: int | None = None,
     material_id: int | None = None,
+    incluir_vendidos: bool = False,
 ) -> tuple[float | None, str]:
     """
     Resuelve LP/LPC para recalc FI.
     Retorna (valor, estado): ok | frozen | sin_match
     """
-    if ppd_id:
+    if ppd_id and not incluir_vendidos:
         meta = _ppd_saldo_meta(conn, int(ppd_id))
         if meta:
             saldo = int(meta.get("saldo") or 0)
@@ -3137,11 +3138,13 @@ def recalcular_facturas_internas_pp(
     evento_id: int,
     *,
     incluir_confirmadas: bool = False,
+    incluir_vendidos: bool = False,
     usuario_id: int | None = None,
 ) -> tuple[bool, str, dict]:
     """
     Recalcula precio_unit/subtotal/totales de FI editables del PP usando el evento dado.
     Por defecto solo RESERVADA; opcionalmente CONFIRMADA (flexibilidad operativa).
+    incluir_vendidos=True: también actualiza líneas PPD 100% vendidas (no congela LP).
     """
     stats = {
         "fi_procesadas": 0,
@@ -3152,6 +3155,7 @@ def recalcular_facturas_internas_pp(
         "monto_fi_antes": 0.0,
         "monto_fi_despues": 0.0,
         "delta_monto_fi": 0.0,
+        "incluir_vendidos": incluir_vendidos,
     }
     estados = (
         _ESTADOS_FI_RECALC_CON_CONFIRMADAS
@@ -3209,6 +3213,7 @@ def recalcular_facturas_internas_pp(
                         ppd_id=int(det.ppd_id) if det.ppd_id else None,
                         linea_id=int(det.linea_id) if det.linea_id else None,
                         material_id=int(det.material_id) if det.material_id else None,
+                        incluir_vendidos=incluir_vendidos,
                     )
                     if estado == "frozen":
                         stats["lineas_congeladas_venta"] += 1
@@ -3294,10 +3299,12 @@ def vincular_listado_precio_a_pp(
     *,
     recalcular_fi: bool = True,
     incluir_fi_confirmadas: bool = False,
+    incluir_vendidos: bool = False,
     usuario_id: int | None = None,
 ) -> tuple[bool, str, dict]:
     """
     Asigna precio_evento al PP/ICs y opcionalmente recalcula facturas internas abiertas.
+    incluir_vendidos=True: pisa precios también en PPD 100% vendidas + FI (modo TODOS).
     """
     if not pp_listado_precio_editable(pp_id):
         return False, "El PP está en COMPRA (ENVIADO). El listado de precios no se puede cambiar.", {}
@@ -3309,14 +3316,32 @@ def vincular_listado_precio_a_pp(
     try:
         with engine.begin() as conn:
             snap = conn.execute(
-                sqlt("SELECT public.vincular_listado_a_pp(:pp_id, :evento_id, :uid) AS r"),
-                {"pp_id": pp_id, "evento_id": evento_id, "uid": usuario_id},
+                sqlt(
+                    "SELECT public.vincular_listado_a_pp(:pp_id, :evento_id, :uid, :incluir) AS r"
+                ),
+                {
+                    "pp_id": pp_id,
+                    "evento_id": evento_id,
+                    "uid": usuario_id,
+                    "incluir": bool(incluir_vendidos),
+                },
             ).scalar()
-        if isinstance(snap, str):
-            snap = __import__("json").loads(snap)
-        if not snap or not snap.get("success"):
-            detail = (snap or {}).get("error", "Falló snapshot de precios en PPD.")
-            return False, detail, {"snapshot": snap or {}}
+            if isinstance(snap, str):
+                snap = __import__("json").loads(snap)
+            if not snap or not snap.get("success"):
+                detail = (snap or {}).get("error", "Falló snapshot de precios en PPD.")
+                return False, detail, {"snapshot": snap or {}}
+            # Ley RIMEC Web: LPC03/LPC04 aritmética sobre LPN (MIG-151) — motor intacto
+            try:
+                ley = conn.execute(
+                    sqlt(
+                        "SELECT filas_actualizadas FROM public.apply_ley_precios_rimec_web_ppd(:pp_id)"
+                    ),
+                    {"pp_id": pp_id},
+                ).scalar()
+                snap["ley_precios_rimec_web_filas"] = ley
+            except Exception as e_ley:
+                DBInspector.log(f"[PP] apply_ley_precios_rimec_web_ppd: {e_ley}", "WARN")
     except Exception as e:
         DBInspector.log(f"[PP] vincular_listado_a_pp snapshot: {e}", "ERROR")
         return False, f"Evento vinculado en ICP pero falló congelar precios: {e}", {}
@@ -3325,18 +3350,21 @@ def vincular_listado_precio_a_pp(
         "evento_anterior": prev,
         "evento_nuevo": evento_id,
         "snapshot": snap,
+        "incluir_vendidos": incluir_vendidos,
     }
     if recalcular_fi:
         ok, msg, rstats = recalcular_facturas_internas_pp(
             pp_id,
             evento_id,
             incluir_confirmadas=incluir_fi_confirmadas,
+            incluir_vendidos=incluir_vendidos,
             usuario_id=usuario_id,
         )
         stats.update(rstats)
         if not ok:
             return False, f"Evento vinculado, pero falló el recálculo de FI: {msg}", stats
-        return True, f"Listado vinculado. {msg}", stats
+        modo = "TODOS (incl. vendidos)" if incluir_vendidos else "solo tránsito"
+        return True, f"Listado vinculado ({modo}). {msg}", stats
 
     return True, "Listado de precios vinculado al PP y sus ICs.", stats
 

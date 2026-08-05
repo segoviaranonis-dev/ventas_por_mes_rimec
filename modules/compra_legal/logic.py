@@ -23,9 +23,31 @@ import pandas as pd
 from sqlalchemy import text as sqlt
 
 from core.database import get_dataframe, engine
+from core.auditoria import log_flujo, A
+from core.holding_governance import (
+    cl_cerrada_para_edicion,
+    log_pp_estado,
+    require_holding_reversal,
+)
 
 ALM_TRANSITO  = 3
 ALM_WEB_BAZAR = 1
+CLIENTE_WEB_BAZAR_ID = 5000
+
+_FILTRO_TRASPASO_CLIENTE_WEB = """
+    AND (
+        EXISTS (
+            SELECT 1 FROM factura_interna fi
+            WHERE fi.nro_factura = t.documento_ref
+              AND fi.cliente_id = :cli_web
+        )
+        OR EXISTS (
+            SELECT 1 FROM venta_transito vt
+            WHERE vt.numero_factura_interna = t.documento_ref
+              AND TRIM(vt.codigo_cliente) = :cli_web_txt
+        )
+    )
+"""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -537,15 +559,38 @@ def pp_ya_en_compra(id_pp: int) -> int | None:
     return int(df["compra_legal_id"].iloc[0])
 
 
-def _marcar_pp_enviado(conn, id_pp: int) -> None:
+def _marcar_pp_enviado(conn, id_pp: int, usuario_id: int | None = None) -> str | None:
     """Cambia pedido_proveedor.estado = 'ENVIADO' dentro de una TX abierta."""
+    row = conn.execute(sqlt("""
+        SELECT estado, numero_registro FROM pedido_proveedor WHERE id = :id_pp
+    """), {"id_pp": id_pp}).fetchone()
+    estado_antes = str(row[0]) if row else None
+    nro_pp = str(row[1]) if row else None
+
     conn.execute(sqlt("""
-        UPDATE pedido_proveedor SET estado = 'ENVIADO'
+        UPDATE pedido_proveedor
+        SET estado = 'ENVIADO',
+            enviado_at = COALESCE(enviado_at, now()),
+            enviado_por = COALESCE(enviado_por, :uid)
         WHERE id = :id_pp AND estado != 'ENVIADO'
-    """), {"id_pp": id_pp})
+    """), {"id_pp": id_pp, "uid": usuario_id})
+
+    if estado_antes and estado_antes != "ENVIADO":
+        log_pp_estado(
+            id_pp,
+            estado_antes,
+            "ENVIADO",
+            usuario_id=usuario_id,
+            observaciones="Paso a COMPRA — cierre operativo",
+        )
+    return nro_pp
 
 
-def create_compra_legal(id_pp: int, numero_proforma: str) -> tuple[bool, str]:
+def create_compra_legal(
+    id_pp: int,
+    numero_proforma: str,
+    usuario_id: int | None = None,
+) -> tuple[bool, str]:
     """Crea una Compra Legal nueva y vincula el PP. Cambia PP a estado ENVIADO."""
     try:
         with engine.begin() as conn:
@@ -571,14 +616,39 @@ def create_compra_legal(id_pp: int, numero_proforma: str) -> tuple[bool, str]:
                 VALUES (:cl_id, :pp_id)
             """), {"cl_id": cl_id, "pp_id": id_pp})
 
-            _marcar_pp_enviado(conn, id_pp)
+            nro_pp = _marcar_pp_enviado(conn, id_pp, usuario_id)
+
+        log_flujo(
+            entidad="CL",
+            entidad_id=cl_id,
+            nro_registro=numero,
+            accion=A.CL_CREADA,
+            estado_antes=None,
+            estado_despues="PENDIENTE",
+            snap={"pp_id": id_pp, "proforma": numero_proforma, "nro_pp": nro_pp},
+            usuario_id=usuario_id,
+        )
+        log_flujo(
+            entidad="PP",
+            entidad_id=id_pp,
+            nro_registro=nro_pp,
+            accion=A.PP_PASO_COMPRA,
+            estado_antes="ABIERTO",
+            estado_despues="ENVIADO",
+            snap={"compra_legal_id": cl_id, "numero_cl": numero},
+            usuario_id=usuario_id,
+        )
 
         return True, numero
     except Exception as e:
         return False, str(e)
 
 
-def add_pp_to_compra(compra_id: int, id_pp: int) -> tuple[bool, str]:
+def add_pp_to_compra(
+    compra_id: int,
+    id_pp: int,
+    usuario_id: int | None = None,
+) -> tuple[bool, str]:
     """Agrega un PP a una Compra Legal existente. Cambia PP a estado ENVIADO."""
     try:
         with engine.begin() as conn:
@@ -595,7 +665,26 @@ def add_pp_to_compra(compra_id: int, id_pp: int) -> tuple[bool, str]:
                 VALUES (:cl_id, :pp_id)
             """), {"cl_id": compra_id, "pp_id": id_pp})
 
-            _marcar_pp_enviado(conn, id_pp)
+            nro_pp = _marcar_pp_enviado(conn, id_pp, usuario_id)
+
+        log_flujo(
+            entidad="CL",
+            entidad_id=compra_id,
+            accion=A.CL_PP_AGREGADO,
+            estado_antes="PENDIENTE",
+            estado_despues="PENDIENTE",
+            snap={"pp_id": id_pp, "nro_pp": nro_pp},
+            usuario_id=usuario_id,
+        )
+        log_flujo(
+            entidad="PP",
+            entidad_id=id_pp,
+            nro_registro=nro_pp,
+            accion=A.PP_PASO_COMPRA,
+            estado_despues="ENVIADO",
+            snap={"compra_legal_id": compra_id},
+            usuario_id=usuario_id,
+        )
 
         return True, "PP agregado a la compra."
     except Exception as e:
@@ -648,13 +737,32 @@ def get_pps_de_compra(id_cl: int) -> pd.DataFrame:
     """, {"id_cl": id_cl})
 
 
-def rechazar_pp_de_compra(id_cl: int, id_pp: int) -> tuple[bool, str]:
+def rechazar_pp_de_compra(
+    id_cl: int,
+    id_pp: int,
+    usuario_id: int | None = None,
+    ot_referencia: str | None = None,
+) -> tuple[bool, str]:
     """
-    Rechaza un PP desde COMPRA:
+    Rechaza un PP desde COMPRA (solo holding + NEXUS_HOLDING_REVERSAL=1):
       1. Elimina de compra_legal_pedido.
       2. Limpia traspasos BORRADOR del PP en esta compra.
       3. Devuelve el PP a estado 'ABIERTO'.
     """
+    ok_hold, msg_hold = require_holding_reversal("Rechazo PP desde Compra")
+    if not ok_hold:
+        return False, msg_hold
+
+    if cl_cerrada_para_edicion(id_cl):
+        return False, "Compra ya DISTRIBUIDA o cerrada — reversión no permitida."
+
+    df_pp = get_dataframe(
+        "SELECT numero_registro, estado FROM pedido_proveedor WHERE id = :id",
+        {"id": id_pp},
+    )
+    nro_pp = str(df_pp.iloc[0]["numero_registro"]) if not df_pp.empty else None
+    estado_antes = str(df_pp.iloc[0]["estado"]) if not df_pp.empty else "ENVIADO"
+
     try:
         with engine.begin() as conn:
             # Limpiar traspasos BORRADOR vinculados a FAC-INTs del PP en esta compra
@@ -680,7 +788,26 @@ def rechazar_pp_de_compra(id_cl: int, id_pp: int) -> tuple[bool, str]:
                 WHERE id = :id_pp
             """), {"id_pp": id_pp})
 
-        return True, "PP rechazado y devuelto a estado ABIERTO."
+        log_pp_estado(
+            id_pp,
+            estado_antes,
+            "ABIERTO",
+            usuario_id=usuario_id,
+            compra_legal_id=id_cl,
+            observaciones=f"REVERSION_HOLDING {ot_referencia or ''}".strip(),
+        )
+        log_flujo(
+            entidad="PP",
+            entidad_id=id_pp,
+            nro_registro=nro_pp,
+            accion=A.REVERSION_HOLDING,
+            estado_antes=estado_antes,
+            estado_despues="ABIERTO",
+            snap={"compra_legal_id": id_cl, "ot": ot_referencia, "tipo": "rechazar_pp_de_compra"},
+            usuario_id=usuario_id,
+        )
+
+        return True, "PP rechazado y devuelto a ABIERTO (holding)."
     except Exception as e:
         return False, str(e)
 
@@ -1002,7 +1129,7 @@ def get_compra_hija_facturacion(id_cl: int) -> pd.DataFrame:
 # FINALIZAR COMPRA — crea traspasos y marca la compra como DISTRIBUIDA
 # ─────────────────────────────────────────────────────────────────────────────
 
-def finalizar_compra(id_cl: int) -> tuple[bool, str]:
+def finalizar_compra(id_cl: int, usuario_id: int | None = None) -> tuple[bool, str]:
     """
     Acción manual "Finalizar y Distribuir":
       1. Para cada PP vinculado, crea traspasos (BORRADOR) por cada FAC-INT.
@@ -1010,6 +1137,13 @@ def finalizar_compra(id_cl: int) -> tuple[bool, str]:
     Después de esto, FACTURACIÓN ve las facturas y puede enviarlas a Bazar.
     """
     try:
+        df_antes = get_dataframe(
+            "SELECT numero_registro, estado FROM compra_legal WHERE id = :id",
+            {"id": id_cl},
+        )
+        nro_cl = str(df_antes.iloc[0]["numero_registro"]) if not df_antes.empty else None
+        ea = str(df_antes.iloc[0]["estado"]) if not df_antes.empty else "PENDIENTE"
+
         with engine.begin() as conn:
             pps = conn.execute(sqlt("""
                 SELECT pedido_proveedor_id FROM compra_legal_pedido
@@ -1035,6 +1169,17 @@ def finalizar_compra(id_cl: int) -> tuple[bool, str]:
                     WHERE compra_legal_id = :id_cl
                 )
             """), {"id_cl": id_cl})
+
+        log_flujo(
+            entidad="CL",
+            entidad_id=id_cl,
+            nro_registro=nro_cl,
+            accion=A.CL_FINALIZADA,
+            estado_antes=ea,
+            estado_despues="DISTRIBUIDA",
+            snap={"traspasos_nuevos": total_nuevos},
+            usuario_id=usuario_id,
+        )
 
         return True, f"Compra distribuida. {total_nuevos} traspaso(s) nuevo(s) creado(s)."
     except Exception as e:
@@ -1077,10 +1222,16 @@ def enviar_compra_a_web(id_cl: int) -> tuple[bool, str]:
 
 def get_traspasos(estado: str | None = None) -> pd.DataFrame:
     """Lista de traspasos para el panel Bazar.
-    OT-2026-029: Filtrar por almacen_destino_id=1 (ALM_WEB_01) para Compra Web.
+    OT-2026-029: almacen_destino_id=1 (ALM_WEB_01).
+    OT-COMPRA-WEB-003: solo FAC-INT del cliente web 5000 (canal e-commerce).
     """
     where = "WHERE t.almacen_destino_id = :alm"
-    params: dict = {"alm": ALM_WEB_BAZAR}  # = 1
+    params: dict = {
+        "alm": ALM_WEB_BAZAR,
+        "cli_web": CLIENTE_WEB_BAZAR_ID,
+        "cli_web_txt": str(CLIENTE_WEB_BAZAR_ID),
+    }
+    where += _FILTRO_TRASPASO_CLIENTE_WEB
 
     if estado:
         where += " AND t.estado = :estado"
@@ -1109,7 +1260,7 @@ def get_traspasos(estado: str | None = None) -> pd.DataFrame:
 
 
 def get_traspaso_detail(id_trp: int) -> dict:
-    df = get_dataframe("""
+    df = get_dataframe(f"""
         SELECT
             t.id, t.numero_registro, t.fecha_traspaso, t.estado,
             t.documento_ref AS factura, t.snapshot_json,
@@ -1117,7 +1268,12 @@ def get_traspaso_detail(id_trp: int) -> dict:
         FROM traspaso t
         LEFT JOIN compra_legal cl ON cl.id = t.compra_legal_id
         WHERE t.id = :id_trp
-    """, {"id_trp": id_trp})
+        {_FILTRO_TRASPASO_CLIENTE_WEB}
+    """, {
+        "id_trp": id_trp,
+        "cli_web": CLIENTE_WEB_BAZAR_ID,
+        "cli_web_txt": str(CLIENTE_WEB_BAZAR_ID),
+    })
     if df.empty:
         return {}
     r = df.iloc[0]
@@ -1258,6 +1414,22 @@ def procesar_ingreso_bazar(id_trp: int) -> tuple[bool, str]:
                 return False, "Traspaso no encontrado."
             if row[0] not in ("ENVIADO", "BORRADOR"):
                 return False, f"Traspaso en estado '{row[0]}' — no se puede procesar."
+
+            es_web = conn.execute(sqlt(f"""
+                SELECT 1 FROM traspaso t
+                WHERE t.id = :id_trp
+                {_FILTRO_TRASPASO_CLIENTE_WEB}
+                LIMIT 1
+            """), {
+                "id_trp": id_trp,
+                "cli_web": CLIENTE_WEB_BAZAR_ID,
+                "cli_web_txt": str(CLIENTE_WEB_BAZAR_ID),
+            }).fetchone()
+            if not es_web:
+                return False, (
+                    f"Traspaso no pertenece al cliente web ({CLIENTE_WEB_BAZAR_ID}). "
+                    "Solo mercadería canal e-commerce."
+                )
 
             trp_num = str(row[1])
 

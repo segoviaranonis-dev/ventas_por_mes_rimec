@@ -38,15 +38,19 @@ _IMAGEN_LR_RE = re.compile(r"^(\d+)\s*[-_.]\s*(\d+)\s*[-_.]")
 
 # tipo_v2_id en BD · categorías negocio (Excel columna Tipo_v2)
 TIPO_V2_CALZADO = 1       # 654 calzados Beira Rio — pilares línea+referencia obligatorios
-TIPO_V2_CONFECCIONES = 2  # 638 confecciones Kyly — sin reglas STYLE/L+R; tal cual Excel
+TIPO_V2_CONFECCIONES = 2  # 638 confecciones Kyly — alta perezosa; dimensiones NULL en pilares
+
+# Si la línea numérica no está en pilar linea → upsert ciego (marca/género NULL).
+# Completar después: Motor de Precios → Administración de Líneas (_render_admin_lineas).
+# REF no numérico (ej. K) → solo texto en registro_st_vt_rc_reposicion, sin pilar referencia.
 
 # Versión visible en UI — el operador remoto confirma que hizo git pull si coincide.
-RETAIL_IMPORT_BUILD = "2026-06-15-b5"
+RETAIL_IMPORT_BUILD = "2026-06-10-c2"
 
-# HOTFIX operativo: Kyly (tipo_v2=2) fuera del lote hasta OT confecciones.
-RETAIL_IMPORT_SKIP_CONFECCIONES = True
-# Sin alta automática L+R/material/color en import (solo mapeo existente → mucho más rápido).
-RETAIL_IMPORT_FAST = True
+# Confecciones Kyly (tipo_v2=2) entran al lote con FK pilares 638.
+RETAIL_IMPORT_SKIP_CONFECCIONES = False
+# Alta automática L+R/material/color en catálogo (ley FK numérico).
+RETAIL_IMPORT_FAST = False
 
 CANON = [
     "origen_holding",
@@ -378,6 +382,12 @@ def normalize_retail_dataframe(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[st
 
     for col in ("linea_codigo_proveedor", "referencia_codigo_proveedor"):
         df[col] = df[col].map(_cell_str)
+
+    mask_conf = df["tipo_v2_id"] == TIPO_V2_CONFECCIONES
+    for i in df.index[mask_conf]:
+        ref = str(df.at[i, "referencia_codigo_proveedor"]).strip().upper()
+        if ref in ("", "K"):
+            df.at[i, "referencia_codigo_proveedor"] = "K"
     for col in ("excel_material_code", "excel_color_code", "codigo_barras", "imagen_nombre"):
         df[col] = df[col].map(lambda v: _cell_str(v) if _cell_str(v) else None)
 
@@ -404,6 +414,7 @@ def normalize_retail_dataframe(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[st
 
     vacias = df["linea_codigo_proveedor"].eq("") | df["referencia_codigo_proveedor"].eq("")
     vacias_calzado = vacias & mask_calzado
+    vacias_conf = df.loc[mask_conf, "linea_codigo_proveedor"].eq("")
     n_conf = int((df["tipo_v2_id"] == TIPO_V2_CONFECCIONES).sum())
     n_calz = int(mask_calzado.sum())
 
@@ -417,6 +428,13 @@ def normalize_retail_dataframe(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[st
         if n_img:
             hint += f" Desde IMAGEN se completaron {n_img} filas calzado; aún faltan {n}."
         errors.append(hint)
+
+    if vacias_conf.any():
+        n = int(vacias_conf.sum())
+        errors.append(
+            f"Hay {n} filas **confecciones Kyly** (tipo_v2=2/638) sin **LINEA**. "
+            "REF puede ser K o vacía (se normaliza a K)."
+        )
 
     return df[CANON].copy(), errors
 
@@ -464,16 +482,16 @@ def insert_batch(
 
     import_df, filter_stats = apply_import_row_filters(df)
     if import_df.empty:
-        raise ValueError("No quedaron filas para importar tras aplicar filtros (¿solo confecciones Kyly?).")
+        raise ValueError("No quedaron filas para importar tras aplicar filtros.")
 
     n_skip = filter_stats.get("excluidas_confecciones", 0)
     if n_skip:
-        _progress(f"Importando solo calzado — {n_skip} filas Kyly (tipo 2) excluidas…", 0.18)
+        _progress(f"Excluidas {n_skip} filas Kyly por filtro…", 0.18)
 
     work = import_df.copy()
     work["material_id"] = pd.to_numeric(work["excel_material_code"], errors="coerce")
     work["color_id"] = pd.to_numeric(work["excel_color_code"], errors="coerce")
-    _progress("Resolviendo FKs (modo rápido, sin alta pilares)…", 0.25)
+    _progress("Resolviendo FKs pilares (calzado 654 + confecciones 638)…", 0.25)
     resolved, _ = resolve_retail_fks(
         engine,
         work,

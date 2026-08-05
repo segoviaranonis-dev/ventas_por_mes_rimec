@@ -62,7 +62,7 @@ def _render_import_gate(ok: bool, reasons: list[str], diag: dict) -> None:
     for i, r in enumerate(reasons, 1):
         st.markdown(f"{i}. {r}")
     st.info(
-        "Si no ves build `2026-06-15-b5` arriba: en la PC ejecutá `git pull origin main` en control_central "
+        "Si no ves build `2026-06-10-c1` arriba: en la PC ejecutá `git pull origin main` en control_central "
         "y reiniciá Streamlit."
     )
 
@@ -78,9 +78,13 @@ def _render_excel_import(engine, created_by: str) -> None:
             "**Hotfix activo:** se importa solo **calzado** (TIPO_V2=1/654). "
             "Confecciones Kyly (tipo 2/638) quedan **fuera** hasta nueva OT."
         )
+    else:
+        st.info(
+            "**Multi-proveedor:** calzado **654** + confecciones **638 Kyly** con FK pilares en catálogo."
+        )
+    modo = "modo rápido (sin alta pilares)" if retail.RETAIL_IMPORT_FAST else "alta pilares + FK numérico"
     st.caption(
-        f"Hoja: **`{retail.EXCEL_SHEET_RETAIL}`** · build `{retail.RETAIL_IMPORT_BUILD}` · "
-        "modo rápido (sin alta automática de pilares en este import)."
+        f"Hoja: **`{retail.EXCEL_SHEET_RETAIL}`** · build `{retail.RETAIL_IMPORT_BUILD}` · {modo}."
     )
 
     f = st.file_uploader("Archivo .xlsx", type=["xlsx", "xls"], key="retail_xlsx_up")
@@ -117,7 +121,7 @@ def _render_excel_import(engine, created_by: str) -> None:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Hoja", sheet_name)
     c2.metric("Filas Excel", len(norm))
-    c3.metric("A importar (calzado)", n_import)
+    c3.metric("A importar", n_import)
     c4.metric("Kyly excluidas", n_skip_kyly)
 
     with st.expander("Diagnóstico — columnas que leyó Nexus", expanded=not can_import):

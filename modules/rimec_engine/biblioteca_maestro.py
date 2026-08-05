@@ -790,8 +790,8 @@ def _upsert_caso_biblioteca_en_conn(
     lineas_list: list,
 ) -> int | None:
     """
-    Inserta o actualiza caso_precio_biblioteca (UNIQUE proveedor_id + nombre_caso).
-    No falla si el nombre ya existe en otra biblioteca del mismo proveedor.
+    Inserta o actualiza caso_precio_biblioteca (UNIQUE biblioteca_id + nombre_caso, MIG-118).
+    Permite el mismo nombre en bibliotecas distintas del mismo proveedor.
     """
     row = conn.execute(
         text(
@@ -802,7 +802,7 @@ def _upsert_caso_biblioteca_en_conn(
                     genera_lpc03_lpc04, alcance_tipo, marcas, lineas, activo)
                VALUES (:pid, :bid, :nc, :dp, :fc, :d1, :d2, :d3, :d4,
                        :glpc, :at, :marcas, :lineas, true)
-               ON CONFLICT (proveedor_id, nombre_caso) DO UPDATE SET
+               ON CONFLICT (biblioteca_id, nombre_caso) DO UPDATE SET
                     biblioteca_id = EXCLUDED.biblioteca_id,
                     nombre_caso = EXCLUDED.nombre_caso,
                     dolar_politica = EXCLUDED.dolar_politica,

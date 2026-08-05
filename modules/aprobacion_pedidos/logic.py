@@ -896,14 +896,15 @@ def get_fi_confirmadas() -> list[dict]:
             pp.numero_registro AS nro_pp,
             pp.numero_proforma AS proforma,
             qa.descripcion AS quincena_llegada,
-            fi.created_at
+            fi.created_at,
+            fi.fecha_confirmacion
         FROM factura_interna fi
         LEFT JOIN cliente_v2 c ON c.id_cliente = fi.cliente_id
         LEFT JOIN usuario_v2 v ON v.id_usuario = fi.vendedor_id
         LEFT JOIN pedido_proveedor pp ON pp.id = fi.pp_id
         LEFT JOIN quincena_arribo qa ON qa.id = pp.quincena_arribo_id
         WHERE fi.estado = 'CONFIRMADA'
-        ORDER BY fi.pv_global DESC
+        ORDER BY fi.fecha_confirmacion DESC NULLS LAST, fi.pv_global DESC
         LIMIT 200
     """)
     return df.to_dict("records") if df is not None and not df.empty else []
@@ -1077,7 +1078,8 @@ def confirmar_fi(fi_id: int) -> tuple[bool, str]:
         with engine.begin() as conn:
             result = conn.execute(sqlt("""
                 UPDATE public.factura_interna
-                SET estado = 'CONFIRMADA'
+                SET estado = 'CONFIRMADA',
+                    fecha_confirmacion = NOW()
                 WHERE id = :id AND estado = 'RESERVADA'
             """), {"id": fi_id})
 

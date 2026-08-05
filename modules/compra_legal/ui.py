@@ -25,6 +25,7 @@ from modules.compra_legal.logic import (
     finalizar_compra,
     rechazar_pp_de_compra,
 )
+from core.holding_governance import holding_reversal_enabled
 from modules.pedido_proveedor.logic import get_fi_detalles_canonico
 
 
@@ -228,18 +229,28 @@ def _render_detalle_compra(id_cl: int):
                     f"</span></div>",
                     unsafe_allow_html=True,
                 )
-                if estado == "PENDIENTE":
+                if estado == "PENDIENTE" and holding_reversal_enabled():
+                    ot_ref = st.text_input(
+                        "OT reversión",
+                        key=f"cl_ot_ref_{id_cl}_{pp_id}",
+                        placeholder="OT-REVERSION-…",
+                    )
                     if col_btn.button(
-                        "❌ Rechazar",
+                        "❌ Rechazar (holding)",
                         key=f"cl_rechazar_{id_cl}_{pp_id}",
                         use_container_width=True,
                     ):
-                        ok, msg = rechazar_pp_de_compra(id_cl, pp_id)
+                        uid = st.session_state.get("user", {}).get("id")
+                        ok, msg = rechazar_pp_de_compra(
+                            id_cl, pp_id, usuario_id=uid, ot_referencia=ot_ref or None,
+                        )
                         if ok:
-                            st.warning(f"PP {pp['numero_registro']} rechazado → devuelto a ABIERTO.")
+                            st.warning(f"PP {pp['numero_registro']} rechazado → ABIERTO (holding).")
                             st.rerun()
                         else:
                             st.error(msg)
+                elif estado == "PENDIENTE":
+                    col_btn.caption("🔒 Reversión solo holding (NEXUS_HOLDING_REVERSAL=1)")
 
     st.divider()
 
@@ -260,7 +271,8 @@ def _render_detalle_compra(id_cl: int):
             type="primary",
             use_container_width=True,
         ):
-            ok, msg = finalizar_compra(id_cl)
+            uid = st.session_state.get("user", {}).get("id")
+            ok, msg = finalizar_compra(id_cl, usuario_id=uid)
             if ok:
                 st.success(f"✓ {msg}")
                 st.rerun()
