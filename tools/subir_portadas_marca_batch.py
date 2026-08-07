@@ -43,13 +43,16 @@ TIER_MAX_W = {
 # archivo local → stem Storage (sin extensión)
 MAPA_ARCHIVOS = {
     "vizzano.png": "vizzano",
+    "beira-rio.png": "beira-rio",
+    "modare.png": "modare",
     "moleca.png": "moleca",
     "molekinha.png": "molekinha",
     "molekinho.png": "molekinho",
-    "modare.png": "modare",
     "activitta.png": "actvitta",
-    "beira-rio.png": "beira-rio",
     "br-sport.png": "br-sport",
+    # Reserva · Director pasará archivo
+    "kyly.png": "kyly",
+    "milon.png": "milon",
 }
 
 
